@@ -1,0 +1,7 @@
+﻿.venv/
+__pycache__/
+*.pdf
+*.xlsx
+*.png
+outputs/
+.DS_Store
