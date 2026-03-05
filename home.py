@@ -1,9 +1,6 @@
 # home.py
 """
-Streamlit POG generator 
-
-
-
+Streamlit POG generator
 """
 
 from __future__ import annotations
@@ -30,6 +27,9 @@ from reportlab.pdfbase import pdfmetrics
 
 LAST5_RE = re.compile(r"\b(\d{5})\b")
 DIGITS_RE = re.compile(r"\D+")
+
+# Hardcoded — matches the 3-column structure of the source PDFs
+N_COLS = 3
 
 
 @dataclass(frozen=True)
@@ -275,82 +275,152 @@ def render_pog_pdf(
     n_cols: int,
     title_prefix: str = "POG",
 ) -> bytes:
+    """
+    Renders all sides onto a SINGLE wide page, laid out horizontally
+    left-to-right: Side A | Side B | Side C | Side D ...
+    Small gaps between cells for visual clarity.
+    """
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=letter)
-    page_w, page_h = letter
 
-    margin = 36
-    title_h = 44
+    n_sides = len(pages)
+
+    # Layout constants
+    outer_margin = 32          # page outer margin (pt)
+    side_gap = 18              # gap between adjacent sides
+    cell_inset = 3             # inner gap shrink per cell edge (visual separation)
+    top_header_h = 52          # space for title + side label at top
+    bottom_margin = 28
+
+    # Compute per-side width so everything fits in a reasonably wide page
+    # Target: each side ~300pt wide; adjust if many/few sides
+    per_side_w = 310
+    total_page_w = outer_margin * 2 + n_sides * per_side_w + (n_sides - 1) * side_gap
+    total_page_h = 8.5 * 72   # 612 pt — standard letter height
+
+    pagesize = (total_page_w, total_page_h)
+    c = canvas.Canvas(buf, pagesize=pagesize)
 
     images_doc = fitz.open(stream=images_pdf_bytes, filetype="pdf")
 
     try:
+        content_top = total_page_h - outer_margin - top_header_h
+        content_bottom = bottom_margin
+        avail_h = content_top - content_bottom
+
+        # ── Main title (top-left) ────────────────────────────────────────────
+        c.setFont("Helvetica-Bold", 13)
+        c.setFillColorRGB(0.08, 0.08, 0.08)
+        c.drawString(outer_margin, total_page_h - outer_margin - 13, title_prefix)
+
+        # ── Thin horizontal rule under title ────────────────────────────────
+        rule_y = total_page_h - outer_margin - 22
+        c.setLineWidth(0.6)
+        c.setStrokeColorRGB(0.75, 0.75, 0.75)
+        c.line(outer_margin, rule_y, total_page_w - outer_margin, rule_y)
+
         for out_i, p in enumerate(pages):
             side = chr(ord("A") + out_i)
-            c.setFont("Helvetica-Bold", 14)
-            c.drawString(margin, page_h - margin - 14, f"{title_prefix} — Side {side}")
+            # X origin for this side's content block
+            side_origin_x = outer_margin + out_i * (per_side_w + side_gap)
 
-            content_top = page_h - margin - title_h
-            content_bottom = margin
+            # ── Side label ───────────────────────────────────────────────────
+            c.setFont("Helvetica-Bold", 9)
+            c.setFillColorRGB(0.18, 0.18, 0.18)
+            c.drawString(side_origin_x, total_page_h - outer_margin - 38, f"Side {side}")
 
-            x_min, x_max = float(p.x_bounds[0]), float(p.x_bounds[-1])
-            y_min, y_max = float(p.y_bounds[0]), float(p.y_bounds[-1])
+            # Thin vertical separator between sides (skip before first)
+            if out_i > 0:
+                sep_x = side_origin_x - side_gap / 2
+                c.setLineWidth(0.5)
+                c.setStrokeColorRGB(0.82, 0.82, 0.82)
+                c.line(sep_x, content_bottom, sep_x, total_page_h - outer_margin - 4)
 
-            avail_w = page_w - 2 * margin
-            avail_h = content_top - content_bottom
-            scale = min(avail_w / max(1e-6, (x_max - x_min)), avail_h / max(1e-6, (y_max - y_min)))
+            # ── Scale this side's grid to fit per_side_w × avail_h ──────────
+            x_min = float(p.x_bounds[0])
+            x_max = float(p.x_bounds[-1])
+            y_min = float(p.y_bounds[0])
+            y_max = float(p.y_bounds[-1])
+
+            scale = min(
+                per_side_w / max(1e-6, x_max - x_min),
+                avail_h   / max(1e-6, y_max - y_min),
+            )
 
             for cell in p.cells:
                 upc12 = resolve_full_upc(cell.last5, cell.name, matrix_idx) if cell.last5 else None
 
                 x0, top, x1, bottom = cell.bbox
-                ox0 = margin + (x0 - x_min) * scale
-                ox1 = margin + (x1 - x_min) * scale
 
-                oy_top = content_top - (top - y_min) * scale
+                # Map PDF coords → page coords
+                ox0 = side_origin_x + (x0 - x_min) * scale
+                ox1 = side_origin_x + (x1 - x_min) * scale
+                oy_top    = content_top - (top    - y_min) * scale
                 oy_bottom = content_top - (bottom - y_min) * scale
+
+                # Apply cell inset for visual gap between adjacent cells
+                ox0      += cell_inset
+                ox1      -= cell_inset
+                oy_top   -= cell_inset
+                oy_bottom += cell_inset
 
                 ow = ox1 - ox0
                 oh = oy_top - oy_bottom
 
-                c.setLineWidth(0.5)
-                c.rect(ox0, oy_bottom, ow, oh, stroke=1, fill=0)
+                if ow <= 0 or oh <= 0:
+                    continue
 
+                # ── Cell border ──────────────────────────────────────────────
+                c.setLineWidth(0.45)
+                c.setStrokeColorRGB(0.78, 0.78, 0.78)
+                c.setFillColorRGB(1, 1, 1)
+                c.rect(ox0, oy_bottom, ow, oh, stroke=1, fill=1)
+
+                # ── Card image (top 62 % of cell) ────────────────────────────
                 img = crop_image_cell(images_doc, p.page_index, cell.bbox, zoom=3.0, inset=0.08)
                 img_box_h = oh * 0.62
                 img_box_w = ow * 0.90
-
                 iw, ih = img.size
                 r = min(img_box_w / max(1, iw), img_box_h / max(1, ih))
                 dw, dh = iw * r, ih * r
-
                 ix = ox0 + (ow - dw) / 2
                 iy = oy_bottom + oh - img_box_h + (img_box_h - dh) / 2
-                c.drawImage(ImageReader(img), ix, iy, dw, dh, preserveAspectRatio=True, mask="auto")
+                c.drawImage(
+                    ImageReader(img), ix, iy, dw, dh,
+                    preserveAspectRatio=True, mask="auto"
+                )
 
+                # ── Light separator line between image and text area ─────────
+                sep_line_y = oy_bottom + oh * 0.38
+                c.setLineWidth(0.3)
+                c.setStrokeColorRGB(0.88, 0.88, 0.88)
+                c.line(ox0 + 2, sep_line_y, ox1 - 2, sep_line_y)
+
+                # ── Text block (bottom 38 % of cell) ─────────────────────────
                 tx = ox0 + 4
                 ty = oy_bottom + 4
 
-                c.setFont("Helvetica", 7)
+                c.setFillColorRGB(0.12, 0.12, 0.12)
+                c.setFont("Helvetica", 6)
+
                 if cell.qty is not None:
                     c.drawString(tx, ty, f"Qty: {cell.qty}")
-                ty += 8
+                    ty += 7.5
 
                 if upc12:
                     c.drawString(tx, ty, f"UPC: {upc12}")
                 elif cell.last5:
                     c.drawString(tx, ty, f"UPC: ???????{cell.last5}")
-                ty += 8
+                ty += 7.5
 
-                c.setFont("Helvetica-Bold", 7)
-                for ln in wrap_text(cell.name, max(10.0, ow - 8), "Helvetica-Bold", 7)[:2]:
+                c.setFont("Helvetica-Bold", 6)
+                for ln in wrap_text(cell.name, max(10.0, ow - 8), "Helvetica-Bold", 6)[:2]:
                     c.drawString(tx, ty, ln)
-                    ty += 8
+                    ty += 7.5
 
-            c.showPage()
-
+        c.showPage()
         c.save()
         return buf.getvalue()
+
     finally:
         images_doc.close()
 
@@ -362,13 +432,12 @@ def main() -> None:
     with st.sidebar:
         st.header("Inputs")
         matrix_file = st.file_uploader("Matrix Excel (.xlsx)", type=["xlsx"])
-        labels_pdf = st.file_uploader("Labels PDF (text + last5 + qty)", type=["pdf"])
-        images_pdf = st.file_uploader("Images PDF (card pictures)", type=["pdf"])
+        labels_pdf  = st.file_uploader("Labels PDF (text + last5 + qty)", type=["pdf"])
+        images_pdf  = st.file_uploader("Images PDF (card pictures)", type=["pdf"])
 
         st.divider()
-        n_cols = st.number_input("Columns in grid", min_value=2, max_value=6, value=3, step=1)
         title_prefix = st.text_input("PDF title prefix", value="POG")
-        out_name = st.text_input("Output filename", value="pog_export.pdf")
+        out_name     = st.text_input("Output filename", value="pog_export.pdf")
 
         generate = st.button("Generate POG PDF", type="primary", use_container_width=True)
 
@@ -382,7 +451,7 @@ def main() -> None:
 
     matrix_idx = load_matrix_index(matrix_bytes)
 
-    pages = extract_pages_from_labels(labels_bytes, int(n_cols))
+    pages = extract_pages_from_labels(labels_bytes, N_COLS)
     if not pages:
         st.error("Could not detect any grid cells from Labels PDF (no 5-digit UPCs found).")
         return
@@ -406,7 +475,11 @@ def main() -> None:
                 }
             )
 
-    st.dataframe(pd.DataFrame(preview_rows).sort_values(["Side", "Row", "Col"]), use_container_width=True, height=420)
+    st.dataframe(
+        pd.DataFrame(preview_rows).sort_values(["Side", "Row", "Col"]),
+        use_container_width=True,
+        height=420,
+    )
 
     if generate:
         with st.spinner("Generating PDF..."):
@@ -414,7 +487,7 @@ def main() -> None:
                 pages=pages,
                 images_pdf_bytes=images_bytes,
                 matrix_idx=matrix_idx,
-                n_cols=int(n_cols),
+                n_cols=N_COLS,
                 title_prefix=title_prefix.strip() or "POG",
             )
 
