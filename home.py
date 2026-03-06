@@ -367,7 +367,7 @@ def _ellipsize_to_width(text: str, font_name: str, font_size: float, max_width: 
     t = (text or "").strip()
     if pdfmetrics.stringWidth(t, font_name, font_size) <= max_width:
         return t
-    ell = "…"
+    ell = "..."
     lo, hi = 0, len(t)
     best = ell
     while lo <= hi:
@@ -381,6 +381,27 @@ def _ellipsize_to_width(text: str, font_name: str, font_size: float, max_width: 
     return best
 
 
+def _fit_single_line_font(
+    text: str,
+    font_name: str,
+    max_width: float,
+    max_height: float,
+    min_size: float,
+    max_size: float,
+    step: float = 0.5,
+) -> float:
+    t = (text or "").strip()
+    if not t:
+        return min_size
+
+    size = max_size
+    while size >= min_size:
+        if size <= max_height and pdfmetrics.stringWidth(t, font_name, size) <= max_width:
+            return size
+        size -= step
+    return min_size
+
+
 def _draw_cell_text_block(
     c: canvas.Canvas,
     x: float,
@@ -392,9 +413,10 @@ def _draw_cell_text_block(
     last5: str,
     qty: Optional[int],
 ) -> None:
-    pad = 6
-    max_w = max(10.0, w - pad * 2)
-    max_h = max(10.0, h - pad * 2)
+    pad_x = 4
+    pad_y = 3
+    max_w = max(12.0, w - pad_x * 2)
+    max_h = max(12.0, h - pad_y * 2)
 
     meta_upc = upc12 or (f"???????{last5}" if last5 else "")
     meta_line = ""
@@ -405,10 +427,12 @@ def _draw_cell_text_block(
     elif qty is not None:
         meta_line = f"Qty: {qty}"
 
-    for name_size in [8.5, 8.0, 7.5, 7.0, 6.5]:
-        meta_size = min(9.0, name_size + 0.5)
+    name_size = 15.0
+    while name_size >= 7.0:
+        meta_size = min(12.5, max(8.0, name_size * 0.92))
         name_lines = wrap_text(name, max_w, BODY_BOLD_FONT, name_size)
-        name_lines = name_lines[:2] if name_lines else [""]
+        if len(name_lines) > 2:
+            name_lines = [name_lines[0], " ".join(name_lines[1:])]
 
         if len(name_lines) == 2:
             name_lines[1] = _ellipsize_to_width(name_lines[1], BODY_BOLD_FONT, name_size, max_w)
@@ -417,27 +441,35 @@ def _draw_cell_text_block(
 
         meta_fit = _ellipsize_to_width(meta_line, BODY_BOLD_FONT, meta_size, max_w) if meta_line else ""
 
-        line_h_name = name_size * 1.12
-        line_h_meta = meta_size * 1.18
-        needed_h = len(name_lines) * line_h_name + (line_h_meta if meta_fit else 0)
+        line_h_name = name_size * 1.08
+        line_h_meta = meta_size * 1.12
+        gap = max(1.0, name_size * 0.16) if meta_fit and name_lines else 0.0
+        needed_h = len(name_lines) * line_h_name + (line_h_meta + gap if meta_fit else 0)
 
         if needed_h <= max_h:
-            ty = y + h - pad - name_size
+            top = y + (h + needed_h) / 2
+            ty = top - name_size
             c.setFillColorRGB(*NAVY_RGB)
             c.setFont(BODY_BOLD_FONT, name_size)
             for ln in name_lines:
-                c.drawString(x + pad, ty, ln)
+                c.drawString(x + pad_x, ty, ln)
                 ty -= line_h_name
 
             if meta_fit:
-                c.setFont(BODY_BOLD_FONT, meta_size)
-                c.drawString(x + pad, max(y + pad, ty), meta_fit)
+                c.setFont(BODY_FONT, meta_size)
+                if name_lines:
+                    ty -= gap
+                    c.drawString(x + pad_x, max(y + pad_y, ty), meta_fit)
+                else:
+                    meta_y = y + (h - meta_size) / 2 + 1
+                    c.drawString(x + pad_x, max(y + pad_y, meta_y), meta_fit)
             return
+        name_size -= 0.5
 
-    c.setFont(BODY_BOLD_FONT, 6.5)
+    c.setFont(BODY_BOLD_FONT, 7.0)
     c.setFillColorRGB(*NAVY_RGB)
-    c.drawString(x + pad, y + pad, _ellipsize_to_width(meta_line, BODY_BOLD_FONT, 6.5, max_w))
-
+    fallback = _ellipsize_to_width(meta_line or name, BODY_BOLD_FONT, 7.0, max_w)
+    c.drawString(x + pad_x, y + pad_y, fallback)
 
 def render_pog_pdf(
     pages: List[PageData],
@@ -505,9 +537,20 @@ def render_pog_pdf(
             c.drawImage(ImageReader(logo_img), left_pad, header_y + (top_bar_h - dh) / 2, dw, dh, mask="auto")
             title_x = left_pad + dw + 16
 
+        title_text = title_prefix.strip() or "POG"
+        title_max_w = max(120.0, page_w - title_x - left_pad)
+        title_size = _fit_single_line_font(
+            title_text,
+            TITLE_FONT,
+            max_width=title_max_w,
+            max_height=top_bar_h * 0.82,
+            min_size=24.0,
+            max_size=46.0,
+            step=0.5,
+        )
         c.setFillColorRGB(1, 1, 1)
-        c.setFont(TITLE_FONT, 28)
-        c.drawString(title_x, header_y + top_bar_h * 0.52, title_prefix)
+        c.setFont(TITLE_FONT, title_size)
+        c.drawString(title_x, header_y + (top_bar_h - title_size) / 2 + 2, title_text)
 
         c.setLineWidth(1.0)
         c.setStrokeColorRGB(0.88, 0.88, 0.92)
@@ -534,15 +577,28 @@ def render_pog_pdf(
             side_origin_x = outer_margin + out_i * (per_side_w + side_gap)
 
             badge_y = content_top + 6
-            badge_h = 30
-            badge_w = 122
+            badge_h = 38
+            badge_w = 152
             c.setFillColorRGB(1, 1, 1)
             c.setStrokeColorRGB(0.85, 0.85, 0.90)
             c.setLineWidth(0.85)
             c.roundRect(side_origin_x, badge_y, badge_w, badge_h, 8, stroke=1, fill=1)
+            side_text = f"Side {side_letter}"
+            side_font_size = _fit_single_line_font(
+                side_text,
+                TITLE_FONT,
+                max_width=badge_w - 16,
+                max_height=badge_h - 8,
+                min_size=14.0,
+                max_size=24.0,
+                step=0.25,
+            )
+            side_text_w = pdfmetrics.stringWidth(side_text, TITLE_FONT, side_font_size)
+            side_x = side_origin_x + (badge_w - side_text_w) / 2
+            side_y = badge_y + (badge_h - side_font_size) / 2 + 1
             c.setFillColorRGB(*NAVY_RGB)
-            c.setFont(TITLE_FONT, 15)
-            c.drawString(side_origin_x + 12, badge_y + 8, f"Side {side_letter}")
+            c.setFont(TITLE_FONT, side_font_size)
+            c.drawString(side_x, side_y, side_text)
 
             if out_i > 0:
                 sep_x = side_origin_x - side_gap / 2
