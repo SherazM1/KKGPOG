@@ -47,7 +47,7 @@ class MatrixRow:
 class CellData:
     row: int
     col: int
-    bbox: Tuple[float, float, float, float]  # (x0, top, x1, bottom) in PDF top-left coords
+    bbox: Tuple[float, float, float, float]
     name: str
     last5: str
     qty: Optional[int]
@@ -89,9 +89,9 @@ def _font_name(preferred: str, fallback: str) -> str:
         return fallback
 
 
-TITLE_FONT = _font_name("Raleway-Bold", "Helvetica-Bold")
-BODY_FONT = _font_name("Raleway", "Helvetica")
-BODY_BOLD_FONT = _font_name("Raleway-Bold", "Helvetica-Bold")
+TITLE_FONT     = _font_name("Raleway-Bold",  "Helvetica-Bold")
+BODY_FONT      = _font_name("Raleway",       "Helvetica")
+BODY_BOLD_FONT = _font_name("Raleway-Bold",  "Helvetica-Bold")
 
 
 def _norm_name(s: str) -> str:
@@ -191,8 +191,8 @@ def boundaries_from_centers(centers: np.ndarray) -> np.ndarray:
         step = 100.0
         return np.array([centers[0] - step / 2, centers[0] + step / 2], dtype=float)
 
-    mids = (centers[:-1] + centers[1:]) / 2.0
-    left = centers[0] - (mids[0] - centers[0])
+    mids  = (centers[:-1] + centers[1:]) / 2.0
+    left  = centers[0]  - (mids[0]  - centers[0])
     right = centers[-1] + (centers[-1] - mids[-1])
     return np.concatenate([[left], mids, [right]])
 
@@ -205,7 +205,7 @@ def parse_label_cell_text(text: str) -> Tuple[str, str, Optional[int]]:
     last5 = m.group(1) if m else ""
 
     nums = re.findall(r"\b(\d{1,3})\b", joined)
-    qty = int(nums[-1]) if nums else None
+    qty  = int(nums[-1]) if nums else None
 
     name_lines: List[str] = []
     for ln in lines:
@@ -225,7 +225,7 @@ def extract_pages_from_labels(labels_pdf_bytes: bytes, n_cols: int) -> List[Page
     with pdfplumber.open(io.BytesIO(labels_pdf_bytes)) as pdf:
         for pidx, page in enumerate(pdf.pages):
             words = page.extract_words(use_text_flow=True, keep_blank_chars=False) or []
-            five = [w for w in words if re.fullmatch(r"\d{5}", str(w.get("text", "")))]
+            five  = [w for w in words if re.fullmatch(r"\d{5}", str(w.get("text", "")))]
 
             if not five:
                 continue
@@ -234,7 +234,7 @@ def extract_pages_from_labels(labels_pdf_bytes: bytes, n_cols: int) -> List[Page
             ys = [(w["top"] + w["bottom"]) / 2.0 for w in five]
 
             x_centers = kmeans_1d(xs, n_cols)
-            est_rows = max(1, int(round(len(five) / max(1, n_cols))))
+            est_rows  = max(1, int(round(len(five) / max(1, n_cols))))
             y_centers = kmeans_1d(ys, est_rows)
 
             x_bounds = boundaries_from_centers(x_centers)
@@ -242,10 +242,10 @@ def extract_pages_from_labels(labels_pdf_bytes: bytes, n_cols: int) -> List[Page
 
             cell_map: Dict[Tuple[int, int], Tuple[float, dict]] = {}
             for w, xc, yc in zip(five, xs, ys):
-                col = int(np.argmin(np.abs(x_centers - xc)))
-                row = int(np.argmin(np.abs(y_centers - yc)))
+                col  = int(np.argmin(np.abs(x_centers - xc)))
+                row  = int(np.argmin(np.abs(y_centers - yc)))
                 dist = float(abs(x_centers[col] - xc) + abs(y_centers[row] - yc))
-                key = (row, col)
+                key  = (row, col)
                 if key not in cell_map or dist < cell_map[key][0]:
                     cell_map[key] = (dist, w)
 
@@ -257,17 +257,12 @@ def extract_pages_from_labels(labels_pdf_bytes: bytes, n_cols: int) -> List[Page
                     float(x_bounds[col + 1]),
                     float(y_bounds[row + 1]),
                 )
-                txt = (page.crop(bbox).extract_text() or "").strip()
+                txt  = (page.crop(bbox).extract_text() or "").strip()
                 name, last5, qty = parse_label_cell_text(txt)
                 cells.append(
                     CellData(
-                        row=row,
-                        col=col,
-                        bbox=bbox,
-                        name=name,
-                        last5=last5,
-                        qty=qty,
-                        upc12=None,
+                        row=row, col=col, bbox=bbox,
+                        name=name, last5=last5, qty=qty, upc12=None,
                     )
                 )
 
@@ -288,20 +283,20 @@ def crop_image_cell(
     w = x1 - x0
     h = bottom - top
 
-    x0i = x0 + w * inset
-    x1i = x1 - w * inset
-    topi = top + h * inset
+    x0i     = x0     + w * inset
+    x1i     = x1     - w * inset
+    topi    = top    + h * inset
     bottomi = bottom - h * inset
 
     rect = fitz.Rect(x0i, topi, x1i, bottomi)
-    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=rect, alpha=False)
+    pix  = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=rect, alpha=False)
     return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
 
 def wrap_text(text: str, max_width: float, font_name: str, font_size: float) -> List[str]:
     parts = (text or "").split()
     lines: List[str] = []
-    cur: List[str] = []
+    cur: List[str]   = []
     for w in parts:
         trial = " ".join(cur + [w]).strip()
         if not cur or pdfmetrics.stringWidth(trial, font_name, font_size) <= max_width:
@@ -326,22 +321,19 @@ def _hex_to_rgb01(hex_str: str) -> Tuple[float, float, float]:
 
 def _draw_horizontal_gradient(
     c: canvas.Canvas,
-    x: float,
-    y: float,
-    w: float,
-    h: float,
+    x: float, y: float, w: float, h: float,
     left_rgb: Tuple[float, float, float],
     right_rgb: Tuple[float, float, float],
     steps: int = 80,
 ) -> None:
     steps = max(8, int(steps))
     for i in range(steps):
-        t = i / (steps - 1)
-        r = left_rgb[0] * (1 - t) + right_rgb[0] * t
-        g = left_rgb[1] * (1 - t) + right_rgb[1] * t
-        b = left_rgb[2] * (1 - t) + right_rgb[2] * t
-        c.setFillColorRGB(r, g, b)
-        c.setStrokeColorRGB(r, g, b)
+        t  = i / (steps - 1)
+        r_ = left_rgb[0] * (1 - t) + right_rgb[0] * t
+        g_ = left_rgb[1] * (1 - t) + right_rgb[1] * t
+        b_ = left_rgb[2] * (1 - t) + right_rgb[2] * t
+        c.setFillColorRGB(r_, g_, b_)
+        c.setStrokeColorRGB(r_, g_, b_)
         xi = x + (w * i / steps)
         wi = w / steps + 0.5
         c.rect(xi, y, wi, h, stroke=0, fill=1)
@@ -363,24 +355,6 @@ def _try_load_logo() -> Optional[Image.Image]:
     return None
 
 
-def _ellipsize_to_width(text: str, font_name: str, font_size: float, max_width: float) -> str:
-    t = (text or "").strip()
-    if pdfmetrics.stringWidth(t, font_name, font_size) <= max_width:
-        return t
-    ell = "..."
-    lo, hi = 0, len(t)
-    best = ell
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        cand = (t[:mid].rstrip() + ell).strip()
-        if pdfmetrics.stringWidth(cand, font_name, font_size) <= max_width:
-            best = cand
-            lo = mid + 1
-        else:
-            hi = mid - 1
-    return best
-
-
 def _fit_single_line_font(
     text: str,
     font_name: str,
@@ -393,7 +367,6 @@ def _fit_single_line_font(
     t = (text or "").strip()
     if not t:
         return min_size
-
     size = max_size
     while size >= min_size:
         if size <= max_height and pdfmetrics.stringWidth(t, font_name, size) <= max_width:
@@ -404,72 +377,79 @@ def _fit_single_line_font(
 
 def _draw_cell_text_block(
     c: canvas.Canvas,
-    x: float,
-    y: float,
-    w: float,
-    h: float,
+    x: float, y: float, w: float, h: float,
     name: str,
     upc12: Optional[str],
     last5: str,
     qty: Optional[int],
 ) -> None:
-    pad_x = 4
-    pad_y = 3
-    max_w = max(12.0, w - pad_x * 2)
-    max_h = max(12.0, h - pad_y * 2)
+    """
+    Draws name (bold, may wrap), full 12-digit UPC, and Qty into the text area.
+    Shrinks font size progressively until ALL three items fit — never truncates.
+    """
+    pad_x   = 5
+    pad_y   = 4
+    max_w   = max(12.0, w - pad_x * 2)
+    avail_h = max(10.0, h - pad_y * 2)
 
-    meta_upc = upc12 or (f"???????{last5}" if last5 else "")
-    meta_line = ""
-    if meta_upc and qty is not None:
-        meta_line = f"UPC: {meta_upc}   Qty: {qty}"
-    elif meta_upc:
-        meta_line = f"UPC: {meta_upc}"
-    elif qty is not None:
-        meta_line = f"Qty: {qty}"
+    upc_str = upc12 if upc12 else (f"???????{last5}" if last5 else "")
 
-    name_size = 15.0
-    while name_size >= 7.0:
-        meta_size = min(12.5, max(8.0, name_size * 0.92))
-        name_lines = wrap_text(name, max_w, BODY_BOLD_FONT, name_size)
-        if len(name_lines) > 2:
-            name_lines = [name_lines[0], " ".join(name_lines[1:])]
+    # Try decreasing sizes until everything fits
+    name_size = 13.0
+    while name_size >= 5.0:
+        meta_size   = max(5.0, name_size * 0.86)
+        line_h_name = name_size * 1.18
+        line_h_meta = meta_size * 1.18
+        gap         = 2.5
 
-        if len(name_lines) == 2:
-            name_lines[1] = _ellipsize_to_width(name_lines[1], BODY_BOLD_FONT, name_size, max_w)
-        elif len(name_lines) == 1:
-            name_lines[0] = _ellipsize_to_width(name_lines[0], BODY_BOLD_FONT, name_size, max_w)
+        name_lines = wrap_text(name or "", max_w, BODY_BOLD_FONT, name_size)
+        upc_line   = f"UPC: {upc_str}" if upc_str  else ""
+        qty_line   = f"Qty: {qty}"     if qty is not None else ""
 
-        meta_fit = _ellipsize_to_width(meta_line, BODY_BOLD_FONT, meta_size, max_w) if meta_line else ""
+        needed = (
+            len(name_lines) * line_h_name
+            + (gap if name_lines and (upc_line or qty_line) else 0)
+            + (line_h_meta if upc_line else 0)
+            + (line_h_meta if qty_line else 0)
+        )
 
-        line_h_name = name_size * 1.08
-        line_h_meta = meta_size * 1.12
-        gap = max(1.0, name_size * 0.16) if meta_fit and name_lines else 0.0
-        needed_h = len(name_lines) * line_h_name + (line_h_meta + gap if meta_fit else 0)
-
-        if needed_h <= max_h:
-            top = y + (h + needed_h) / 2
-            ty = top - name_size
+        if needed <= avail_h:
+            # Draw from top of text area downward
+            ty = y + h - pad_y - name_size
             c.setFillColorRGB(*NAVY_RGB)
             c.setFont(BODY_BOLD_FONT, name_size)
             for ln in name_lines:
-                c.drawString(x + pad_x, ty, ln)
+                c.drawString(x + pad_x, max(y + pad_y, ty), ln)
                 ty -= line_h_name
 
-            if meta_fit:
-                c.setFont(BODY_FONT, meta_size)
-                if name_lines:
-                    ty -= gap
-                    c.drawString(x + pad_x, max(y + pad_y, ty), meta_fit)
-                else:
-                    meta_y = y + (h - meta_size) / 2 + 1
-                    c.drawString(x + pad_x, max(y + pad_y, meta_y), meta_fit)
+            if name_lines and (upc_line or qty_line):
+                ty -= gap
+
+            c.setFont(BODY_FONT, meta_size)
+            if upc_line:
+                c.drawString(x + pad_x, max(y + pad_y, ty), upc_line)
+                ty -= line_h_meta
+            if qty_line:
+                c.drawString(x + pad_x, max(y + pad_y, ty), qty_line)
             return
+
         name_size -= 0.5
 
-    c.setFont(BODY_BOLD_FONT, 7.0)
+    # Absolute last-resort at floor size — still no truncation
+    fs = 5.0
+    ty = y + h - pad_y - fs
     c.setFillColorRGB(*NAVY_RGB)
-    fallback = _ellipsize_to_width(meta_line or name, BODY_BOLD_FONT, 7.0, max_w)
-    c.drawString(x + pad_x, y + pad_y, fallback)
+    for ln in wrap_text(name or "", max_w, BODY_BOLD_FONT, fs):
+        c.setFont(BODY_BOLD_FONT, fs)
+        c.drawString(x + pad_x, max(y + pad_y, ty), ln)
+        ty -= fs * 1.18
+    c.setFont(BODY_FONT, fs)
+    if upc_str:
+        c.drawString(x + pad_x, max(y + pad_y, ty), f"UPC: {upc_str}")
+        ty -= fs * 1.18
+    if qty is not None:
+        c.drawString(x + pad_x, max(y + pad_y, ty), f"Qty: {qty}")
+
 
 def render_pog_pdf(
     pages: List[PageData],
@@ -481,84 +461,93 @@ def render_pog_pdf(
     """
     Renders all sides onto a SINGLE wide page, laid out horizontally
     left-to-right: Side A | Side B | Side C | Side D ...
+    Side labels sit in a dedicated strip between the header and the cell grid.
     """
     buf = io.BytesIO()
     images_doc = fitz.open(stream=images_pdf_bytes, filetype="pdf")
 
-    scale_factor = 1.5
-    outer_margin = 44
-    side_gap = 28
-    top_bar_h = 90
-    footer_h = 44
+    scale_factor  = 1.5
+    outer_margin  = 44
+    side_gap      = 28
+    top_bar_h     = 90
+    footer_h      = 44
+    # Dedicated space between header bar bottom and cell grid top — holds side badges
+    side_label_h  = 56
 
     cell_inset = 5
-    border_w = 0.75
+    border_w   = 0.75
+    img_frac   = 0.58   # image: 58 % of cell height; text: 42 %
 
-    img_frac = 0.64
-    grad_left = _hex_to_rgb01("#5B63A9")
+    grad_left  = _hex_to_rgb01("#5B63A9")
     grad_right = _hex_to_rgb01("#3E4577")
 
     logo_img = _try_load_logo()
 
-    n_sides = len(pages)
+    n_sides    = len(pages)
     per_side_w = int(310 * scale_factor)
 
     side_scales: List[float] = []
     side_scaled_heights: List[float] = []
 
     for p in pages:
-        x_min = float(p.x_bounds[0])
-        x_max = float(p.x_bounds[-1])
-        y_min = float(p.y_bounds[0])
-        y_max = float(p.y_bounds[-1])
-        w0 = max(1e-6, x_max - x_min)
-        h0 = max(1e-6, y_max - y_min)
-        sc = per_side_w / w0
+        x_min = float(p.x_bounds[0]);  x_max = float(p.x_bounds[-1])
+        y_min = float(p.y_bounds[0]);  y_max = float(p.y_bounds[-1])
+        sc    = per_side_w / max(1e-6, x_max - x_min)
         side_scales.append(sc)
-        side_scaled_heights.append(sc * h0)
+        side_scaled_heights.append(sc * max(1e-6, y_max - y_min))
 
     content_h = max(side_scaled_heights) if side_scaled_heights else 600.0
     page_w = outer_margin * 2 + n_sides * per_side_w + (n_sides - 1) * side_gap
-    page_h = outer_margin + top_bar_h + content_h + footer_h + outer_margin
+    page_h = outer_margin + top_bar_h + side_label_h + content_h + footer_h + outer_margin
 
     c = canvas.Canvas(buf, pagesize=(page_w, page_h))
 
     try:
-        header_y = page_h - top_bar_h
+        # ── Gradient header bar ────────────────────────────────────────────
+        header_y = page_h - top_bar_h   # bottom edge of header bar (y increases upward)
         _draw_horizontal_gradient(c, 0, header_y, page_w, top_bar_h, grad_left, grad_right, steps=120)
 
         left_pad = 16
-        title_x = left_pad
+        title_x  = left_pad
+
         if logo_img is not None:
-            lw, lh = logo_img.size
+            lw, lh   = logo_img.size
             target_h = top_bar_h * 0.64
-            r = target_h / max(1, lh)
-            dw, dh = lw * r, lh * r
-            c.drawImage(ImageReader(logo_img), left_pad, header_y + (top_bar_h - dh) / 2, dw, dh, mask="auto")
+            r        = target_h / max(1, lh)
+            dw, dh   = lw * r, lh * r
+            c.drawImage(
+                ImageReader(logo_img),
+                left_pad, header_y + (top_bar_h - dh) / 2,
+                dw, dh, mask="auto",
+            )
             title_x = left_pad + dw + 16
 
-        title_text = title_prefix.strip() or "POG"
+        title_text  = title_prefix.strip() or "POG"
         title_max_w = max(120.0, page_w - title_x - left_pad)
-        title_size = _fit_single_line_font(
-            title_text,
-            TITLE_FONT,
-            max_width=title_max_w,
-            max_height=top_bar_h * 0.82,
-            min_size=24.0,
-            max_size=46.0,
-            step=0.5,
+        title_size  = _fit_single_line_font(
+            title_text, TITLE_FONT,
+            max_width=title_max_w, max_height=top_bar_h * 0.82,
+            min_size=24.0, max_size=46.0, step=0.5,
         )
         c.setFillColorRGB(1, 1, 1)
         c.setFont(TITLE_FONT, title_size)
         c.drawString(title_x, header_y + (top_bar_h - title_size) / 2 + 2, title_text)
 
+        # Thin rule at bottom of header
         c.setLineWidth(1.0)
         c.setStrokeColorRGB(0.88, 0.88, 0.92)
         c.line(0, header_y, page_w, header_y)
 
-        content_top = header_y - 12
+        # ── Vertical zones (y increases upward in ReportLab) ───────────────
+        # header bar      : [header_y ............. page_h]
+        # side label strip: [cells_top ............ header_y]   (height = side_label_h)
+        # cell grid       : [content_bottom ....... cells_top]
+        # footer          : [outer_margin ......... outer_margin + footer_h]
+
+        cells_top      = header_y - side_label_h   # top of cell grid / bottom of label strip
         content_bottom = outer_margin + footer_h
 
+        # ── Footer ────────────────────────────────────────────────────────
         c.setLineWidth(0.8)
         c.setStrokeColorRGB(0.82, 0.82, 0.82)
         c.line(outer_margin, content_bottom, page_w - outer_margin, content_bottom)
@@ -567,31 +556,30 @@ def render_pog_pdf(
         c.setFillColorRGB(*NAVY_RGB)
         c.setFont(BODY_BOLD_FONT, 12)
         footer_left = f"Date: {date.today().isoformat()}"
-        footer_mid = "Generated by Kendal King"
+        footer_mid  = "Generated by Kendal King"
         c.drawString(outer_margin, footer_y, footer_left)
         mid_w = pdfmetrics.stringWidth(footer_mid, BODY_BOLD_FONT, 12)
         c.drawString((page_w - mid_w) / 2, footer_y, footer_mid)
 
+        # ── Per-side rendering ─────────────────────────────────────────────
         for out_i, p in enumerate(pages):
-            side_letter = chr(ord("A") + out_i)
+            side_letter   = chr(ord("A") + out_i)
             side_origin_x = outer_margin + out_i * (per_side_w + side_gap)
 
-            badge_y = content_top + 6
-            badge_h = 38
-            badge_w = 152
+            # Side badge — sits centred inside the label strip (below header, above cells)
+            badge_h = 34
+            badge_w = 148
+            badge_y = cells_top + (side_label_h - badge_h) / 2   # centred vertically in strip
             c.setFillColorRGB(1, 1, 1)
             c.setStrokeColorRGB(0.85, 0.85, 0.90)
             c.setLineWidth(0.85)
             c.roundRect(side_origin_x, badge_y, badge_w, badge_h, 8, stroke=1, fill=1)
-            side_text = f"Side {side_letter}"
+
+            side_text      = f"Side {side_letter}"
             side_font_size = _fit_single_line_font(
-                side_text,
-                TITLE_FONT,
-                max_width=badge_w - 16,
-                max_height=badge_h - 8,
-                min_size=14.0,
-                max_size=24.0,
-                step=0.25,
+                side_text, TITLE_FONT,
+                max_width=badge_w - 16, max_height=badge_h - 8,
+                min_size=14.0, max_size=22.0, step=0.25,
             )
             side_text_w = pdfmetrics.stringWidth(side_text, TITLE_FONT, side_font_size)
             side_x = side_origin_x + (badge_w - side_text_w) / 2
@@ -600,29 +588,30 @@ def render_pog_pdf(
             c.setFont(TITLE_FONT, side_font_size)
             c.drawString(side_x, side_y, side_text)
 
+            # Vertical separator between sides
             if out_i > 0:
                 sep_x = side_origin_x - side_gap / 2
                 c.setLineWidth(0.6)
                 c.setStrokeColorRGB(0.88, 0.88, 0.88)
-                c.line(sep_x, content_bottom + 2, sep_x, content_top + 44)
+                c.line(sep_x, content_bottom + 2, sep_x, header_y)
 
+            # ── Cell grid for this side ────────────────────────────────────
             x_min = float(p.x_bounds[0])
-            x_max = float(p.x_bounds[-1])
             y_min = float(p.y_bounds[0])
-            sc = side_scales[out_i]
+            sc    = side_scales[out_i]
 
             for cell in p.cells:
                 upc12 = resolve_full_upc(cell.last5, cell.name, matrix_idx) if cell.last5 else None
                 x0, top, x1, bottom = cell.bbox
 
-                ox0 = side_origin_x + (x0 - x_min) * sc
-                ox1 = side_origin_x + (x1 - x_min) * sc
-                oy_top = content_top - (top - y_min) * sc
-                oy_bottom = content_top - (bottom - y_min) * sc
+                ox0       = side_origin_x + (x0     - x_min) * sc
+                ox1       = side_origin_x + (x1     - x_min) * sc
+                oy_top    = cells_top     - (top    - y_min) * sc
+                oy_bottom = cells_top     - (bottom - y_min) * sc
 
-                ox0 += cell_inset
-                ox1 -= cell_inset
-                oy_top -= cell_inset
+                ox0       += cell_inset
+                ox1       -= cell_inset
+                oy_top    -= cell_inset
                 oy_bottom += cell_inset
 
                 ow = ox1 - ox0
@@ -630,40 +619,38 @@ def render_pog_pdf(
                 if ow <= 2 or oh <= 2:
                     continue
 
+                # Cell background + border
                 c.setFillColorRGB(1, 1, 1)
                 c.setStrokeColorRGB(0.72, 0.72, 0.72)
                 c.setLineWidth(border_w)
                 c.rect(ox0, oy_bottom, ow, oh, stroke=1, fill=1)
 
-                img_area_h = oh * img_frac
+                img_area_h  = oh * img_frac
                 text_area_h = oh - img_area_h
 
-                img = crop_image_cell(images_doc, p.page_index, cell.bbox, zoom=3.2, inset=0.08)
-                iw, ih = img.size
+                # Card image
+                img       = crop_image_cell(images_doc, p.page_index, cell.bbox, zoom=3.2, inset=0.08)
+                iw, ih    = img.size
                 img_box_w = ow * 0.86
                 img_box_h = img_area_h * 0.84
-                r = min(img_box_w / max(1, iw), img_box_h / max(1, ih))
-                dw, dh = iw * r, ih * r
-
+                r         = min(img_box_w / max(1, iw), img_box_h / max(1, ih))
+                dw, dh    = iw * r, ih * r
                 ix = ox0 + (ow - dw) / 2
                 iy = oy_bottom + text_area_h + (img_area_h - dh) / 2
                 c.drawImage(ImageReader(img), ix, iy, dw, dh, preserveAspectRatio=True, mask="auto")
 
+                # Separator between image and text
                 sep_y = oy_bottom + text_area_h
                 c.setLineWidth(0.5)
                 c.setStrokeColorRGB(0.88, 0.88, 0.88)
                 c.line(ox0 + 3, sep_y, ox1 - 3, sep_y)
 
+                # Text block — full name, full 12-digit UPC, qty — no truncation
                 _draw_cell_text_block(
                     c,
-                    x=ox0,
-                    y=oy_bottom,
-                    w=ow,
-                    h=text_area_h,
-                    name=cell.name,
-                    upc12=upc12,
-                    last5=cell.last5,
-                    qty=cell.qty,
+                    x=ox0, y=oy_bottom, w=ow, h=text_area_h,
+                    name=cell.name, upc12=upc12,
+                    last5=cell.last5, qty=cell.qty,
                 )
 
         c.showPage()
@@ -681,12 +668,12 @@ def main() -> None:
     with st.sidebar:
         st.header("Inputs")
         matrix_file = st.file_uploader("Matrix Excel (.xlsx)", type=["xlsx"])
-        labels_pdf = st.file_uploader("Labels PDF (text + last5 + qty)", type=["pdf"])
-        images_pdf = st.file_uploader("Images PDF (card pictures)", type=["pdf"])
+        labels_pdf  = st.file_uploader("Labels PDF (text + last5 + qty)", type=["pdf"])
+        images_pdf  = st.file_uploader("Images PDF (card pictures)", type=["pdf"])
 
         st.divider()
         title_prefix = st.text_input("PDF title prefix", value="POG")
-        out_name = st.text_input("Output filename", value="pog_export.pdf")
+        out_name     = st.text_input("Output filename", value="pog_export.pdf")
 
         generate = st.button("Generate POG PDF", type="primary", use_container_width=True)
 
