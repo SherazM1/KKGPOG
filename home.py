@@ -627,19 +627,19 @@ def render_pog_pdf(
 
 def main() -> None:
     st.set_page_config(page_title="POG Generator", layout="wide")
-    st.title("POG Generator (Labels PDF + Images PDF + Matrix XLSX → Export PDF)")
+    st.title("POG Generator")
 
     with st.sidebar:
         st.header("Inputs")
         matrix_file = st.file_uploader("Matrix Excel (.xlsx)", type=["xlsx"])
-        labels_pdf = st.file_uploader("Labels PDF (text + last5 + qty)", type=["pdf"])
-        images_pdf = st.file_uploader("Images PDF (card pictures)", type=["pdf"])
+        labels_pdf = st.file_uploader("Labels PDF", type=["pdf"])
+        images_pdf = st.file_uploader("Images PDF", type=["pdf"])
 
         st.divider()
-        title_prefix = st.text_input("PDF title prefix", value="POG")
+        title_prefix = st.text_input("PDF title", value="POG")
         out_name = st.text_input("Output filename", value="pog_export.pdf")
 
-        generate = st.button("Generate POG PDF", type="primary", use_container_width=True)
+        generate = st.button("Generate PDF", type="primary", use_container_width=True)
 
     if not (matrix_file and labels_pdf and images_pdf):
         st.info("Upload Matrix XLSX + Labels PDF + Images PDF to begin.")
