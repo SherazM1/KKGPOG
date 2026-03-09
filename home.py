@@ -662,14 +662,14 @@ def render_pog_pdf(
 
 
 def main() -> None:
-    st.set_page_config(page_title="POG Generator", layout="wide")
-    st.title("POG Generator (Labels PDF + Images PDF + Matrix XLSX → Export PDF)")
+    st.set_page_config(page_title="Planogram Generator", layout="wide")
+    st.title("Planogram Generator")
 
     with st.sidebar:
         st.header("Inputs")
-        matrix_file = st.file_uploader("Matrix Excel (.xlsx)", type=["xlsx"])
-        labels_pdf  = st.file_uploader("Labels PDF (text + last5 + qty)", type=["pdf"])
-        images_pdf  = st.file_uploader("Images PDF (card pictures)", type=["pdf"])
+        matrix_file = st.file_uploader("Matrix/UPC Excel (.xlsx)", type=["xlsx"])
+        labels_pdf  = st.file_uploader("Labels PDF", type=["pdf"])
+        images_pdf  = st.file_uploader("Images PDF", type=["pdf"])
 
         st.divider()
         title_prefix = st.text_input("PDF title prefix", value="POG")
@@ -678,7 +678,7 @@ def main() -> None:
         generate = st.button("Generate POG PDF", type="primary", use_container_width=True)
 
     if not (matrix_file and labels_pdf and images_pdf):
-        st.info("Upload Matrix XLSX + Labels PDF + Images PDF to begin.")
+        st.info("Upload Excels and PDFs to begin.")
         return
 
     matrix_bytes = matrix_file.getvalue()
@@ -693,7 +693,7 @@ def main() -> None:
         return
 
     st.subheader("Detected pages / sides")
-    st.write(f"Pages detected: **{len(pages)}** (will export as Side A, B, C...)")
+    st.write(f"Pages detected: **{len(pages)}** (will export each page as a Side A, B, C...)")
 
     preview_rows: List[dict] = []
     for i, p in enumerate(pages):
@@ -729,7 +729,7 @@ def main() -> None:
 
         st.success("Done.")
         st.download_button(
-            label="Download POG PDF",
+            label="Download PlanogramPDF",
             data=pdf_bytes,
             file_name=out_name if out_name.lower().endswith(".pdf") else f"{out_name}.pdf",
             mime="application/pdf",
