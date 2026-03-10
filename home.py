@@ -46,6 +46,7 @@ DISPLAY_FULL_PALLET = "Full Pallet / Multi-Zone Display"
 class MatrixRow:
     upc12: str
     norm_name: str
+    cpp_qty: Optional[int]
 
 
 @dataclass(frozen=True)
@@ -146,54 +147,119 @@ def _coerce_upc12(v: object) -> Optional[str]:
     return s.zfill(12)
 
 
+def _coerce_optional_int(v: object) -> Optional[int]:
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    s = re.sub(r"\.0$", "", s)
+    s = re.sub(r"[^\d\-]", "", s)
+    if not s:
+        return None
+    try:
+        return int(s)
+    except Exception:
+        return None
+
+
+def _normalize_header_name(v: object) -> str:
+    s = str(v).strip().upper()
+    s = re.sub(r"[^A-Z0-9]+", "_", s)
+    s = re.sub(r"_+", "_", s).strip("_")
+    return s or "COL"
+
+
+def _dedupe_headers(headers: List[object]) -> List[str]:
+    seen: Dict[str, int] = {}
+    out: List[str] = []
+    for h in headers:
+        base = _normalize_header_name(h)
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        out.append(base if n == 0 else f"{base}_{n+1}")
+    return out
+
+
 def _find_header_row(df: pd.DataFrame) -> int:
     for i in range(min(len(df), 50)):
         row = df.iloc[i].astype(str).str.upper().tolist()
         if any("UPC" in c for c in row) and any("NAME" in c for c in row):
             return i
+        if any("UPC" in c for c in row) and any("CPP" in c for c in row):
+            return i
     return 0
+
+
+def _pick_col(columns: List[str], preferred_tokens: List[str], fallback_idx: int) -> str:
+    normalized = [c.upper() for c in columns]
+    for token in preferred_tokens:
+        for i, col in enumerate(normalized):
+            if token in col:
+                return columns[i]
+    return columns[min(fallback_idx, len(columns) - 1)]
 
 
 @st.cache_data(show_spinner=False)
 def load_matrix_index(matrix_bytes: bytes) -> Dict[str, List[MatrixRow]]:
     df_raw = pd.read_excel(io.BytesIO(matrix_bytes), header=None)
     header_row = _find_header_row(df_raw)
-    df = df_raw.iloc[header_row + 1 :].copy()
-    df.columns = ["UPC", "Name", "Extra"][: df.shape[1]] + [
-        f"col_{i}" for i in range(max(0, df.shape[1] - 3))
-    ]
 
-    df["upc12"] = df["UPC"].map(_coerce_upc12)
-    df = df[df["upc12"].notna()].copy()
-    df["last5"] = df["upc12"].str[-5:]
-    df["norm_name"] = df["Name"].astype(str).map(_norm_name)
+    header_values = df_raw.iloc[header_row].tolist()
+    headers = _dedupe_headers(header_values)
+
+    df = df_raw.iloc[header_row + 1 :].copy()
+    df.columns = headers
+
+    upc_col = _pick_col(headers, ["UPC"], 0)
+    name_col = _pick_col(headers, ["NAME", "DESCRIPTION", "ITEM"], 1 if len(headers) > 1 else 0)
+    cpp_col = _pick_col(headers, ["CPP"], -1)
+
+    df["__upc12"] = df[upc_col].map(_coerce_upc12)
+    df["__name"] = df[name_col].astype(str).fillna("")
+    df["__norm_name"] = df["__name"].map(_norm_name)
+    df["__cpp_qty"] = df[cpp_col].map(_coerce_optional_int) if cpp_col in df.columns else None
+
+    df = df[df["__upc12"].notna()].copy()
+    df["__last5"] = df["__upc12"].str[-5:]
 
     idx: Dict[str, List[MatrixRow]] = {}
     for _, r in df.iterrows():
-        last5 = str(r["last5"])
+        last5 = str(r["__last5"])
         idx.setdefault(last5, []).append(
-            MatrixRow(upc12=str(r["upc12"]), norm_name=str(r["norm_name"]))
+            MatrixRow(
+                upc12=str(r["__upc12"]),
+                norm_name=str(r["__norm_name"]),
+                cpp_qty=None if pd.isna(r["__cpp_qty"]) else int(r["__cpp_qty"]),
+            )
         )
 
     return idx
 
 
-def resolve_full_upc(last5: str, label_name: str, idx: Dict[str, List[MatrixRow]]) -> Optional[str]:
+def resolve_matrix_row(last5: str, label_name: str, idx: Dict[str, List[MatrixRow]]) -> Optional[MatrixRow]:
     rows = idx.get(last5, [])
     if not rows:
         return None
     if len(rows) == 1:
-        return rows[0].upc12
+        return rows[0]
 
     target = _norm_name(label_name)
-    best_upc = rows[0].upc12
+    best_row = rows[0]
     best_score = -1.0
+
     for r in rows:
         score = difflib.SequenceMatcher(None, target, r.norm_name).ratio()
         if score > best_score:
             best_score = score
-            best_upc = r.upc12
-    return best_upc
+            best_row = r
+
+    return best_row
+
+
+def resolve_full_upc(last5: str, label_name: str, idx: Dict[str, List[MatrixRow]]) -> Optional[str]:
+    row = resolve_matrix_row(last5, label_name, idx)
+    return row.upc12 if row else None
 
 
 def kmeans_1d(values: List[float], k: int, iters: int = 40) -> np.ndarray:
@@ -279,7 +345,10 @@ def _word_text(word: dict) -> str:
 
 
 def _word_center(word: dict) -> Tuple[float, float]:
-    return ((float(word["x0"]) + float(word["x1"])) / 2.0, (float(word["top"]) + float(word["bottom"])) / 2.0)
+    return (
+        (float(word["x0"]) + float(word["x1"])) / 2.0,
+        (float(word["top"]) + float(word["bottom"])) / 2.0,
+    )
 
 
 def _union_bbox_from_words(words: List[dict], pad_x: float = 0.0, pad_y: float = 0.0) -> Tuple[float, float, float, float]:
@@ -442,7 +511,7 @@ def _draw_cell_text_block(
 
     name_size = 13.0
     while name_size >= 5.0:
-        meta_size = max(5.5, name_size * 0.92)
+        meta_size = max(6.0, name_size * 0.95)
         line_h_name = name_size * 1.16
         line_h_meta = meta_size * 1.14
         gap = 2.0
@@ -583,7 +652,10 @@ def _detect_phrase_boxes(words: List[dict], keywords: set[str], x_tol: float, y_
     groups = _group_words_by_proximity(matched, x_tol=x_tol, y_tol=y_tol)
     results: List[Tuple[str, Tuple[float, float, float, float]]] = []
     for grp in groups:
-        label = " ".join(str(w["text"]).strip() for w in sorted(grp, key=lambda ww: (_word_center(ww)[1], _word_center(ww)[0])))
+        label = " ".join(
+            str(w["text"]).strip()
+            for w in sorted(grp, key=lambda ww: (_word_center(ww)[1], _word_center(ww)[0]))
+        )
         bbox = _union_bbox_from_words(grp, pad_x=6, pad_y=4)
         results.append((label, bbox))
     return results
@@ -600,8 +672,8 @@ def _detect_top_octagon_boxes(words: List[dict]) -> List[AnnotationBox]:
         nearby = [
             w
             for w in words
-            if abs(_word_center(w)[0] - top_cx) <= 70
-            and abs(_word_center(w)[1] - top_cy) <= 60
+            if abs(_word_center(w)[0] - top_cx) <= 75
+            and abs(_word_center(w)[1] - top_cy) <= 65
         ]
         tokens = {_word_text(w) for w in nearby}
         if "OCTAGON" not in tokens:
@@ -630,13 +702,14 @@ def _detect_top_octagon_boxes(words: List[dict]) -> List[AnnotationBox]:
 def _detect_wm_placeholder_boxes(words: List[dict], page_height: float) -> List[AnnotationBox]:
     wanted = {"WM", "GIFTCARD", "GIFTCAR", "IN", "NEW", "PKG"}
     matched = [
-        w for w in words
-        if _word_text(w) in wanted and float(w["top"]) <= page_height * 0.38
+        w
+        for w in words
+        if _word_text(w) in wanted and float(w["top"]) <= page_height * 0.42
     ]
     if not matched:
         return []
 
-    groups = _group_words_by_proximity(matched, x_tol=14, y_tol=32)
+    groups = _group_words_by_proximity(matched, x_tol=16, y_tol=36)
     boxes: List[AnnotationBox] = []
     for grp in groups:
         tokens = {_word_text(w) for w in grp}
@@ -671,11 +744,22 @@ def _detect_bonus_box(words: List[dict], cells: List[FullPalletCell]) -> Tuple[O
     return AnnotationBox(kind="bonus_strip", label="BONUS", bbox=bbox), bonus_y
 
 
-def _classify_full_pallet_zone(cell_bbox: Tuple[float, float, float, float], bonus_y: Optional[float]) -> str:
+def _classify_full_pallet_zone(
+    cell_bbox: Tuple[float, float, float, float],
+    bonus_y: Optional[float],
+    top_octagon_boxes: List[AnnotationBox],
+) -> str:
     _, top, _, bottom = cell_bbox
     cy = (top + bottom) / 2.0
+
+    if top_octagon_boxes:
+        top_cut = max(box.bbox[3] for box in top_octagon_boxes) + 18
+        if cy < top_cut:
+            return "top_strip"
+
     if bonus_y is not None and cy < bonus_y - 8:
         return "upper_feature_grid"
+
     return "main_body_grid"
 
 
@@ -746,13 +830,14 @@ def extract_full_pallet_pages(labels_pdf_bytes: bytes) -> List[FullPalletPageDat
             if bonus_annotation is not None:
                 annotations.append(bonus_annotation)
 
-            for label, bbox in _detect_phrase_boxes(words, {"MARKETING", "MESSAGE", "PANEL"}, x_tol=30, y_tol=26):
+            for _, bbox in _detect_phrase_boxes(words, {"MARKETING", "MESSAGE", "PANEL"}, x_tol=34, y_tol=26):
                 annotations.append(AnnotationBox(kind="marketing_signage", label="MARKETING MESSAGE PANEL", bbox=bbox))
 
-            for label, bbox in _detect_phrase_boxes(words, {"FRAUD", "SIGNAGE"}, x_tol=30, y_tol=20):
+            for _, bbox in _detect_phrase_boxes(words, {"FRAUD", "SIGNAGE"}, x_tol=30, y_tol=20):
                 annotations.append(AnnotationBox(kind="fraud_signage", label="FRAUD SIGNAGE", bbox=bbox))
 
-            annotations.extend(_detect_top_octagon_boxes(words))
+            top_octagon_boxes = _detect_top_octagon_boxes(words)
+            annotations.extend(top_octagon_boxes)
             annotations.extend(_detect_wm_placeholder_boxes(words, page_height=page_height))
 
             cells: List[FullPalletCell] = []
@@ -766,7 +851,7 @@ def extract_full_pallet_pages(labels_pdf_bytes: bytes) -> List[FullPalletPageDat
                         last5=last5,
                         qty=qty,
                         upc12=None,
-                        zone=_classify_full_pallet_zone(bbox, bonus_y),
+                        zone=_classify_full_pallet_zone(bbox, bonus_y, top_octagon_boxes),
                     )
                 )
 
@@ -812,7 +897,6 @@ def render_standard_pog_pdf(
     pages: List[PageData],
     images_pdf_bytes: bytes,
     matrix_idx: Dict[str, List[MatrixRow]],
-    n_cols: int,
     title_prefix: str = "POG",
 ) -> bytes:
     buf = io.BytesIO()
@@ -831,7 +915,6 @@ def render_standard_pog_pdf(
 
     grad_left = _hex_to_rgb01("#5B63A9")
     grad_right = _hex_to_rgb01("#3E4577")
-
     logo_img = _try_load_logo()
 
     n_sides = len(pages)
@@ -850,7 +933,7 @@ def render_standard_pog_pdf(
         side_scaled_heights.append(sc * max(1e-6, y_max - y_min))
 
     content_h = max(side_scaled_heights) if side_scaled_heights else 600.0
-    page_w = outer_margin * 2 + n_sides * per_side_w + (n_sides - 1) * side_gap
+    page_w = outer_margin * 2 + n_sides * per_side_w + max(0, n_sides - 1) * side_gap
     page_h = outer_margin + top_bar_h + side_label_h + content_h + footer_h + outer_margin
 
     c = canvas.Canvas(buf, pagesize=(page_w, page_h))
@@ -945,7 +1028,10 @@ def render_standard_pog_pdf(
             sc = side_scales[out_i]
 
             for cell in p.cells:
-                upc12 = resolve_full_upc(cell.last5, cell.name, matrix_idx) if cell.last5 else None
+                match = resolve_matrix_row(cell.last5, cell.name, matrix_idx) if cell.last5 else None
+                upc12 = match.upc12 if match else None
+                qty = cell.qty if cell.qty is not None else (match.cpp_qty if match else None)
+
                 x0, top, x1, bottom = cell.bbox
 
                 ox0 = side_origin_x + (x0 - x_min) * sc
@@ -995,7 +1081,7 @@ def render_standard_pog_pdf(
                     name=cell.name,
                     upc12=upc12,
                     last5=cell.last5,
-                    qty=cell.qty,
+                    qty=qty,
                 )
 
         c.showPage()
@@ -1025,15 +1111,15 @@ def _transform_source_bbox_to_panel(
 
 def _annotation_style(kind: str) -> Tuple[Tuple[float, float, float], Tuple[float, float, float], Tuple[float, float, float]]:
     if kind == "marketing_signage":
-        return ((0.26, 0.92, 0.94), (0.35, 0.60, 0.62), (0.05, 0.10, 0.10))
+        return ((0.29, 0.88, 0.90), (0.32, 0.62, 0.64), (0.05, 0.10, 0.10))
     if kind == "fraud_signage":
-        return ((0.98, 0.96, 0.50), (0.70, 0.68, 0.28), (0.12, 0.12, 0.12))
+        return ((0.98, 0.94, 0.52), (0.72, 0.66, 0.26), (0.12, 0.12, 0.12))
     if kind == "bonus_strip":
-        return ((0.32, 0.95, 0.95), (0.25, 0.62, 0.62), NAVY_RGB)
+        return ((0.38, 0.92, 0.94), (0.25, 0.62, 0.62), NAVY_RGB)
     if kind == "top_octagon":
-        return ((0.96, 0.96, 0.96), (0.72, 0.72, 0.72), (0.10, 0.10, 0.10))
+        return ((0.96, 0.96, 0.96), (0.72, 0.72, 0.72), NAVY_RGB)
     if kind == "wm_new_pkg":
-        return ((_hex_to_rgb01("#4C75DD"))[0:3], (0.25, 0.35, 0.75), (1.0, 1.0, 1.0))
+        return ((_hex_to_rgb01("#4C75DD"))[0], (_hex_to_rgb01("#4C75DD"))[1], (_hex_to_rgb01("#4C75DD"))[2]), (0.25, 0.35, 0.75), (1.0, 1.0, 1.0)
     return ((0.94, 0.94, 0.94), (0.75, 0.75, 0.75), NAVY_RGB)
 
 
@@ -1046,10 +1132,10 @@ def render_full_pallet_pdf(
     buf = io.BytesIO()
     images_doc = fitz.open(stream=images_pdf_bytes, filetype="pdf")
 
-    outer_margin = 42
-    panel_gap = 24
-    panel_pad = 10
-    top_bar_h = 90
+    outer_margin = 36
+    panel_gap = 26
+    panel_pad = 12
+    top_bar_h = 92
     footer_h = 44
 
     grad_left = _hex_to_rgb01("#5B63A9")
@@ -1059,9 +1145,9 @@ def render_full_pallet_pdf(
     if pages:
         src_ratio = pages[0].page_width / max(1e-6, pages[0].page_height)
     else:
-        src_ratio = 0.78
+        src_ratio = 0.76
 
-    panel_h = 640.0
+    panel_h = 820.0
     panel_w = panel_h * src_ratio
 
     page_w = outer_margin * 2 + len(pages) * panel_w + max(0, len(pages) - 1) * panel_gap
@@ -1126,9 +1212,9 @@ def render_full_pallet_pdf(
         for idx, page in enumerate(pages):
             panel_x = outer_margin + idx * (panel_w + panel_gap)
 
-            c.setFillColorRGB(0.985, 0.985, 0.985)
-            c.setStrokeColorRGB(0.80, 0.80, 0.80)
-            c.setLineWidth(0.9)
+            c.setFillColorRGB(1, 1, 1)
+            c.setStrokeColorRGB(0.78, 0.78, 0.78)
+            c.setLineWidth(0.95)
             c.rect(panel_x, panel_y, panel_w, panel_h, stroke=1, fill=1)
 
             side_title = f"Side {page.side_letter}"
@@ -1136,6 +1222,10 @@ def render_full_pallet_pdf(
             c.setFont(TITLE_FONT, 15)
             title_w = pdfmetrics.stringWidth(side_title, TITLE_FONT, 15)
             c.drawString(panel_x + (panel_w - title_w) / 2, panel_y + panel_h - 20, side_title)
+
+            c.setLineWidth(0.5)
+            c.setStrokeColorRGB(0.88, 0.88, 0.88)
+            c.line(panel_x + 10, panel_y + panel_h - 28, panel_x + panel_w - 10, panel_y + panel_h - 28)
 
             if idx > 0:
                 sep_x = panel_x - panel_gap / 2
@@ -1146,12 +1236,12 @@ def render_full_pallet_pdf(
             inner_x = panel_x + panel_pad
             inner_y = panel_y + panel_pad
             inner_w = panel_w - panel_pad * 2
-            inner_h = panel_h - panel_pad * 2
+            inner_h = panel_h - panel_pad * 2 - 22
 
             page_letter_box_w = 56
             page_letter_box_h = 38
             page_letter_box_x = inner_x + (inner_w - page_letter_box_w) / 2
-            page_letter_box_y = inner_y + 8
+            page_letter_box_y = inner_y + 10
 
             for ann in page.annotations:
                 ax0, ay_top, ax1, ay_bottom = _transform_source_bbox_to_panel(
@@ -1171,7 +1261,7 @@ def render_full_pallet_pdf(
                 fill_rgb, stroke_rgb, text_rgb = _annotation_style(ann.kind)
                 c.setFillColorRGB(*fill_rgb)
                 c.setStrokeColorRGB(*stroke_rgb)
-                c.setLineWidth(0.7)
+                c.setLineWidth(0.8 if ann.kind in {"bonus_strip", "marketing_signage", "fraud_signage"} else 0.6)
                 c.rect(ax0, ay_bottom, aw, ah, stroke=1, fill=1)
 
                 font_name = TITLE_FONT if ann.kind in {"bonus_strip", "top_octagon"} else BODY_BOLD_FONT
@@ -1181,7 +1271,7 @@ def render_full_pallet_pdf(
                     max_width=max(20.0, aw - 8),
                     max_height=max(8.0, ah - 6),
                     min_size=6.0,
-                    max_size=min(16.0, ah - 4),
+                    max_size=min(15.0, ah - 4),
                     step=0.5,
                 )
                 _draw_centered_label(
@@ -1197,7 +1287,9 @@ def render_full_pallet_pdf(
                 )
 
             for cell in page.cells:
-                upc12 = resolve_full_upc(cell.last5, cell.name, matrix_idx) if cell.last5 else None
+                match = resolve_matrix_row(cell.last5, cell.name, matrix_idx) if cell.last5 else None
+                upc12 = match.upc12 if match else None
+                qty = match.cpp_qty if match and match.cpp_qty is not None else None
 
                 ox0, oy_top, ox1, oy_bottom = _transform_source_bbox_to_panel(
                     cell.bbox,
@@ -1209,7 +1301,10 @@ def render_full_pallet_pdf(
                     panel_h=inner_h,
                 )
 
-                cell_inset = 1.8 if cell.zone == "upper_feature_grid" else 1.2
+                cell_inset = 1.6 if cell.zone == "upper_feature_grid" else 1.2
+                if cell.zone == "top_strip":
+                    cell_inset = 1.8
+
                 ox0 += cell_inset
                 ox1 -= cell_inset
                 oy_top -= cell_inset
@@ -1221,15 +1316,21 @@ def render_full_pallet_pdf(
                     continue
 
                 c.setFillColorRGB(1, 1, 1)
-                c.setStrokeColorRGB(0.65, 0.65, 0.65)
-                c.setLineWidth(0.6 if cell.zone == "upper_feature_grid" else 0.45)
+                c.setStrokeColorRGB(0.62, 0.62, 0.62)
+                c.setLineWidth(0.62 if cell.zone in {"top_strip", "upper_feature_grid"} else 0.48)
                 c.rect(ox0, oy_bottom, ow, oh, stroke=1, fill=1)
 
-                img_frac = 0.68 if cell.zone == "upper_feature_grid" else 0.58
+                if cell.zone == "top_strip":
+                    img_frac = 0.72
+                elif cell.zone == "upper_feature_grid":
+                    img_frac = 0.66
+                else:
+                    img_frac = 0.56
+
                 img_area_h = oh * img_frac
                 text_area_h = oh - img_area_h
 
-                img = crop_image_cell(images_doc, page.page_index, cell.bbox, zoom=3.0, inset=0.08)
+                img = crop_image_cell(images_doc, page.page_index, cell.bbox, zoom=3.1, inset=0.08)
                 iw, ih = img.size
                 img_box_w = ow * 0.84
                 img_box_h = img_area_h * 0.82
@@ -1254,15 +1355,16 @@ def render_full_pallet_pdf(
                     name=cell.name,
                     upc12=upc12,
                     last5=cell.last5,
-                    qty=cell.qty,
+                    qty=qty,
                 )
 
             c.setFillColorRGB(1, 1, 1)
             c.setStrokeColorRGB(0.68, 0.68, 0.68)
             c.setLineWidth(0.8)
             c.rect(page_letter_box_x, page_letter_box_y, page_letter_box_w, page_letter_box_h, stroke=1, fill=1)
-            c.setFillColorRGB(0.08, 0.08, 0.08)
+
             side_font = 18
+            c.setFillColorRGB(0.08, 0.08, 0.08)
             c.setFont(TITLE_FONT, side_font)
             side_w = pdfmetrics.stringWidth(page.side_letter, TITLE_FONT, side_font)
             c.drawString(
@@ -1325,6 +1427,7 @@ def main() -> None:
         for i, p in enumerate(pages):
             side = chr(ord("A") + i)
             for cell in p.cells:
+                match = resolve_matrix_row(cell.last5, cell.name, matrix_idx) if cell.last5 else None
                 preview_rows.append(
                     {
                         "Display Type": display_type,
@@ -1333,8 +1436,8 @@ def main() -> None:
                         "Col": cell.col,
                         "Name": cell.name,
                         "Last5": cell.last5,
-                        "Qty": cell.qty,
-                        "UPC12 (resolved)": resolve_full_upc(cell.last5, cell.name, matrix_idx) if cell.last5 else None,
+                        "Qty": cell.qty if cell.qty is not None else (match.cpp_qty if match else None),
+                        "UPC12 (resolved)": match.upc12 if match else None,
                     }
                 )
 
@@ -1350,7 +1453,6 @@ def main() -> None:
                     pages=pages,
                     images_pdf_bytes=images_bytes,
                     matrix_idx=matrix_idx,
-                    n_cols=N_COLS,
                     title_prefix=title_prefix.strip() or "POG",
                 )
 
@@ -1375,6 +1477,7 @@ def main() -> None:
     preview_rows_fp: List[dict] = []
     for page in full_pallet_pages:
         for cell in page.cells:
+            match = resolve_matrix_row(cell.last5, cell.name, matrix_idx) if cell.last5 else None
             preview_rows_fp.append(
                 {
                     "Display Type": display_type,
@@ -1384,8 +1487,8 @@ def main() -> None:
                     "Col": cell.col,
                     "Name": cell.name,
                     "Last5": cell.last5,
-                    "Qty": cell.qty,
-                    "UPC12 (resolved)": resolve_full_upc(cell.last5, cell.name, matrix_idx) if cell.last5 else None,
+                    "Qty (CPP)": match.cpp_qty if match else None,
+                    "UPC12 (resolved)": match.upc12 if match else None,
                 }
             )
 
