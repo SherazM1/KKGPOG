@@ -1250,285 +1250,297 @@ def _annotation_display_label(kind: str, raw_label: str) -> str:
     return clean
 
 
+# home.py (replace ONLY this function)
+
 def render_full_pallet_pdf(
     pages: List[FullPalletPageData],
     images_pdf_bytes: bytes,
     matrix_idx: Dict[str, List[MatrixRow]],
     title_prefix: str = "POG",
 ) -> bytes:
+    """
+    Full Pallet / Multi-Zone renderer
+    Goal: each side is a true 11x17 portrait "page" (manual-like), then concatenated horizontally.
+
+    Rendering-only changes:
+    - Fixed per-side artboard: 792 x 1224 pt (11x17 at 72 dpi).
+    - No giant header/footer, no rounded container chrome.
+    - Letterbox-fit each source page into the 11x17 artboard (preserve aspect).
+    - Simple planogram styling (square tiles, thicker readable bars).
+    """
     buf = io.BytesIO()
     images_doc = fitz.open(stream=images_pdf_bytes, filetype="pdf")
 
-    outer_margin = 40
-    panel_gap = 30
-    panel_pad = 16
-    top_bar_h = 94
-    footer_h = 44
-    side_header_h = 42
+    # 11x17 at 72pt/in
+    PANEL_W = 11.0 * 72.0
+    PANEL_H = 17.0 * 72.0
 
-    grad_left = _hex_to_rgb01("#5B63A9")
-    grad_right = _hex_to_rgb01("#3E4577")
-    logo_img = _try_load_logo()
+    PANEL_GAP = 24.0
+    PANEL_MARGIN = 14.0  # small print-safe margin; keeps content big while avoiding edge-clipping
 
-    if pages:
-        src_ratio = pages[0].page_width / max(1e-6, pages[0].page_height)
-    else:
-        src_ratio = 0.76
+    # Manual-like bar styling
+    BAR_BLUE = _hex_to_rgb01("#2F5597")
+    BAR_TEXT = (1.0, 1.0, 1.0)
 
-    panel_h = 950.0
-    panel_w = panel_h * src_ratio
+    # Signage / placeholder styling
+    SIGN_FILL = _hex_to_rgb01("#EEF2F7")
+    SIGN_STROKE = _hex_to_rgb01("#B8C3D4")
+    SIGN_TEXT = _hex_to_rgb01("#0A1A38")
 
-    page_w = outer_margin * 2 + len(pages) * panel_w + max(0, len(pages) - 1) * panel_gap
-    page_h = outer_margin + top_bar_h + panel_h + footer_h + outer_margin
+    WM_BLUE = _hex_to_rgb01("#2E4EA1")
+
+    # Product tile styling (simple, readable)
+    TILE_STROKE = _hex_to_rgb01("#A9B2C2")
+    TILE_FILL = (1.0, 1.0, 1.0)
+
+    n = len(pages)
+    page_w = (PANEL_W * n) + (PANEL_GAP * max(0, n - 1))
+    page_h = PANEL_H
 
     c = canvas.Canvas(buf, pagesize=(page_w, page_h))
 
-    try:
-        header_y = page_h - top_bar_h
-        _draw_horizontal_gradient(c, 0, header_y, page_w, top_bar_h, grad_left, grad_right, steps=120)
+    def _fit_source_into_panel(src_w: float, src_h: float, panel_x: float, panel_y: float) -> Tuple[float, float, float, float, float]:
+        """
+        Returns:
+          inner_x, inner_y, scale, x_off, y_off
+        where (x_off, y_off) is the bottom-left origin in reportlab coords for mapping source coords.
+        """
+        inner_x = panel_x + PANEL_MARGIN
+        inner_y = panel_y + PANEL_MARGIN
+        inner_w = PANEL_W - 2 * PANEL_MARGIN
+        inner_h = PANEL_H - 2 * PANEL_MARGIN
 
-        left_pad = 16
-        title_x = left_pad
+        scale = min(inner_w / max(1e-6, src_w), inner_h / max(1e-6, src_h))
+        content_w = src_w * scale
+        content_h = src_h * scale
 
-        if logo_img is not None:
-            lw, lh = logo_img.size
-            target_h = top_bar_h * 0.64
-            r = target_h / max(1, lh)
-            dw, dh = lw * r, lh * r
-            c.drawImage(ImageReader(logo_img), left_pad, header_y + (top_bar_h - dh) / 2, dw, dh, mask="auto")
-            title_x = left_pad + dw + 16
+        x_off = inner_x + (inner_w - content_w) / 2.0
+        y_off = inner_y + (inner_h - content_h) / 2.0
+        return inner_x, inner_y, scale, x_off, y_off
 
-        title_text = title_prefix.strip() or "POG"
-        subtitle = "Full Pallet / Multi-Zone Display"
-        c.setFillColorRGB(1, 1, 1)
+    def _map_bbox(
+        bbox: Tuple[float, float, float, float],
+        src_w: float,
+        src_h: float,
+        x_off: float,
+        y_off: float,
+        scale: float,
+    ) -> Tuple[float, float, float, float]:
+        """
+        pdfplumber bbox uses (x0, top, x1, bottom) with top/bottom measured from top of page.
+        reportlab coords are bottom-left origin.
+        """
+        x0, top, x1, bottom = bbox
+        ox0 = x_off + x0 * scale
+        ox1 = x_off + x1 * scale
+        oy_top = y_off + (src_h - top) * scale
+        oy_bottom = y_off + (src_h - bottom) * scale
+        return (ox0, oy_top, ox1, oy_bottom)
 
-        title_max_w = max(120.0, page_w - title_x - left_pad - 10)
-        title_size = _fit_single_line_font(
-            title_text,
-            TITLE_FONT,
-            max_width=title_max_w,
-            max_height=36,
-            min_size=24,
-            max_size=40,
-            step=0.5,
+    def _draw_clipped_text_block(x: float, y: float, w: float, h: float, name: str, upc12: Optional[str], last5: str, qty: Optional[int]) -> None:
+        c.saveState()
+        p = c.beginPath()
+        p.rect(x, y, w, h)
+        c.clipPath(p, stroke=0, fill=0)
+        _draw_full_pallet_cell_text_block(
+            c,
+            x=x,
+            y=y,
+            w=w,
+            h=h,
+            name=name,
+            upc12=upc12,
+            last5=last5,
+            qty=qty,
         )
-        c.setFont(TITLE_FONT, title_size)
-        c.drawString(title_x, header_y + top_bar_h * 0.56, title_text)
-        c.setFont(BODY_FONT, 13)
-        c.drawString(title_x, header_y + top_bar_h * 0.28, subtitle)
+        c.restoreState()
 
-        c.setLineWidth(1.0)
-        c.setStrokeColorRGB(0.88, 0.88, 0.92)
-        c.line(0, header_y, page_w, header_y)
+    try:
+        c.setFillColorRGB(1, 1, 1)
+        c.rect(0, 0, page_w, page_h, stroke=0, fill=1)
 
-        footer_top = outer_margin + footer_h
-        c.setLineWidth(0.8)
-        c.setStrokeColorRGB(0.82, 0.82, 0.82)
-        c.line(outer_margin, footer_top, page_w - outer_margin, footer_top)
+        for i, page in enumerate(pages):
+            panel_x = i * (PANEL_W + PANEL_GAP)
+            panel_y = 0.0
 
-        footer_y = outer_margin + 13
-        c.setFillColorRGB(*NAVY_RGB)
-        c.setFont(BODY_BOLD_FONT, 12)
-        footer_left = f"Date: {date.today().isoformat()}"
-        footer_mid = "Generated by Kendal King"
-        c.drawString(outer_margin, footer_y, footer_left)
-        mid_w = pdfmetrics.stringWidth(footer_mid, BODY_BOLD_FONT, 12)
-        c.drawString((page_w - mid_w) / 2, footer_y, footer_mid)
+            # Panel border + separation
+            c.setStrokeColorRGB(*_hex_to_rgb01("#D1D7E2"))
+            c.setLineWidth(1.0)
+            c.rect(panel_x, panel_y, PANEL_W, PANEL_H, stroke=1, fill=0)
 
-        panel_y = footer_top + 10
+            if i > 0:
+                sep_x = panel_x - (PANEL_GAP / 2.0)
+                c.setStrokeColorRGB(*_hex_to_rgb01("#E1E6EF"))
+                c.setLineWidth(1.0)
+                c.line(sep_x, panel_y, sep_x, panel_y + PANEL_H)
 
-        zone_inset = {
-            "top_strip": 2.0,
-            "upper_feature_grid": 1.7,
-            "main_body_grid": 1.3,
-        }
-        zone_img_frac = {
-            "top_strip": 0.73,
-            "upper_feature_grid": 0.68,
-            "main_body_grid": 0.62,
-        }
-        zone_border_w = {
-            "top_strip": 0.72,
-            "upper_feature_grid": 0.62,
-            "main_body_grid": 0.50,
-        }
-        zone_stroke = {
-            "top_strip": _hex_to_rgb01("#7D8FA9"),
-            "upper_feature_grid": _hex_to_rgb01("#8A98AD"),
-            "main_body_grid": _hex_to_rgb01("#9CA8B8"),
-        }
-
-        for idx, page in enumerate(pages):
-            panel_x = outer_margin + idx * (panel_w + panel_gap)
-
-            c.setFillColorRGB(0.985, 0.987, 0.993)
-            c.setStrokeColorRGB(0.73, 0.78, 0.86)
-            c.setLineWidth(1.05)
-            c.roundRect(panel_x, panel_y, panel_w, panel_h, 10, stroke=1, fill=1)
-
-            band_x = panel_x + 9
-            band_w = panel_w - 18
-            band_h = side_header_h
-            band_y = panel_y + panel_h - band_h - 9
-            c.setFillColorRGB(0.96, 0.97, 0.99)
-            c.setStrokeColorRGB(0.80, 0.85, 0.92)
-            c.setLineWidth(0.75)
-            c.roundRect(band_x, band_y, band_w, band_h, 8, stroke=1, fill=1)
-
-            c.setFillColorRGB(*NAVY_RGB)
-            c.setFont(BODY_BOLD_FONT, 11)
-            c.drawString(band_x + 12, band_y + (band_h - 11) / 2 + 1, "FULL PALLET LAYOUT")
-
+            # Side label (small, non-invasive)
             side_title = f"SIDE {page.side_letter}"
-            side_font = 15
-            c.setFont(TITLE_FONT, side_font)
-            side_w = pdfmetrics.stringWidth(side_title, TITLE_FONT, side_font)
-            c.drawString(band_x + band_w - side_w - 12, band_y + (band_h - side_font) / 2 + 2, side_title)
+            c.setFillColorRGB(*NAVY_RGB)
+            c.setFont(TITLE_FONT, 16)
+            c.drawString(panel_x + 14, panel_y + PANEL_H - 22, side_title)
 
-            if idx > 0:
-                sep_x = panel_x - panel_gap / 2
-                c.setLineWidth(0.6)
-                c.setStrokeColorRGB(0.84, 0.86, 0.90)
-                c.line(sep_x, panel_y, sep_x, panel_y + panel_h)
+            src_w = float(page.page_width)
+            src_h = float(page.page_height)
 
-            inner_x = panel_x + panel_pad
-            inner_y = panel_y + panel_pad
-            inner_w = panel_w - panel_pad * 2
-            inner_h = max(10.0, band_y - inner_y - 8)
+            inner_x, inner_y, scale, x_off, y_off = _fit_source_into_panel(src_w, src_h, panel_x, panel_y)
 
-            if page.bonus_y is not None:
-                bonus_panel_y = inner_y + inner_h - (page.bonus_y / max(1e-6, page.page_height)) * inner_h
-                if inner_y + 8 < bonus_panel_y < inner_y + inner_h - 8:
-                    c.setStrokeColorRGB(0.84, 0.87, 0.93)
-                    c.setLineWidth(0.6)
-                    c.line(inner_x + 3, bonus_panel_y, inner_x + inner_w - 3, bonus_panel_y)
-
+            # --- Annotations (bars/signage/placeholders) ---
             for ann in page.annotations:
-                ax0, ay_top, ax1, ay_bottom = _transform_source_bbox_to_panel(
-                    ann.bbox,
-                    src_w=page.page_width,
-                    src_h=page.page_height,
-                    panel_x=inner_x,
-                    panel_y=inner_y,
-                    panel_w=inner_w,
-                    panel_h=inner_h,
-                )
+                ax0, ay_top, ax1, ay_bottom = _map_bbox(ann.bbox, src_w, src_h, x_off, y_off, scale)
                 aw = ax1 - ax0
                 ah = ay_top - ay_bottom
-                if aw <= 4 or ah <= 4:
+                if aw <= 3 or ah <= 3:
                     continue
 
-                min_h = 14.0
-                if ann.kind == "bonus_strip":
-                    min_h = 24.0
-                elif ann.kind in {"marketing_signage", "fraud_signage"}:
-                    min_h = 26.0
-                elif ann.kind == "wm_new_pkg":
-                    min_h = 20.0
-                elif ann.kind == "top_octagon":
-                    min_h = 18.0
+                kind = ann.kind
+                label = _annotation_display_label(kind, ann.label)
 
+                if kind in {"top_octagon", "bonus_strip"}:
+                    # Manual-like full-width blue bars at the detected y-position
+                    cy = (ay_top + ay_bottom) / 2.0
+                    bar_h = max(26.0, min(44.0, ah * 2.2))
+                    bx0 = inner_x + 6.0
+                    bx1 = inner_x + (PANEL_W - 2 * PANEL_MARGIN) - 6.0
+                    by0 = max(inner_y + 2.0, cy - bar_h / 2.0)
+                    by1 = min(inner_y + (PANEL_H - 2 * PANEL_MARGIN) - 2.0, cy + bar_h / 2.0)
+                    bar_h = by1 - by0
+                    if bar_h <= 10:
+                        continue
+
+                    c.setFillColorRGB(*BAR_BLUE)
+                    c.setStrokeColorRGB(*BAR_BLUE)
+                    c.setLineWidth(0.0)
+                    c.rect(bx0, by0, bx1 - bx0, bar_h, stroke=0, fill=1)
+
+                    font_size = _fit_single_line_font(
+                        label,
+                        TITLE_FONT,
+                        max_width=max(20.0, (bx1 - bx0) - 16),
+                        max_height=max(10.0, bar_h - 10),
+                        min_size=10.0,
+                        max_size=min(22.0, bar_h - 8),
+                        step=0.25,
+                    )
+                    _draw_centered_label(
+                        c,
+                        label=label,
+                        x=bx0,
+                        y=by0,
+                        w=(bx1 - bx0),
+                        h=bar_h,
+                        font_name=TITLE_FONT,
+                        font_size=font_size,
+                        fill_rgb=BAR_TEXT,
+                    )
+                    continue
+
+                # Marketing / Fraud / placeholders: simpler manual-like blocks (square)
+                min_h = 28.0 if kind in {"marketing_signage", "fraud_signage"} else 22.0
                 if ah < min_h:
                     cy = (ay_top + ay_bottom) / 2.0
-                    ay_bottom = max(inner_y, cy - min_h / 2.0)
-                    ay_top = min(inner_y + inner_h, cy + min_h / 2.0)
+                    ay_bottom = cy - min_h / 2.0
+                    ay_top = cy + min_h / 2.0
                     ah = ay_top - ay_bottom
-                if ah <= 3:
-                    continue
 
-                ax0 = max(inner_x, ax0)
-                ax1 = min(inner_x + inner_w, ax1)
-                aw = ax1 - ax0
-                if aw <= 6:
-                    continue
+                if kind == "wm_new_pkg":
+                    fill, stroke, text = WM_BLUE, WM_BLUE, (1.0, 1.0, 1.0)
+                else:
+                    fill, stroke, text = SIGN_FILL, SIGN_STROKE, SIGN_TEXT
 
-                label = _annotation_display_label(ann.kind, ann.label)
-                fill_rgb, stroke_rgb, text_rgb = _annotation_style(ann.kind)
-                c.setFillColorRGB(*fill_rgb)
-                c.setStrokeColorRGB(*stroke_rgb)
-                c.setLineWidth(0.8 if ann.kind in {"bonus_strip", "marketing_signage", "fraud_signage"} else 0.6)
-                radius = max(2.2, min(8.0, ah * 0.35))
-                c.roundRect(ax0, ay_bottom, aw, ah, radius, stroke=1, fill=1)
+                c.setFillColorRGB(*fill)
+                c.setStrokeColorRGB(*stroke)
+                c.setLineWidth(1.0 if kind in {"marketing_signage", "fraud_signage"} else 0.9)
+                c.rect(ax0, ay_bottom, aw, ah, stroke=1, fill=1)
 
-                font_name = TITLE_FONT if ann.kind in {"bonus_strip", "top_octagon"} else BODY_BOLD_FONT
+                font_name = BODY_BOLD_FONT
                 font_size = _fit_single_line_font(
                     label,
                     font_name,
-                    max_width=max(20.0, aw - 10),
-                    max_height=max(8.0, ah - 8),
-                    min_size=6.0,
-                    max_size=min(14.0, ah - 5),
+                    max_width=max(20.0, aw - 14),
+                    max_height=max(10.0, ah - 10),
+                    min_size=8.0,
+                    max_size=min(16.0, ah - 8),
                     step=0.25,
                 )
                 _draw_centered_label(
                     c,
-                    label,
+                    label=label,
                     x=ax0,
                     y=ay_bottom,
                     w=aw,
                     h=ah,
                     font_name=font_name,
                     font_size=font_size,
-                    fill_rgb=text_rgb,
+                    fill_rgb=text,
                 )
 
+            # --- Product tiles ---
             for cell in page.cells:
                 match = resolve_matrix_row(cell.last5, cell.name, matrix_idx) if cell.last5 else None
                 upc12 = match.upc12 if match else None
                 qty = match.cpp_qty if match and match.cpp_qty is not None else None
 
-                ox0, oy_top, ox1, oy_bottom = _transform_source_bbox_to_panel(
-                    cell.bbox,
-                    src_w=page.page_width,
-                    src_h=page.page_height,
-                    panel_x=inner_x,
-                    panel_y=inner_y,
-                    panel_w=inner_w,
-                    panel_h=inner_h,
-                )
-
-                cell_inset = zone_inset.get(cell.zone, 1.3)
-
-                ox0 += cell_inset
-                ox1 -= cell_inset
-                oy_top -= cell_inset
-                oy_bottom += cell_inset
+                ox0, oy_top, ox1, oy_bottom = _map_bbox(cell.bbox, src_w, src_h, x_off, y_off, scale)
 
                 ow = ox1 - ox0
                 oh = oy_top - oy_bottom
-                if ow <= 6 or oh <= 6:
+                if ow <= 10 or oh <= 10:
                     continue
 
-                c.setFillColorRGB(1, 1, 1)
-                c.setStrokeColorRGB(*zone_stroke.get(cell.zone, (0.62, 0.62, 0.62)))
-                c.setLineWidth(zone_border_w.get(cell.zone, 0.50))
-                radius = min(3.0, max(1.1, min(ow, oh) * 0.12))
-                c.roundRect(ox0, oy_bottom, ow, oh, radius, stroke=1, fill=1)
+                pad = max(3.0, min(8.0, min(ow, oh) * 0.06))
+                ox0 += pad
+                ox1 -= pad
+                oy_top -= pad
+                oy_bottom += pad
 
-                img_frac = zone_img_frac.get(cell.zone, 0.62)
+                ow = ox1 - ox0
+                oh = oy_top - oy_bottom
+                if ow <= 10 or oh <= 10:
+                    continue
 
-                img_area_h = oh * img_frac
-                text_area_h = max(7.0, oh - img_area_h)
-                img_area_h = max(4.0, oh - text_area_h)
+                # Zone-based density (manual-ish): top/upper slightly more image-forward
+                if cell.zone == "top_strip":
+                    img_frac = 0.78
+                    line_w = 1.05
+                elif cell.zone == "upper_feature_grid":
+                    img_frac = 0.72
+                    line_w = 0.95
+                else:
+                    img_frac = 0.66
+                    line_w = 0.85
 
-                img = crop_image_cell(images_doc, page.page_index, cell.bbox, zoom=3.1, inset=0.08)
+                c.setFillColorRGB(*TILE_FILL)
+                c.setStrokeColorRGB(*TILE_STROKE)
+                c.setLineWidth(line_w)
+                c.rect(ox0, oy_bottom, ow, oh, stroke=1, fill=1)
+
+                img_area_h = max(18.0, oh * img_frac)
+                text_area_h = max(18.0, oh - img_area_h)
+                img_area_h = max(18.0, oh - text_area_h)
+
+                # Image (never distort; keep big)
+                img = crop_image_cell(images_doc, page.page_index, cell.bbox, zoom=3.2, inset=0.07)
                 iw, ih = img.size
-                img_box_w = ow * 0.86
-                img_box_h = img_area_h * 0.84
+                img_box_x = ox0 + pad * 0.6
+                img_box_y = oy_bottom + text_area_h + pad * 0.4
+                img_box_w = ow - pad * 1.2
+                img_box_h = img_area_h - pad * 0.8
+
                 r = min(img_box_w / max(1, iw), img_box_h / max(1, ih))
                 dw, dh = iw * r, ih * r
-
-                ix = ox0 + (ow - dw) / 2
-                iy = oy_bottom + text_area_h + (img_area_h - dh) / 2
+                ix = img_box_x + (img_box_w - dw) / 2.0
+                iy = img_box_y + (img_box_h - dh) / 2.0
                 c.drawImage(ImageReader(img), ix, iy, dw, dh, preserveAspectRatio=True, mask="auto")
 
+                # Divider
                 sep_y = oy_bottom + text_area_h
-                c.setLineWidth(0.4)
-                c.setStrokeColorRGB(0.88, 0.90, 0.94)
-                c.line(ox0 + 2.5, sep_y, ox1 - 2.5, sep_y)
+                c.setStrokeColorRGB(*_hex_to_rgb01("#E3E8F2"))
+                c.setLineWidth(0.7)
+                c.line(ox0 + 3, sep_y, ox1 - 3, sep_y)
 
-                _draw_full_pallet_cell_text_block(
-                    c,
+                # Text (clipped; no bleed)
+                _draw_clipped_text_block(
                     x=ox0,
                     y=oy_bottom,
                     w=ow,
@@ -1544,7 +1556,7 @@ def render_full_pallet_pdf(
         return buf.getvalue()
 
     finally:
-        images_doc.close()
+            images_doc.close()
 
 
 def main() -> None:
