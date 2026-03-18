@@ -29,6 +29,11 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
+try:
+    from pptx import Presentation  # type: ignore
+except Exception:
+    Presentation = None
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Constants
 # ──────────────────────────────────────────────────────────────────────────────
@@ -87,6 +92,20 @@ class FullPalletPage:
     side_letter: str
     cells: List[CellData]
     annotations: List[AnnotationBox]
+
+
+@dataclass(frozen=True)
+class PptCard:
+    id: str
+    title: str
+
+
+@dataclass(frozen=True)
+class GiftHolder:
+    side: str
+    item_no: str
+    name: str
+    qty: Optional[int]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -266,6 +285,197 @@ def _resolve(last5: str, label_name: str, idx: Dict[str, List[MatrixRow]]) -> Op
     return max(
         rows, key=lambda r: difflib.SequenceMatcher(None, target, r.norm_name).ratio()
     )
+
+
+def _coerce_item_no(v: object) -> Optional[str]:
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return None
+    s = re.sub(r"\.0$", "", str(v).strip())
+    s = DIGITS_RE.sub("", s)
+    return s.zfill(6) if s else None
+
+
+@st.cache_data(show_spinner=False)
+def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, Dict[str, List[PptCard]]]:
+    """Parse PPTX and return per-side card lists.
+
+    Returns a dict mapping side letter (A/B/C/D) to dict with keys:
+      - "top": List[PptCard] (top 8 cards in left-to-right order)
+      - "side": List[PptCard] (side block cards in scan order)
+
+    If python-pptx is not installed, raises ImportError.
+    """
+
+    if Presentation is None:
+        raise ImportError("python-pptx is not installed")
+
+    prs = Presentation(io.BytesIO(pptx_bytes))
+    sides: Dict[str, Dict[str, List[PptCard]]] = {}
+
+    id_re = re.compile(r"ID\s*#\s*(\d+)", re.IGNORECASE)
+
+    for sidx, slide in enumerate(prs.slides):
+        side_letter = "?"
+        for shape in slide.shapes:
+            if not shape.has_text_frame:
+                continue
+            txt = str(shape.text).strip().upper()
+            m = re.search(r"\bSIDE\s*([A-D])\b", txt)
+            if m:
+                side_letter = m.group(1)
+                break
+        if side_letter == "?":
+            # fallback to slide index
+            side_letter = chr(ord("A") + min(sidx, 3))
+
+        items: List[Tuple[float, float, PptCard]] = []
+        for shape in slide.shapes:
+            if not shape.has_text_frame:
+                continue
+            text = str(shape.text).strip()
+            for m in id_re.finditer(text):
+                id_num = m.group(1)
+                title = re.sub(id_re, "", text).strip(" -:;")
+                if not title:
+                    # try to use whole shape text if only ID found
+                    title = ""
+                # use shape position for ordering
+                left = float(getattr(shape, "left", 0))
+                top = float(getattr(shape, "top", 0))
+                items.append((top, left, PptCard(id=f"ID#{id_num}", title=title)))
+
+        # Sort items by vertical then horizontal position
+        items.sort(key=lambda t: (t[0], t[1]))
+        tops = [t for t, _, _ in items]
+        # group by top to find first row
+        rows: Dict[float, List[Tuple[float, float, PptCard]]] = {}
+        for top, left, card in items:
+            # bucket by top with tolerance
+            key = None
+            for k in list(rows.keys()):
+                if abs(k - top) < 12:
+                    key = k
+                    break
+            if key is None:
+                key = top
+                rows[key] = []
+            rows[key].append((top, left, card))
+
+        row_keys = sorted(rows.keys())
+        top_row_cards: List[PptCard] = []
+        side_cards: List[PptCard] = []
+
+        if row_keys:
+            # top row is first by y
+            top_row = sorted(rows[row_keys[0]], key=lambda t: t[1])
+            top_row_cards = [c for _, _, c in top_row]
+
+            # remaining cards
+            remaining = []
+            for rk in row_keys[1:]:
+                remaining.extend(rows[rk])
+            remaining_sorted = sorted(remaining, key=lambda t: (t[0], t[1]))
+            side_cards = [c for _, _, c in remaining_sorted]
+
+        sides[side_letter] = {
+            "top": top_row_cards[:8],
+            "side": side_cards[:6],
+        }
+
+    return sides
+
+
+@st.cache_data(show_spinner=False)
+def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
+    """Parse Gift Card Holders workbook and return per-side holder lists."""
+
+    try:
+        xls = pd.read_excel(io.BytesIO(gift_bytes), sheet_name=None, header=None)
+    except Exception as e:
+        raise ValueError(f"Unable to read Gift Card Holders workbook: {e}")
+
+    # Find candidate sheet for holders
+    best_sheet = None
+    for name in xls.keys():
+        if "gift" in name.lower() or "card" in name.lower() or "holder" in name.lower():
+            best_sheet = name
+            break
+    if best_sheet is None:
+        # fall back to first sheet
+        best_sheet = list(xls.keys())[0]
+
+    df = xls[best_sheet].copy()
+
+    def find_header_row(df: pd.DataFrame, tokens: List[str]) -> int:
+        for i in range(min(len(df), 50)):
+            row = df.iloc[i].astype(str).str.upper().tolist()
+            if all(any(tok in c for c in row) for tok in tokens):
+                return i
+        return 0
+
+    # Identify columns
+    header_row = find_header_row(df, ["ITEM", "QTY"])
+    headers = [str(v).strip() for v in df.iloc[header_row].tolist()]
+    df = df.iloc[header_row + 1 :].copy()
+    df.columns = headers
+
+    def pick_col(tokens: List[str]) -> Optional[str]:
+        for tok in tokens:
+            for c in headers:
+                if tok in str(c).upper():
+                    return c
+        return None
+
+    item_col = pick_col(["ITEM", "ITEM #", "ITEM#", "SKU"])
+    qty_col = pick_col(["QTY", "QTY.", "QTY/CASE", "QUANTITY"])
+    side_col = pick_col(["SIDE"])
+    name_col = pick_col(["NAME", "DESCRIPTION", "DESC"])
+
+    if item_col is None or qty_col is None:
+        raise ValueError("Gift Card Holders sheet missing required ITEM and QTY columns")
+
+    # Build description lookup from any sheet containing item->description mapping
+    desc_map: Dict[str, str] = {}
+    for sheet_name, sheet_df in xls.items():
+        df_s = sheet_df.copy()
+        # try to find header row for item/description table
+        hdr = find_header_row(df_s, ["ITEM", "DESCRIPTION"])
+        cols = [str(v).strip() for v in df_s.iloc[hdr].tolist()]
+        df_s = df_s.iloc[hdr + 1 :].copy()
+        df_s.columns = cols
+        itemc = pick_col(["ITEM", "ITEM #", "ITEM#", "SKU"])
+        desc_c = pick_col(["DESCRIPTION", "DESC", "NAME"])
+        if not itemc or not desc_c:
+            continue
+        for _, r in df_s.iterrows():
+            item_no = _coerce_item_no(r.get(itemc))
+            if not item_no:
+                continue
+            desc_val = str(r.get(desc_c, "") or "").strip()
+            if desc_val:
+                desc_map.setdefault(item_no, desc_val)
+
+    holders: Dict[str, List[GiftHolder]] = {}
+    for _, r in df.iterrows():
+        item_no = _coerce_item_no(r.get(item_col))
+        if not item_no:
+            continue
+        qty = _coerce_int(r.get(qty_col))
+        side = str(r.get(side_col, "") or "").strip().upper()[:1] if side_col else "A"
+        if not side or side not in "ABCD":
+            side = "A"
+        name = str(r.get(name_col, "") or "").strip() if name_col else ""
+        if not name and item_no in desc_map:
+            name = desc_map[item_no]
+        elif item_no in desc_map:
+            # prefer canonical description
+            name = desc_map[item_no]
+
+        holders.setdefault(side, []).append(
+            GiftHolder(side=side, item_no=item_no, name=name, qty=qty)
+        )
+
+    return holders
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -980,6 +1190,10 @@ def render_full_pallet_pdf(
     images_pdf_bytes: bytes,
     matrix_idx: Dict[str, List[MatrixRow]],
     title_prefix: str = "POG",
+    ppt_cards: Optional[Dict[str, Dict[str, List[PptCard]]]] = None,
+    gift_holders: Optional[Dict[str, List[GiftHolder]]] = None,
+    ppt_cpp: Optional[int] = None,
+    debug: bool = False,
 ) -> bytes:
     buf = io.BytesIO()
     images_doc = fitz.open(stream=images_pdf_bytes, filetype="pdf")
@@ -1205,13 +1419,46 @@ def render_full_pallet_pdf(
         p0 = pages[0]
         global_cols0, gap_units0 = _global_col_order_and_gaps(p0)
         global_rows0 = _global_row_order(p0)
-        gift_rows0, bonus_rows0 = _split_rows_by_bonus(p0, global_rows0)
+
+        # Estimate sections based on annotation markers (gift card holders + bonus)
+        gift_marker_y0 = _marker_y(p0, "gift_card_holders")
+        bonus_marker_y0 = _marker_y(p0, "bonus_strip")
+        row_y0: Dict[int, float] = {}
+        row_has_last5: Dict[int, bool] = {}
+        for r in global_rows0:
+            cells = [c for c in p0.cells if c.row == r]
+            ys = [(_cell_center(c)[1]) for c in cells]
+            row_y0[r] = float(np.mean(ys)) if ys else 0.0
+            row_has_last5[r] = any(bool(c.last5) for c in cells)
+
+        def _row_section(y: float, r: int) -> str:
+            if bonus_marker_y0 is not None and y >= bonus_marker_y0:
+                return "BONUS"
+            if row_has_last5.get(r):
+                return "PRODUCT"
+            if gift_marker_y0 is not None and y >= gift_marker_y0:
+                return "GIFT"
+            return "PPT"
+
+        ppt_rows0 = [r for r in global_rows0 if _row_section(row_y0.get(r, 0.0), r) == "PPT"]
+        gift_rows0 = [r for r in global_rows0 if _row_section(row_y0.get(r, 0.0), r) == "GIFT"]
+        product_rows0 = [r for r in global_rows0 if _row_section(row_y0.get(r, 0.0), r) == "PRODUCT"]
+        bonus_rows0 = [r for r in global_rows0 if _row_section(row_y0.get(r, 0.0), r) == "BONUS"]
+
+        other_rows0 = [r for r in global_rows0 if r not in ppt_rows0 and r not in bonus_rows0]
+        product_rows0 = [r for r in other_rows0 if r not in gift_rows0]
 
         meta_first: List[Tuple[int, int, List[int]]] = []
+        if ppt_rows0:
+            meta_first.append((len(ppt_rows0), len(global_cols0), gap_units0))
         if gift_rows0:
             meta_first.append((len(gift_rows0), len(global_cols0), gap_units0))
+        if product_rows0:
+            meta_first.append((len(product_rows0), len(global_cols0), gap_units0))
         if bonus_rows0:
             meta_first.append((len(bonus_rows0), len(global_cols0), gap_units0))
+        if not meta_first:
+            meta_first.append((len(global_rows0), len(global_cols0), gap_units0))
 
         PW, PH, CARD_W, CARD_H, GUTTER_Y, GUTTER_X = _choose_geometry(meta_first)
 
@@ -1238,15 +1485,101 @@ def render_full_pallet_pdf(
 
             global_cols, gap_units = _global_col_order_and_gaps(pdata)
             global_rows = _global_row_order(pdata)
-            gift_rows, bonus_rows = _split_rows_by_bonus(pdata, global_rows)
 
+            gift_marker_y = _marker_y(pdata, "gift_card_holders")
+            bonus_marker_y = _marker_y(pdata, "bonus_strip")
+
+            row_y: Dict[int, float] = {}
+            for r in global_rows:
+                ys = [(_cell_center(c)[1]) for c in pdata.cells if c.row == r]
+                row_y[r] = float(np.mean(ys)) if ys else 0.0
+
+            row_has_last5: Dict[int, bool] = {}
+            for r in global_rows:
+                row_has_last5[r] = any(
+                    bool(c.last5) and c.row == r for c in pdata.cells if c.row == r
+                )
+
+            def _row_section(y: float, r: int) -> str:
+                if bonus_marker_y is not None and y >= bonus_marker_y:
+                    return "BONUS"
+                if row_has_last5.get(r):
+                    return "PRODUCT"
+                if gift_marker_y is not None and y >= gift_marker_y:
+                    return "GIFT"
+                return "PPT"
+
+            ppt_rows = [r for r in global_rows if _row_section(row_y.get(r, 0.0), r) == "PPT"]
+            gift_rows = [r for r in global_rows if _row_section(row_y.get(r, 0.0), r) == "GIFT"]
+            product_rows = [r for r in global_rows if _row_section(row_y.get(r, 0.0), r) == "PRODUCT"]
+            bonus_rows = [r for r in global_rows if _row_section(row_y.get(r, 0.0), r) == "BONUS"]
+
+            # Build helper maps for sorting by column
+            cmap = {c_: i for i, c_ in enumerate(global_cols)}
+
+            # Identify slots for PPT and Gift Holder sections (use all cells in those rows)
+            ppt_cells = [c for c in pdata.cells if c.row in ppt_rows]
+            gift_cells = [c for c in pdata.cells if c.row in gift_rows]
+
+            # Sort placeholder cells by position
+            ppt_cells.sort(key=lambda c: (row_y.get(c.row, 0.0), cmap.get(c.col, 0)))
+            gift_cells.sort(key=lambda c: (row_y.get(c.row, 0.0), cmap.get(c.col, 0)))
+
+            # Assign PPT cards into placeholder grid slots
+            ppt_map: Dict[Tuple[int, int], PptCard] = {}
+            if ppt_cards and pdata.side_letter in ppt_cards:
+                side_cards = ppt_cards[pdata.side_letter]
+                top_cards = side_cards.get("top", [])
+                side_block = side_cards.get("side", [])
+
+                # Determine which placeholder cells belong to the top row
+                top_row = None
+                if ppt_rows:
+                    top_row = min(ppt_rows, key=lambda r: row_y.get(r, 0.0))
+
+                top_row_cells = [c for c in ppt_cells if c.row == top_row] if top_row is not None else []
+                top_row_cells.sort(key=lambda c: cmap.get(c.col, 0))
+
+                for card, cell in zip(top_cards, top_row_cells):
+                    ppt_map[(cell.row, cell.col)] = card
+
+                # Remaining cells for side block
+                remaining = [c for c in ppt_cells if (c.row, c.col) not in ppt_map]
+                remaining.sort(key=lambda c: (row_y.get(c.row, 0.0), cmap.get(c.col, 0)))
+                for card, cell in zip(side_block, remaining):
+                    ppt_map[(cell.row, cell.col)] = card
+
+            # Assign gift holders into placeholder grid slots
+            holder_map: Dict[Tuple[int, int], GiftHolder] = {}
+            if gift_holders and pdata.side_letter in gift_holders:
+                for holder, cell in zip(gift_holders[pdata.side_letter], gift_cells):
+                    holder_map[(cell.row, cell.col)] = holder
+
+            # Precompute game maps for products
+            product_map: Dict[Tuple[int, int], Tuple[Optional[MatrixRow], CellData]] = {}
+            for cell in pdata.cells:
+                if cell.last5:
+                    match = _resolve(cell.last5, cell.name, matrix_idx)
+                    product_map[(cell.row, cell.col)] = (match, cell)
+
+            if debug:
+                st.write(
+                    f"Side {pdata.side_letter}: ppt cards={len(ppt_map)}, holders={len(holder_map)}, product cells={len(product_map)}, total cells={len(pdata.cells)}"
+                )
+
+            # Determine which rows should be drawn for each major section.
+            # Rows classified as PPT are used to place PPT cards (TOP + SIDE blocks).
+            # Rows with product tokens (last5) are treated as product rows.
+            # Rows between gift marker and bonus marker without product tokens are treated as gift holder rows.
             sections: List[Tuple[str, List[int]]] = []
+            if ppt_rows:
+                sections.append(("PPT CARDS", ppt_rows))
             if gift_rows:
                 sections.append(("GIFT CARD HOLDERS", gift_rows))
+            if product_rows:
+                sections.append(("PRODUCTS", product_rows))
             if bonus_rows:
                 sections.append(("BONUS", bonus_rows))
-            if not sections:
-                sections.append(("PRODUCTS", global_rows))
 
             total_rows = sum(len(r) for _, r in sections)
             bars_total = SECTION_BAR_H * len(sections)
@@ -1261,7 +1594,9 @@ def render_full_pallet_pdf(
             for label, sec_rows in sections:
                 y_cursor -= extra_per_block
                 y_cursor -= SECTION_BAR_H
-                _draw_section_bar(c, cx0, y_cursor, content_w, SECTION_BAR_H, label)
+                # Only draw bar for gift and bonus sections
+                if label in {"GIFT CARD HOLDERS", "BONUS"}:
+                    _draw_section_bar(c, cx0, y_cursor, content_w, SECTION_BAR_H, label)
                 y_cursor -= SECTION_BAR_GAP
 
                 n_cols = len(global_cols)
@@ -1277,7 +1612,6 @@ def render_full_pallet_pdf(
                         x += GUTTER_X * (gap_units[ci] if ci < len(gap_units) else 1)
 
                 rmap = {r: i for i, r in enumerate(sec_rows)}
-                cmap = {c_: i for i, c_ in enumerate(global_cols)}
                 row_set = set(sec_rows)
 
                 occ: Dict[Tuple[int, int], CellData] = {}
@@ -1301,23 +1635,36 @@ def render_full_pallet_pdf(
                             c.rect(x, y, CARD_W, CARD_H, stroke=1, fill=0)
                             continue
 
-                        match = _resolve(cell.last5, cell.name, matrix_idx) if cell.last5 else None
-                        upc12 = match.upc12 if match else None
-                        cpp = match.cpp_qty if match else None
-                        disp_name = (
-                            match.display_name if match and match.display_name else cell.name
-                        ).strip()
-
-                        upc_str = upc12 if upc12 else f"???????{cell.last5}"
+                        key = (cell.row, cell.col)
+                        if key in ppt_map:
+                            card = ppt_map[key]
+                            upc_str = card.id
+                            disp_name = card.title
+                            cpp = ppt_cpp
+                            img = None
+                        elif key in holder_map:
+                            holder = holder_map[key]
+                            upc_str = holder.item_no
+                            disp_name = holder.name
+                            cpp = holder.qty
+                            img = None
+                        else:
+                            match, _cell = product_map.get(key, (None, cell))
+                            upc12 = match.upc12 if match else None
+                            cpp = match.cpp_qty if match else None
+                            disp_name = (
+                                match.display_name if match and match.display_name else cell.name
+                            ).strip()
+                            upc_str = upc12 if upc12 else f"???????{cell.last5}"
+                            img = crop_image_cell(
+                                images_doc, pdata.page_index, cell.bbox, zoom=2.6, inset=0.045
+                            )
 
                         c.setFillColorRGB(1, 1, 1)
                         c.setStrokeColorRGB(*FILLED_STROKE)
                         c.setLineWidth(0.75)
                         c.rect(x, y, CARD_W, CARD_H, stroke=1, fill=1)
 
-                        img = crop_image_cell(
-                            images_doc, pdata.page_index, cell.bbox, zoom=2.6, inset=0.045
-                        )
                         _draw_card(c, x, y, CARD_W, CARD_H, img, upc_str, disp_name, cpp)
 
                 y_cursor = grid_top - grid_h - BETWEEN_SECTIONS_GAP
@@ -1579,6 +1926,36 @@ def main() -> None:
             )
 
     else:
+        pptx_file = st.file_uploader("Top Cards Blueprint (.pptx)", type=["pptx"])
+        gift_file = st.file_uploader("Gift Card Holders (.xlsx)", type=["xlsx"])
+        ppt_cpp = st.number_input("PPT Cards CPP", min_value=0, value=0, step=1)
+        show_debug = st.checkbox("Show debug details")
+
+        if not (pptx_file and gift_file):
+            st.info("Upload PPTX + Gift Card Holders XLSX for Full Pallet mode.")
+            return
+
+        try:
+            ppt_cards = load_ppt_cards(pptx_file.getvalue())
+        except ImportError:
+            st.error(
+                "python-pptx is not installed. Full Pallet mode requires python-pptx to parse the Top Cards Blueprint."
+            )
+            return
+        except Exception as e:
+            if show_debug:
+                st.exception(e)
+            st.error("Unable to parse Top Cards Blueprint (.pptx). Please verify the file.")
+            return
+
+        try:
+            gift_holders = load_gift_card_holders(gift_file.getvalue())
+        except Exception as e:
+            if show_debug:
+                st.exception(e)
+            st.error("Unable to parse Gift Card Holders workbook. Please verify the file format.")
+            return
+
         fp_pages = extract_full_pallet_pages(labels_bytes)
         if not fp_pages:
             st.error("No product cells detected in Labels PDF.")
@@ -1609,12 +1986,23 @@ def main() -> None:
 
         if generate:
             with st.spinner("Rendering PDF…"):
-                pdf = render_full_pallet_pdf(
-                    fp_pages,
-                    images_bytes,
-                    matrix_idx,
-                    title_prefix.strip() or "POG",
-                )
+                try:
+                    pdf = render_full_pallet_pdf(
+                        fp_pages,
+                        images_bytes,
+                        matrix_idx,
+                        title_prefix.strip() or "POG",
+                        ppt_cards=ppt_cards,
+                        gift_holders=gift_holders,
+                        ppt_cpp=ppt_cpp,
+                        debug=show_debug,
+                    )
+                except Exception as e:
+                    if show_debug:
+                        st.exception(e)
+                    else:
+                        st.error("Error generating Full Pallet PDF. Enable debug for details.")
+                    return
             st.success("Done.")
             st.download_button(
                 "⬇ Download Planogram PDF",
