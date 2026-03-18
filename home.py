@@ -3,16 +3,7 @@
 Streamlit Planogram Generator
 
 - Standard Flat Display — all sides on one wide page (original behaviour)
-- Full Pallet / Multi-Zone Display — template-style rebuild (one page per side)
-
-IMPORTANT:
-- Standard Flat Display section (UI branch + extraction + rendering) is preserved as-is.
-- All new logic is gated behind the Full Pallet display type.
-
-Full Pallet additions:
-- Top cards from PPTX: 8 across + 6 right-block, show ID# (not UPC), CPP from one global input.
-- Gift Card Holders from '2025 D82 POG.xlsx': show 6-digit Item # (not UPC) + description + Qty as CPP.
-- Keeps existing UPC12 + CPP matching for the main grid + BONUS (your current logic).
+- Full Pallet Display — template-style rebuild (NO raster background), one page per side
 """
 
 from __future__ import annotations
@@ -30,7 +21,6 @@ from typing import Dict, List, Optional, Tuple
 import fitz  # PyMuPDF
 import numpy as np
 import pandas as pd
-import openpyxl
 import pdfplumber
 import streamlit as st
 from PIL import Image
@@ -99,27 +89,6 @@ class FullPalletPage:
     annotations: List[AnnotationBox]
 
 
-@dataclass(frozen=True)
-class PptCard:
-    side: str  # A-D
-    card_id: str  # e.g., "19"
-    title: str  # first line title
-
-
-@dataclass(frozen=True)
-class PptSideCards:
-    side: str
-    top8: List[PptCard]   # 8 cards across the top
-    side6: List[PptCard]  # 6 cards in the right block
-
-
-@dataclass(frozen=True)
-class HolderItem:
-    item_no: str  # 6-digit item number
-    description: str
-    qty: Optional[int]  # Qty in the workbook (treat as CPP)
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Fonts
 # ──────────────────────────────────────────────────────────────────────────────
@@ -175,104 +144,66 @@ def _coerce_int(v: object) -> Optional[int]:
     s = re.sub(r"[^\d\-]", "", re.sub(r"\.0$", "", str(v).strip()))
     try:
         return int(s) if s else None
-    except Exception:
+    except ValueError:
         return None
 
 
-def _hex_to_rgb(hex_str: str) -> Tuple[float, float, float]:
-    h = hex_str.strip().lstrip("#")
-    if len(h) != 6:
-        return (0.5, 0.5, 0.5)
-    r = int(h[0:2], 16) / 255.0
-    g = int(h[2:4], 16) / 255.0
-    b = int(h[4:6], 16) / 255.0
-    return (r, g, b)
+def _norm_header(v: object) -> str:
+    s = re.sub(r"[^A-Z0-9]+", "_", str(v).strip().upper()).strip("_")
+    return s or "COL"
 
 
-def _fit_font(
-    text: str,
-    font_name: str,
-    max_w: float,
-    max_h: float,
-    min_size: float,
-    max_size: float,
-    step: float = 0.5,
-) -> float:
-    t = (text or "").strip()
-    if not t:
-        return min_size
-    fs = max_size
-    while fs >= min_size:
-        w = pdfmetrics.stringWidth(t, font_name, fs)
-        if w <= max_w and fs <= max_h:
-            return fs
-        fs -= step
-    return min_size
-
-
-def _fit_name_preserve_qualifiers(name: str, font: str, fs: float, max_w: float) -> str:
-    nm = (name or "").strip()
-    if not nm:
-        return ""
-    if pdfmetrics.stringWidth(nm, font, fs) <= max_w:
-        return nm
-
-    words = nm.split()
-    while words and pdfmetrics.stringWidth(" ".join(words), font, fs) > max_w:
-        words.pop()
-    base = " ".join(words).strip()
-    if not base:
-        base = nm[: max(6, int(max_w / (fs * 0.55)))]
-    return base
-
-
-def _try_load_logo() -> Optional[Image.Image]:
-    for rel in ["logo.png", "assets/logo.png"]:
-        p = Path(__file__).resolve().parent / rel
-        if p.is_file():
-            try:
-                return Image.open(p).convert("RGBA")
-            except Exception:
-                continue
-    return None
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Matrix loading (shared)
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-def _find_header_row(df_raw: pd.DataFrame) -> int:
-    for i in range(min(20, len(df_raw))):
-        row = df_raw.iloc[i].tolist()
-        s = " ".join([str(v).upper() for v in row if v is not None])
-        if "UPC" in s and ("NAME" in s or "DESCRIPTION" in s):
+def _find_header_row(df: pd.DataFrame) -> int:
+    for i in range(min(len(df), 50)):
+        row = df.iloc[i].astype(str).str.upper().tolist()
+        if any("UPC" in c for c in row) and any(
+            tok in " ".join(row) for tok in ("NAME", "DESCRIPTION", "CPP")
+        ):
             return i
     return 0
 
 
-def _norm_header(v: object) -> str:
-    if v is None:
-        return ""
-    s = str(v).strip()
-    s = re.sub(r"\s+", " ", s)
-    return s.upper()
+def _pick_col(cols: List[str], tokens: List[str], fallback: int) -> str:
+    uc = [c.upper() for c in cols]
+    for t in tokens:
+        for i, c in enumerate(uc):
+            if t in c:
+                return cols[i]
+    return cols[min(fallback, len(cols) - 1)]
 
 
-def _pick_col(headers: List[str], candidates: List[str], fallback_idx: int) -> str:
-    for cand in candidates:
-        for h in headers:
-            if cand.upper() == h.upper():
-                return h
-    return headers[fallback_idx]
-
-
-def _pick_col_optional(headers: List[str], candidates: List[str]) -> Optional[str]:
-    for cand in candidates:
-        for h in headers:
-            if cand.upper() == h.upper():
-                return h
+def _pick_col_optional(cols: List[str], tokens: List[str]) -> Optional[str]:
+    uc = [c.upper() for c in cols]
+    for t in tokens:
+        for i, c in enumerate(uc):
+            if t in c:
+                return cols[i]
     return None
+
+
+def _hex_to_rgb(h: str) -> Tuple[float, float, float]:
+    h = (h or "").lstrip("#").strip()
+    if len(h) != 6:
+        return NAVY_RGB
+    return int(h[:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:], 16) / 255
+
+
+def _try_load_logo() -> Optional[Image.Image]:
+    for p in [
+        Path.cwd() / "assets" / "KKG-Logo-02.png",
+        Path(__file__).resolve().parent / "assets" / "KKG-Logo-02.png",
+    ]:
+        if p.exists():
+            try:
+                return Image.open(p).convert("RGBA")
+            except Exception:
+                pass
+    return None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Matrix loading
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 @st.cache_data(show_spinner=False)
@@ -332,189 +263,13 @@ def _resolve(last5: str, label_name: str, idx: Dict[str, List[MatrixRow]]) -> Op
     if len(rows) == 1:
         return rows[0]
     target = _norm_name(label_name)
-    return max(rows, key=lambda r: difflib.SequenceMatcher(None, target, r.norm_name).ratio())
+    return max(
+        rows, key=lambda r: difflib.SequenceMatcher(None, target, r.norm_name).ratio()
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Full-pallet additional inputs (PowerPoint + Holder Excel)
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-@st.cache_data(show_spinner=False)
-def parse_ppt_side_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
-    """
-    Parse PowerPoint top-area blueprint.
-
-    Expected:
-    - One slide per side labeled "SIDE A" / "SIDE B" / ...
-    - Each card entry has a line containing "ID #<n>".
-    - Order logic:
-      * top8: the 8 cards with the smallest 'top' coordinate, ordered left->right.
-      * side6: next 6 cards, ordered top->bottom then left->right.
-    """
-    # Lazy import so flat display never depends on python-pptx at import time.
-    from pptx import Presentation  # type: ignore
-
-    prs = Presentation(io.BytesIO(pptx_bytes))
-
-    by_side: Dict[str, List[Tuple[int, int, str]]] = {}
-
-    for slide in prs.slides:
-        side_letter: Optional[str] = None
-        for shape in slide.shapes:
-            if not getattr(shape, "has_text_frame", False):
-                continue
-            t = (shape.text or "").strip()
-            m_side = re.search(r"\bSIDE\s+([A-D])\b", t.upper())
-            if m_side:
-                side_letter = m_side.group(1)
-                break
-
-        if not side_letter:
-            continue
-
-        for shape in slide.shapes:
-            if not getattr(shape, "has_text_frame", False):
-                continue
-            txt = (shape.text or "").strip()
-            if not txt or "ID #" not in txt:
-                continue
-            m_id = re.search(r"ID\s*#\s*(\d+)", txt, re.IGNORECASE)
-            if not m_id:
-                continue
-            title = txt.splitlines()[0].strip()
-            card_id = m_id.group(1).strip()
-            by_side.setdefault(side_letter, []).append((int(shape.top), int(shape.left), f"{card_id}|{title}"))
-
-    out: Dict[str, PptSideCards] = {}
-    for side, entries in by_side.items():
-        uniq: Dict[str, Tuple[int, int, str]] = {}
-        for top, left, payload in entries:
-            uniq[payload] = (top, left, payload)
-        items = list(uniq.values())
-
-        items_sorted_by_top = sorted(items, key=lambda t: (t[0], t[1]))
-        top8_raw = items_sorted_by_top[:8]
-        side6_raw = items_sorted_by_top[8:14]
-
-        top8 = []
-        for top, left, payload in sorted(top8_raw, key=lambda t: t[1]):
-            card_id, title = payload.split("|", 1)
-            top8.append(PptCard(side=side, card_id=card_id, title=title))
-
-        side6 = []
-        for top, left, payload in sorted(side6_raw, key=lambda t: (t[0], t[1])):
-            card_id, title = payload.split("|", 1)
-            side6.append(PptCard(side=side, card_id=card_id, title=title))
-
-        out[side] = PptSideCards(side=side, top8=top8, side6=side6)
-
-    return out
-
-
-@st.cache_data(show_spinner=False)
-def load_holder_items(holder_xlsx_bytes: bytes) -> List[HolderItem]:
-    """
-    Load gift card holder items from the '2025 D82 POG.xlsx' workbook.
-
-    We treat:
-    - Item # (6-digit) as the identifier to display (NOT UPC).
-    - Qty as CPP.
-    - Description comes from the workbook's item description table.
-    """
-    wb = openpyxl.load_workbook(io.BytesIO(holder_xlsx_bytes), data_only=True)
-
-    if "FULL PALLET" not in wb.sheetnames:
-        raise ValueError("Holder workbook is missing a 'FULL PALLET' sheet.")
-
-    ws = wb["FULL PALLET"]
-
-    header_row = None
-    col_item = None
-    col_desc = None
-    col_qty = None
-
-    for r in range(1, min(60, ws.max_row) + 1):
-        row_vals = [ws.cell(r, c).value for c in range(1, ws.max_column + 1)]
-        row_norm = [str(v).strip().upper() if isinstance(v, str) else v for v in row_vals]
-        if any(isinstance(v, str) and v.strip().upper() == "ITEM #" for v in row_norm) and any(
-            isinstance(v, str) and "ITEM DESCRIPTION" in v.strip().upper() for v in row_norm
-        ):
-            header_row = r
-            for c, v in enumerate(row_norm, start=1):
-                if isinstance(v, str) and v.strip().upper() == "ITEM #":
-                    col_item = c
-                if isinstance(v, str) and "ITEM DESCRIPTION" in v.strip().upper():
-                    col_desc = c
-                if isinstance(v, str) and "QTY PER HOOK" in v.strip().upper():
-                    col_qty = c
-            break
-
-    if not header_row or not col_item or not col_desc:
-        raise ValueError("Could not find the holder item description table in the FULL PALLET sheet.")
-
-    catalog: Dict[str, Tuple[str, Optional[int]]] = {}
-    for r in range(header_row + 1, ws.max_row + 1):
-        item = ws.cell(r, col_item).value
-        desc = ws.cell(r, col_desc).value
-        qty_val = ws.cell(r, col_qty).value if col_qty else None
-        if item is None:
-            continue
-        item_no = str(int(item)) if isinstance(item, (int, float)) and not math.isnan(float(item)) else str(item).strip()
-        item_digits = re.sub(r"\D", "", item_no)
-        if not re.fullmatch(r"\d{6}", item_digits):
-            if catalog:
-                break
-            continue
-        item_no = item_digits.zfill(6)
-        description = str(desc or "").strip()
-        qty = _coerce_int(qty_val)
-        catalog[item_no] = (description, qty)
-
-    layout_item_row = None
-    layout_qty_row = None
-    for r in range(1, min(25, ws.max_row) + 1):
-        v = ws.cell(r, 1).value
-        if isinstance(v, str) and v.strip().upper() == "ITEM #":
-            layout_item_row = r
-        if isinstance(v, str) and v.strip().upper() == "QTY":
-            layout_qty_row = r
-
-    used_order: List[str] = []
-    if layout_item_row:
-        for c in range(2, ws.max_column + 1):
-            item = ws.cell(layout_item_row, c).value
-            if item is None:
-                continue
-            item_no = str(int(item)) if isinstance(item, (int, float)) and not math.isnan(float(item)) else str(item).strip()
-            item_no = re.sub(r"\D", "", item_no)
-            if not item_no:
-                continue
-            item_no = item_no.zfill(6)
-            if item_no not in used_order:
-                used_order.append(item_no)
-
-    items: List[HolderItem] = []
-    for item_no in used_order:
-        desc, qty = catalog.get(item_no, ("", None))
-        if qty is None and layout_qty_row and layout_item_row:
-            for c in range(2, ws.max_column + 1):
-                v_item = ws.cell(layout_item_row, c).value
-                if v_item is None:
-                    continue
-                v_item_no = re.sub(r"\D", "", str(v_item)).zfill(6)
-                if v_item_no != item_no:
-                    continue
-                qty = _coerce_int(ws.cell(layout_qty_row, c).value)
-                if qty is not None:
-                    break
-        items.append(HolderItem(item_no=item_no, description=desc or item_no, qty=qty))
-
-    return items
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Clustering helpers (shared)
+# Clustering helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -555,57 +310,134 @@ def cluster_positions(values: List[float], tol: float) -> np.ndarray:
 
 
 def boundaries_from_centers(centers: np.ndarray) -> np.ndarray:
-    if len(centers) == 0:
-        return np.array([], dtype=float)
-    if len(centers) == 1:
-        c = float(centers[0])
-        return np.array([c - 1.0, c + 1.0], dtype=float)
+    c = np.sort(np.asarray(centers, dtype=float))
+    if len(c) == 0:
+        return c
+    if len(c) == 1:
+        return np.array([c[0] - 50, c[0] + 50])
+    mids = (c[:-1] + c[1:]) / 2
+    left = c[0] - (mids[0] - c[0])
+    right = c[-1] + (c[-1] - mids[-1])
+    return np.concatenate([[left], mids, [right]])
 
-    mids = (centers[:-1] + centers[1:]) / 2.0
-    first = centers[0] - (mids[0] - centers[0])
-    last = centers[-1] + (centers[-1] - mids[-1])
-    return np.concatenate([[first], mids, [last]])
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Label parsing
+# ──────────────────────────────────────────────────────────────────────────────
 
 
-def parse_label_cell_text(txt: str) -> Tuple[str, str, Optional[int]]:
-    lines = [ln.strip() for ln in (txt or "").splitlines() if ln.strip()]
-    name_parts: List[str] = []
-    last5 = ""
-    qty: Optional[int] = None
+def parse_label_cell_text(text: str) -> Tuple[str, str, Optional[int]]:
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    joined = " ".join(lines)
 
-    for ln in lines:
-        m = LAST5_RE.search(ln)
-        if m:
-            last5 = m.group(1)
-            ln = LAST5_RE.sub("", ln).strip()
+    m = LAST5_RE.search(joined)
+    last5 = m.group(1) if m else ""
 
-        q = re.search(r"\bQTY[:\s]*([0-9]+)\b", ln, re.IGNORECASE)
-        if q:
-            qty = _coerce_int(q.group(1))
-            ln = re.sub(r"\bQTY[:\s]*[0-9]+\b", "", ln, flags=re.IGNORECASE).strip()
+    nums = re.findall(r"\b(\d{1,3})\b", joined)
+    qty = int(nums[-1]) if nums else None
 
-        if ln:
-            name_parts.append(ln)
+    name = " ".join(
+        ln
+        for ln in lines
+        if not (last5 and last5 in ln)
+        and not (qty is not None and re.fullmatch(str(qty), ln))
+    ).strip()
 
-    name = " ".join(name_parts).strip()
     return name, last5, qty
 
 
-def _union(words: List[dict], px: float = 0.0, py: float = 0.0) -> Tuple[float, float, float, float]:
-    x0 = float(min(w["x0"] for w in words)) - px
-    x1 = float(max(w["x1"] for w in words)) + px
-    t = float(min(w["top"] for w in words)) - py
-    b = float(max(w["bottom"] for w in words)) + py
-    return x0, t, x1, b
+# ──────────────────────────────────────────────────────────────────────────────
+# Standard display extraction (UNCHANGED)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@st.cache_data(show_spinner=False)
+def extract_pages_from_labels(labels_pdf_bytes: bytes, n_cols: int) -> List[PageData]:
+    pages: List[PageData] = []
+    with pdfplumber.open(io.BytesIO(labels_pdf_bytes)) as pdf:
+        for pidx, page in enumerate(pdf.pages):
+            words = page.extract_words(use_text_flow=True, keep_blank_chars=False) or []
+            five = [
+                w for w in words if re.fullmatch(r"\d{5}", str(w.get("text", "")))
+            ]
+            if not five:
+                continue
+
+            xs = [(w["x0"] + w["x1"]) / 2 for w in five]
+            ys = [(w["top"] + w["bottom"]) / 2 for w in five]
+
+            x_centers = kmeans_1d(xs, n_cols)
+            y_centers = kmeans_1d(ys, max(1, round(len(five) / max(1, n_cols))))
+
+            x_bounds = boundaries_from_centers(x_centers)
+            y_bounds = boundaries_from_centers(y_centers)
+
+            cell_map: Dict[Tuple[int, int], Tuple[float, dict]] = {}
+            for w, xc, yc in zip(five, xs, ys):
+                col = int(np.argmin(np.abs(x_centers - xc)))
+                row = int(np.argmin(np.abs(y_centers - yc)))
+                dist = abs(x_centers[col] - xc) + abs(y_centers[row] - yc)
+                key = (row, col)
+                if key not in cell_map or dist < cell_map[key][0]:
+                    cell_map[key] = (dist, w)
+
+            cells: List[CellData] = []
+            for (row, col), (_, _w) in sorted(cell_map.items()):
+                bbox = (
+                    float(x_bounds[col]),
+                    float(y_bounds[row]),
+                    float(x_bounds[col + 1]),
+                    float(y_bounds[row + 1]),
+                )
+                txt = (page.crop(bbox).extract_text() or "").strip()
+                name, last5, qty = parse_label_cell_text(txt)
+                cells.append(
+                    CellData(
+                        row=row,
+                        col=col,
+                        bbox=bbox,
+                        name=name,
+                        last5=last5,
+                        qty=qty,
+                        upc12=None,
+                    )
+                )
+
+            pages.append(
+                PageData(page_index=pidx, x_bounds=x_bounds, y_bounds=y_bounds, cells=cells)
+            )
+    return pages
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Full-pallet page extraction (UPDATED)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _wc(w: dict) -> Tuple[float, float]:
+    return (w["x0"] + w["x1"]) / 2, (w["top"] + w["bottom"]) / 2
+
+
+def _union(words: List[dict], px: float = 0, py: float = 0) -> Tuple[float, float, float, float]:
+    return (
+        min(w["x0"] for w in words) - px,
+        min(w["top"] for w in words) - py,
+        max(w["x1"] for w in words) + px,
+        max(w["bottom"] for w in words) + py,
+    )
 
 
 def _group_nearby(words: List[dict], x_tol: float, y_tol: float) -> List[List[dict]]:
     groups: List[List[dict]] = []
-    for w in sorted(words, key=lambda d: (float(d["top"]), float(d["x0"]))):
+    for w in sorted(words, key=lambda ww: (_wc(ww)[1], _wc(ww)[0])):
+        cx, cy = _wc(w)
         placed = False
         for g in groups:
-            gx0, gt, gx1, _ = _union(g)
-            if (abs(float(w["top"]) - gt) <= y_tol) and (abs(float(w["x0"]) - gx1) <= x_tol):
+            bx0, bt, bx1, bb = _union(g)
+            gcx, gcy = (bx0 + bx1) / 2, (bt + bb) / 2
+            if abs(cx - gcx) <= max(x_tol, (bx1 - bx0) / 2 + x_tol * 0.4) and abs(
+                cy - gcy
+            ) <= max(y_tol, (bb - bt) / 2 + y_tol * 0.4):
                 g.append(w)
                 placed = True
                 break
@@ -618,13 +450,18 @@ def _group_nearby(words: List[dict], x_tol: float, y_tol: float) -> List[List[di
         merged: List[List[dict]] = []
         while groups:
             base = groups.pop(0)
-            _, bt, bx1, _ = _union(base)
+            bx0, bt, bx1, bb = _union(base)
             i = 0
             while i < len(groups):
-                gx0, gt, _, _ = _union(groups[i])
-                if abs(gt - bt) <= y_tol and (gx0 - bx1) <= x_tol:
+                gx0, gt, gx1, gb = _union(groups[i])
+                if not (
+                    bx1 + x_tol < gx0
+                    or gx1 + x_tol < bx0
+                    or bb + y_tol < gt
+                    or gb + y_tol < bt
+                ):
                     base.extend(groups.pop(i))
-                    _, bt, bx1, _ = _union(base)
+                    bx0, bt, bx1, bb = _union(base)
                     changed = True
                 else:
                     i += 1
@@ -634,18 +471,15 @@ def _group_nearby(words: List[dict], x_tol: float, y_tol: float) -> List[List[di
     return groups
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Full-pallet extraction (labels) + annotations
-# ──────────────────────────────────────────────────────────────────────────────
-
-
 @st.cache_data(show_spinner=False)
 def extract_full_pallet_pages(labels_pdf_bytes: bytes) -> List[FullPalletPage]:
     pages: List[FullPalletPage] = []
     with pdfplumber.open(io.BytesIO(labels_pdf_bytes)) as pdf:
         for pidx, page in enumerate(pdf.pages):
             words = page.extract_words(use_text_flow=True, keep_blank_chars=False) or []
-            five = [w for w in words if re.fullmatch(r"\d{5}", str(w.get("text", "")))]
+            five = [
+                w for w in words if re.fullmatch(r"\d{5}", str(w.get("text", "")))
+            ]
             if not five:
                 continue
 
@@ -653,6 +487,7 @@ def extract_full_pallet_pages(labels_pdf_bytes: bytes) -> List[FullPalletPage]:
             xs = [(w["x0"] + w["x1"]) / 2 for w in five]
             ys = [(w["top"] + w["bottom"]) / 2 for w in five]
 
+            # IMPORTANT: reduce over-splitting of columns
             x_centers = cluster_positions(xs, tol=max(10, pw * 0.025))
             y_centers = cluster_positions(ys, tol=max(7, ph * 0.012))
             if len(x_centers) == 0 or len(y_centers) == 0:
@@ -783,7 +618,7 @@ def extract_full_pallet_pages(labels_pdf_bytes: bytes) -> List[FullPalletPage]:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Image cropping helper (used by Full Pallet)
+# Card-image cropping helper
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -796,72 +631,347 @@ def crop_image_cell(
 ) -> Image.Image:
     page = images_doc.load_page(page_index)
     x0, top, x1, bottom = bbox
-
-    w = float(page.rect.width)
-    h = float(page.rect.height)
-
-    pad_x = (x1 - x0) * inset
-    pad_y = (bottom - top) * inset
-
-    rx0 = max(0.0, x0 + pad_x)
-    rx1 = min(w, x1 - pad_x)
-    rt = max(0.0, top + pad_y)
-    rb = min(h, bottom - pad_y)
-
-    rect = fitz.Rect(rx0, rt, rx1, rb)
+    w, h = x1 - x0, bottom - top
+    rect = fitz.Rect(x0 + w * inset, top + h * inset, x1 - w * inset, bottom - h * inset)
     pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=rect, alpha=False)
-    img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-    return img
+    return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Header / footer (shared)
+# Drawing helpers (existing + new for Full Pallet)
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _draw_footer(c: canvas.Canvas, page_w: float, outer_margin: float, footer_h: float) -> None:
-    c.setFillColorRGB(0.98, 0.98, 0.99)
-    c.setStrokeColorRGB(0.90, 0.90, 0.92)
+def wrap_text(text: str, max_w: float, font: str, size: float) -> List[str]:
+    parts = (text or "").split()
+    lines: List[str] = []
+    cur: List[str] = []
+    for p in parts:
+        trial = " ".join(cur + [p])
+        if not cur or pdfmetrics.stringWidth(trial, font, size) <= max_w:
+            cur.append(p)
+        else:
+            lines.append(" ".join(cur))
+            cur = [p]
+    if cur:
+        lines.append(" ".join(cur))
+    return lines
+
+
+def _fit_font(
+    text: str,
+    font: str,
+    max_w: float,
+    max_h: float,
+    lo: float,
+    hi: float,
+    step: float = 0.5,
+) -> float:
+    t = (text or "").strip()
+    if not t:
+        return lo
+    s = hi
+    while s >= lo:
+        if s <= max_h and pdfmetrics.stringWidth(t, font, s) <= max_w:
+            return s
+        s -= step
+    return lo
+
+
+def _ellipsis(text: str, font: str, size: float, max_w: float) -> str:
+    t = (text or "").strip()
+    if not t:
+        return ""
+    if pdfmetrics.stringWidth(t, font, size) <= max_w:
+        return t
+    ell = "…"
+    lo, hi = 0, len(t)
+    best = ell
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        cand = t[:mid].rstrip() + ell
+        if pdfmetrics.stringWidth(cand, font, size) <= max_w:
+            best = cand
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+
+def _draw_gradient(
+    c: canvas.Canvas,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    left: Tuple[float, float, float],
+    right: Tuple[float, float, float],
+    steps: int = 80,
+) -> None:
+    for i in range(max(8, steps)):
+        t = i / (steps - 1)
+        c.setFillColorRGB(
+            left[0] * (1 - t) + right[0] * t,
+            left[1] * (1 - t) + right[1] * t,
+            left[2] * (1 - t) + right[2] * t,
+        )
+        xi = x + w * i / steps
+        c.rect(xi, y, w / steps + 0.5, h, stroke=0, fill=1)
+
+
+def _draw_header(
+    c: canvas.Canvas,
+    page_w: float,
+    page_h: float,
+    top_bar_h: float,
+    title_text: str,
+    right_label: str,
+    logo_img: Optional[Image.Image],
+    grad_l: Tuple[float, float, float],
+    grad_r: Tuple[float, float, float],
+) -> None:
+    hy = page_h - top_bar_h
+    _draw_gradient(c, 0, hy, page_w, top_bar_h, grad_l, grad_r, steps=120)
+
+    tx = 14.0
+    if logo_img:
+        lw, lh = logo_img.size
+        th = top_bar_h * 0.62
+        r = th / max(1, lh)
+        dw, dh = lw * r, lh * r
+        c.drawImage(
+            ImageReader(logo_img),
+            14,
+            hy + (top_bar_h - dh) / 2,
+            dw,
+            dh,
+            mask="auto",
+        )
+        tx = 14 + dw + 10
+
+    c.setFillColorRGB(1, 1, 1)
+    fs = _fit_font(title_text, TITLE_FONT, page_w - tx - 130, top_bar_h * 0.72, 18, 36)
+    c.setFont(TITLE_FONT, fs)
+    c.drawString(tx, hy + (top_bar_h - fs) / 2 + 2, title_text)
+
+    if right_label:
+        rfs = _fit_font(right_label, TITLE_FONT, 120, top_bar_h * 0.68, 14, 28)
+        rw = pdfmetrics.stringWidth(right_label, TITLE_FONT, rfs)
+        c.setFont(TITLE_FONT, rfs)
+        c.drawString(page_w - rw - 14, hy + (top_bar_h - rfs) / 2 + 2, right_label)
+
     c.setLineWidth(0.8)
-    c.rect(outer_margin, outer_margin, page_w - outer_margin * 2, footer_h, stroke=1, fill=1)
+    c.setStrokeColorRGB(0.88, 0.88, 0.92)
+    c.line(0, hy, page_w, hy)
 
-    stamp = f"Generated: {date.today().isoformat()}"
-    c.setFillColorRGB(0.25, 0.25, 0.30)
-    c.setFont(BODY_FONT, 9)
-    c.drawString(outer_margin + 12, outer_margin + (footer_h - 9) / 2, stamp)
+
+def _draw_cell_text_block(
+    c: canvas.Canvas,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    name: str,
+    upc12: Optional[str],
+    last5: str,
+    qty: Optional[int],
+) -> None:
+    px, py = 5, 4
+    mw = max(12.0, w - px * 2)
+    avail = max(10.0, h - py * 2)
+
+    upc_str = upc12 if upc12 else (f"???????{last5}" if last5 else "")
+    ns = 13.0
+    while ns >= 5.0:
+        ms = max(5.0, ns * 0.86)
+        lhn = ns * 1.18
+        lhm = ms * 1.18
+
+        nls = wrap_text(name or "", mw, BODY_BOLD_FONT, ns)
+        ul = f"UPC: {upc_str}" if upc_str else ""
+        ql = f"Qty: {qty}" if qty is not None else ""
+
+        need = (
+            len(nls) * lhn
+            + (2.5 if nls and (ul or ql) else 0)
+            + (lhm if ul else 0)
+            + (lhm if ql else 0)
+        )
+        if need <= avail:
+            ty = y + h - py - ns
+            c.setFillColorRGB(*NAVY_RGB)
+            c.setFont(BODY_BOLD_FONT, ns)
+            for ln in nls:
+                c.drawString(x + px, max(y + py, ty), ln)
+                ty -= lhn
+
+            if nls and (ul or ql):
+                ty -= 2.5
+            c.setFont(BODY_FONT, ms)
+            if ul:
+                c.drawString(x + px, max(y + py, ty), ul)
+                ty -= lhm
+            if ql:
+                c.drawString(x + px, max(y + py, ty), ql)
+            return
+        ns -= 0.5
+
+    fs = 5.0
+    ty = y + h - py - fs
+    c.setFillColorRGB(*NAVY_RGB)
+    c.setFont(BODY_BOLD_FONT, fs)
+    for ln in wrap_text(name or "", mw, BODY_BOLD_FONT, fs):
+        c.drawString(x + px, max(y + py, ty), ln)
+        ty -= fs * 1.18
+    c.setFont(BODY_FONT, fs)
+    if upc_str:
+        c.drawString(x + px, max(y + py, ty), f"UPC: {upc_str}")
+        ty -= fs * 1.18
+    if qty is not None:
+        c.drawString(x + px, max(y + py, ty), f"Qty: {qty}")
+
+
+_STOPWORDS = {
+    "GIFT",
+    "CARD",
+    "CARDS",
+    "VALUE",
+    "THE",
+    "AND",
+    "FOR",
+    "WITH",
+    "IN",
+    "OF",
+    "A",
+    "AN",
+    "WALMART",
+    "WM",
+    "VGC",
+    "GC",
+}
+
+
+def _is_important_token(tok: str) -> bool:
+    t = tok.strip().upper()
+    if not t:
+        return False
+    if "$" in t and re.search(r"\d", t):
+        return True
+    if re.fullmatch(r"\d{1,3}", t):
+        return True
+    if re.search(r"\d", t) and any(u in t for u in ("PK", "CT", "OZ", "LB", "MG", "ML")):
+        return True
+    if re.fullmatch(r"[A-Z]\d{1,3}", t):  # e.g., D82
+        return True
+    return False
+
+
+def _compact_one_line_name(name: str) -> str:
+    raw = re.sub(r"\s+", " ", (name or "").strip())
+    if not raw:
+        return ""
+    tokens = raw.split()
+    imp = [t for t in tokens if _is_important_token(t)]
+    core = [t for t in tokens if t.upper() not in _STOPWORDS]
+    use = core if core else tokens
+    for t in imp:
+        if t not in use:
+            use.append(t)
+    return " ".join(use)
+
+
+def _fit_name_preserve_qualifiers(name: str, font: str, size: float, max_w: float) -> str:
+    raw = re.sub(r"\s+", " ", (name or "").strip())
+    if not raw:
+        return ""
+    tokens = raw.split()
+
+    def is_important(t: str) -> bool:
+        tt = t.upper()
+        if "$" in tt and re.search(r"\d", tt):
+            return True
+        if re.search(r"\d", tt) and any(x in tt for x in ("PK", "CT", "OZ", "LB", "MG", "ML")):
+            return True
+        if re.fullmatch(r"[A-Z]\d{1,3}", tt):
+            return True
+        return False
+
+    keep = tokens[:]
+    while keep and pdfmetrics.stringWidth(" ".join(keep), font, size) > max_w:
+        removable = [i for i, t in enumerate(keep) if 0 < i < len(keep) - 1 and not is_important(t)]
+        if not removable:
+            break
+        mid = removable[len(removable) // 2]
+        keep.pop(mid)
+
+    candidate = " ".join(keep)
+    if pdfmetrics.stringWidth(candidate, font, size) <= max_w:
+        return candidate
+    return _ellipsis(candidate, font, size, max_w)
 
 
 def _draw_full_pallet_header(
     c: canvas.Canvas,
-    pw: float,
-    ph: float,
+    page_w: float,
+    page_h: float,
     header_h: float,
-    title_prefix: str,
-    side_label: str,
-    logo: Optional[Image.Image],
+    title_text: str,
+    right_label: str,
+    logo_img: Optional[Image.Image],
 ) -> None:
-    c.setFillColorRGB(0.98, 0.98, 1.0)
-    c.setStrokeColorRGB(0.88, 0.88, 0.92)
-    c.setLineWidth(0.8)
-    c.rect(0, ph - header_h, pw, header_h, stroke=1, fill=1)
+    y0 = page_h - header_h
+    c.setFillColorRGB(1, 1, 1)
+    c.rect(0, y0, page_w, header_h, stroke=0, fill=1)
+
+    tx = 18.0
+    if logo_img:
+        lw, lh = logo_img.size
+        th = header_h * 0.62
+        r = th / max(1, lh)
+        dw, dh = lw * r, lh * r
+        c.drawImage(
+            ImageReader(logo_img),
+            18,
+            y0 + (header_h - dh) / 2,
+            dw,
+            dh,
+            mask="auto",
+        )
+        tx = 18 + dw + 12
 
     c.setFillColorRGB(*NAVY_RGB)
-    c.setFont(TITLE_FONT, 18)
-    c.drawString(24, ph - header_h + 18, f"{title_prefix}: {side_label}")
+    fs = _fit_font(title_text, BODY_BOLD_FONT, page_w - tx - 160, header_h * 0.70, 14, 26)
+    c.setFont(BODY_BOLD_FONT, fs)
+    c.drawString(tx, y0 + (header_h - fs) / 2 + 1, title_text)
 
-    if logo is not None:
-        try:
-            sw, sh = logo.size
-            max_h = header_h - 18
-            r = min(1.0, max_h / max(1, sh))
-            dw, dh = sw * r, sh * r
-            c.drawImage(ImageReader(logo), pw - dw - 24, ph - header_h + (header_h - dh) / 2, dw, dh, mask="auto")
-        except Exception:
-            pass
+    if right_label:
+        rfs = _fit_font(right_label, BODY_BOLD_FONT, 150, header_h * 0.68, 12, 24)
+        rw = pdfmetrics.stringWidth(right_label, BODY_BOLD_FONT, rfs)
+        c.setFont(BODY_BOLD_FONT, rfs)
+        c.drawString(page_w - rw - 18, y0 + (header_h - rfs) / 2 + 1, right_label)
+
+    c.setLineWidth(0.8)
+    c.setStrokeColorRGB(0.86, 0.86, 0.88)
+    c.line(0, y0, page_w, y0)
+
+
+def _draw_footer(c: canvas.Canvas, page_w: float, outer_margin: float, footer_h: float) -> None:
+    fy = outer_margin + footer_h
+    c.setLineWidth(0.7)
+    c.setStrokeColorRGB(0.82, 0.82, 0.82)
+    c.line(outer_margin, fy, page_w - outer_margin, fy)
+
+    c.setFillColorRGB(*NAVY_RGB)
+    c.setFont(BODY_BOLD_FONT, 11)
+    left = f"Date: {date.today().isoformat()}"
+    mid = "Generated by Kendal King"
+    c.drawString(outer_margin, outer_margin + 11, left)
+    mw = pdfmetrics.stringWidth(mid, BODY_BOLD_FONT, 11)
+    c.drawString((page_w - mw) / 2, outer_margin + 11, mid)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Full Pallet renderer (new logic)
+# Full-Pallet Display renderer — TEMPLATE-STYLE REBUILD (UPDATED)
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -869,23 +979,14 @@ def render_full_pallet_pdf(
     pages: List[FullPalletPage],
     images_pdf_bytes: bytes,
     matrix_idx: Dict[str, List[MatrixRow]],
-    ppt_cards_by_side: Dict[str, PptSideCards],
-    holder_items: List[HolderItem],
-    ppt_cpp_global: Optional[int],
     title_prefix: str = "POG",
 ) -> bytes:
-    """
-    Full Pallet render:
-    - Page size fixed to 11x17 portrait (792x1224) to match completed planogram.
-    - Renders:
-      * Top cards (PPT): ID# + title + CPP global.
-      * Gift Card Holders: Item # + description + Qty as CPP.
-      * Main grid + BONUS: uses existing UPC12/CPP logic (last5 → matrix).
-    """
     buf = io.BytesIO()
     images_doc = fitz.open(stream=images_pdf_bytes, filetype="pdf")
 
-    PW, PH = (792.0, 1224.0)
+    PORTRAIT = (936.0, 1296.0)
+    LANDSCAPE = (1296.0, 936.0)
+
     MARGIN = 28.0
     HEADER_H = 56.0
     FOOTER_H = 38.0
@@ -894,9 +995,7 @@ def render_full_pallet_pdf(
     SECTION_BAR_GAP = 10.0
     BETWEEN_SECTIONS_GAP = 16.0
 
-    TOP_GUTTER_X = 10.0
-    TOP_GUTTER_Y = 10.0
-
+    BASE_GUTTER_X = 14.0
     BAR_FILL = _hex_to_rgb("#77B5F0")
     BAR_TEXT = NAVY_RGB
 
@@ -904,6 +1003,13 @@ def render_full_pallet_pdf(
     FILLED_STROKE = (0.78, 0.78, 0.80)
 
     logo = _try_load_logo()
+
+    def _marker_y(p: FullPalletPage, kind: str) -> Optional[float]:
+        for ann in p.annotations:
+            if ann.kind == kind:
+                _, t, _, b = ann.bbox
+                return (t + b) / 2
+        return None
 
     def _cell_center(cell: CellData) -> Tuple[float, float]:
         x0, t, x1, b = cell.bbox
@@ -922,7 +1028,7 @@ def render_full_pallet_pdf(
             x, _ = _cell_center(cl)
             col_to_x.setdefault(cl.col, []).append(x)
 
-        cols = sorted(col_to_x.keys(), key=lambda c_: float(np.mean(col_to_x[c_]))) if col_to_x else []
+        cols = sorted(col_to_x.keys(), key=lambda c_: float(np.mean(col_to_x[c_])))
         if len(cols) <= 1:
             return cols, []
 
@@ -939,12 +1045,7 @@ def render_full_pallet_pdf(
         return cols, units
 
     def _split_rows_by_bonus(p: FullPalletPage, global_rows: List[int]) -> Tuple[List[int], List[int]]:
-        bonus_y = None
-        for ann in p.annotations:
-            if ann.kind == "bonus_strip":
-                _, t, _, b = ann.bbox
-                bonus_y = (t + b) / 2
-                break
+        bonus_y = _marker_y(p, "bonus_strip")
 
         row_to_y: Dict[int, float] = {}
         for r in global_rows:
@@ -970,7 +1071,59 @@ def render_full_pallet_pdf(
             return global_rows, []
         return global_rows[: i_max + 1], global_rows[i_max + 1 :]
 
-    def _draw_section_bar(c: canvas.Canvas, x: float, y: float, w: float, h: float, label: str) -> None:
+    def _choose_geometry(
+        sections_meta: List[Tuple[int, int, List[int]]]
+    ) -> Tuple[float, float, float, float, float, float]:
+        def eval_page(pw: float, ph: float) -> Optional[Tuple[float, float, float, float, float, float]]:
+            cx0 = MARGIN
+            cx1 = pw - MARGIN
+            cy0 = MARGIN + FOOTER_H
+            cy1 = ph - MARGIN - HEADER_H
+
+            avail_w = cx1 - cx0
+            avail_h = cy1 - cy0
+            if avail_w <= 100 or avail_h <= 100:
+                return None
+
+            card_w_candidates: List[float] = []
+            for _, n_cols, gap_units in sections_meta:
+                gap_sum = sum(gap_units) * BASE_GUTTER_X
+                card_w = (avail_w - gap_sum) / max(1, n_cols)
+                card_w_candidates.append(card_w)
+
+            card_w = min(card_w_candidates) if card_w_candidates else 80.0
+            gutter_y = max(6.0, min(12.0, card_w * 0.10))
+            total_rows = sum(r for r, _, _ in sections_meta)
+            if total_rows <= 0:
+                return None
+
+            bars_total = SECTION_BAR_H * len(sections_meta)
+            gaps_total = BETWEEN_SECTIONS_GAP * max(0, len(sections_meta) - 1)
+            gutters_total = sum(max(0, r - 1) * gutter_y for r, _, _ in sections_meta)
+            bar_gaps_total = SECTION_BAR_GAP * len(sections_meta)
+
+            card_h = (
+                (avail_h - bars_total - gaps_total - gutters_total - bar_gaps_total) / total_rows
+            )
+            card_h = min(card_h, card_w * 1.35)
+
+            if card_w < 62.0 or card_h < 54.0:
+                return None
+            return pw, ph, card_w, card_h, gutter_y, BASE_GUTTER_X
+
+        cand = eval_page(*LANDSCAPE)
+        if cand is not None:
+            return cand
+        cand = eval_page(*PORTRAIT)
+        if cand is not None:
+            return cand
+
+        pw, ph = LANDSCAPE
+        return pw, ph, 62.0, 54.0, 6.0, 10.0
+
+    def _draw_section_bar(
+        c: canvas.Canvas, x: float, y: float, w: float, h: float, label: str
+    ) -> None:
         c.setFillColorRGB(*BAR_FILL)
         c.setStrokeColorRGB(*BAR_FILL)
         c.rect(x, y, w, h, stroke=0, fill=1)
@@ -981,12 +1134,6 @@ def render_full_pallet_pdf(
         tw = pdfmetrics.stringWidth(label, BODY_BOLD_FONT, fs)
         c.drawString(x + (w - tw) / 2, y + (h - fs) / 2 + 1, label)
 
-    def _draw_card_box(c: canvas.Canvas, x: float, y: float, w: float, h: float, filled: bool) -> None:
-        c.setFillColorRGB(1, 1, 1)
-        c.setStrokeColorRGB(*(FILLED_STROKE if filled else EMPTY_STROKE))
-        c.setLineWidth(0.75 if filled else 0.45)
-        c.rect(x, y, w, h, stroke=1, fill=1 if filled else 0)
-
     def _draw_card(
         c: canvas.Canvas,
         x: float,
@@ -994,7 +1141,7 @@ def render_full_pallet_pdf(
         w: float,
         h: float,
         img: Optional[Image.Image],
-        top_id: str,   # UPC12 for grid OR "ID #xx" OR "109113"
+        upc12: str,
         name: str,
         cpp: Optional[int],
     ) -> None:
@@ -1023,21 +1170,20 @@ def render_full_pallet_pdf(
             )
 
         cpp_str = f"CPP: {cpp}" if cpp is not None else "CPP:"
-        top_line = (top_id or "").strip()
-        nm = (name or "").strip()
+        upc = (upc12 or "").strip()
 
         cpp_h = max(10.0, text_h * 0.30)
         name_h = max(9.0, text_h * 0.26)
         upc_h = max(10.0, text_h - cpp_h - name_h)
 
-        upc_fs = _fit_font(top_line, BODY_BOLD_FONT, iw, upc_h, 6.0, 14.0, step=0.25)
+        upc_fs = _fit_font(upc, BODY_BOLD_FONT, iw, upc_h, 6.0, 14.0, step=0.25)
         c.setFillColorRGB(0.05, 0.05, 0.05)
         c.setFont(BODY_BOLD_FONT, upc_fs)
-        tw = pdfmetrics.stringWidth(top_line, BODY_BOLD_FONT, upc_fs)
-        c.drawString(ix + (iw - tw) / 2, iy + cpp_h + name_h + (upc_h - upc_fs) / 2, top_line)
+        tw = pdfmetrics.stringWidth(upc, BODY_BOLD_FONT, upc_fs)
+        c.drawString(ix + (iw - tw) / 2, iy + cpp_h + name_h + (upc_h - upc_fs) / 2, upc)
 
         name_fs = 6.5
-        nm = _fit_name_preserve_qualifiers(nm.upper(), BODY_FONT, name_fs, iw)
+        nm = _fit_name_preserve_qualifiers((name or "").upper(), BODY_FONT, name_fs, iw)
         c.setFillColorRGB(0.10, 0.10, 0.10)
         c.setFont(BODY_FONT, name_fs)
         tw = pdfmetrics.stringWidth(nm, BODY_FONT, name_fs)
@@ -1051,9 +1197,23 @@ def render_full_pallet_pdf(
 
     try:
         if not pages:
-            c = canvas.Canvas(buf, pagesize=(PW, PH))
+            c = canvas.Canvas(buf, pagesize=LANDSCAPE)
             c.save()
             return buf.getvalue()
+
+        # Choose geometry based on first side, then keep consistent.
+        p0 = pages[0]
+        global_cols0, gap_units0 = _global_col_order_and_gaps(p0)
+        global_rows0 = _global_row_order(p0)
+        gift_rows0, bonus_rows0 = _split_rows_by_bonus(p0, global_rows0)
+
+        meta_first: List[Tuple[int, int, List[int]]] = []
+        if gift_rows0:
+            meta_first.append((len(gift_rows0), len(global_cols0), gap_units0))
+        if bonus_rows0:
+            meta_first.append((len(bonus_rows0), len(global_cols0), gap_units0))
+
+        PW, PH, CARD_W, CARD_H, GUTTER_Y, GUTTER_X = _choose_geometry(meta_first)
 
         c = canvas.Canvas(buf, pagesize=(PW, PH))
 
@@ -1076,148 +1236,92 @@ def render_full_pallet_pdf(
             content_w = cx1 - cx0
             y_cursor = cy1
 
-            # Zone 1: PPT cards (ID# + CPP global)
-            ppt_side = ppt_cards_by_side.get(pdata.side_letter)
-            if ppt_side:
-                top_cols = 8
-                side_cols = 3
-                side_rows = 2
-
-                top_w = (content_w - (top_cols - 1) * TOP_GUTTER_X) / top_cols
-                top_h = min(top_w * 1.25, 96.0)
-
-                y_top = y_cursor - top_h
-                for i, card in enumerate(ppt_side.top8[:top_cols]):
-                    x = cx0 + i * (top_w + TOP_GUTTER_X)
-                    _draw_card_box(c, x, y_top, top_w, top_h, filled=True)
-                    _draw_card(c, x, y_top, top_w, top_h, None, f"ID #{card.card_id}", card.title, ppt_cpp_global)
-
-                x_side0 = cx0 + (top_cols - side_cols) * (top_w + TOP_GUTTER_X)
-                y_side_top = y_top - TOP_GUTTER_Y
-                for j in range(side_rows):
-                    for i in range(side_cols):
-                        idx = j * side_cols + i
-                        x = x_side0 + i * (top_w + TOP_GUTTER_X)
-                        y = y_side_top - (j + 1) * top_h - j * TOP_GUTTER_Y
-                        if idx >= len(ppt_side.side6):
-                            _draw_card_box(c, x, y, top_w, top_h, filled=False)
-                            continue
-                        card = ppt_side.side6[idx]
-                        _draw_card_box(c, x, y, top_w, top_h, filled=True)
-                        _draw_card(c, x, y, top_w, top_h, None, f"ID #{card.card_id}", card.title, ppt_cpp_global)
-
-                zone_h = top_h + TOP_GUTTER_Y + side_rows * top_h + (side_rows - 1) * TOP_GUTTER_Y
-                y_cursor = y_cursor - zone_h - BETWEEN_SECTIONS_GAP
-
-            # Zone 2: Gift Card Holders (Item # + Qty as CPP)
-            if holder_items:
-                y_cursor -= SECTION_BAR_H
-                _draw_section_bar(c, cx0, y_cursor, content_w, SECTION_BAR_H, "GIFT CARD HOLDERS")
-                y_cursor -= SECTION_BAR_GAP
-
-                cols = min(5, max(1, len(holder_items)))
-                rows = int(math.ceil(len(holder_items) / cols)) if cols else 0
-                holder_w = (content_w - (cols - 1) * TOP_GUTTER_X) / cols if cols else content_w
-                holder_h = min(holder_w * 1.20, 82.0)
-                grid_h = rows * holder_h + max(0, rows - 1) * TOP_GUTTER_Y
-
-                grid_top = y_cursor
-                for r in range(rows):
-                    y = grid_top - (r + 1) * holder_h - r * TOP_GUTTER_Y
-                    for col in range(cols):
-                        idx = r * cols + col
-                        x = cx0 + col * (holder_w + TOP_GUTTER_X)
-                        if idx >= len(holder_items):
-                            _draw_card_box(c, x, y, holder_w, holder_h, filled=False)
-                            continue
-                        it = holder_items[idx]
-                        _draw_card_box(c, x, y, holder_w, holder_h, filled=True)
-                        _draw_card(c, x, y, holder_w, holder_h, None, it.item_no, it.description, it.qty)
-
-                y_cursor = grid_top - grid_h - BETWEEN_SECTIONS_GAP
-
-            # Zones 3/4: existing matching logic for main grid + BONUS
             global_cols, gap_units = _global_col_order_and_gaps(pdata)
             global_rows = _global_row_order(pdata)
-            pre_rows, bonus_rows = _split_rows_by_bonus(pdata, global_rows)
+            gift_rows, bonus_rows = _split_rows_by_bonus(pdata, global_rows)
 
-            n_cols = len(global_cols)
-            if n_cols <= 0:
-                c.showPage()
-                continue
-
-            gutter_x = 10.0
-            gap_sum = sum(gap_units) * gutter_x
-            card_w = (content_w - gap_sum) / n_cols
-
-            x_positions: List[float] = []
-            x = cx0
-            for ci in range(n_cols):
-                x_positions.append(x)
-                x += card_w
-                if ci < n_cols - 1:
-                    x += gutter_x * (gap_units[ci] if ci < len(gap_units) else 1)
-
-            remaining_h = max(0.0, y_cursor - cy0)
-            total_rows = len(pre_rows) + len(bonus_rows)
-            gutter_y = max(6.0, min(12.0, card_w * 0.10))
-
-            reserve = 0.0
+            sections: List[Tuple[str, List[int]]] = []
+            if gift_rows:
+                sections.append(("GIFT CARD HOLDERS", gift_rows))
             if bonus_rows:
-                reserve += SECTION_BAR_H + SECTION_BAR_GAP + BETWEEN_SECTIONS_GAP
-            if total_rows <= 0 or remaining_h <= 50:
-                c.showPage()
-                continue
+                sections.append(("BONUS", bonus_rows))
+            if not sections:
+                sections.append(("PRODUCTS", global_rows))
 
-            available_for_cards = max(10.0, remaining_h - reserve - max(0, total_rows - 1) * gutter_y)
-            card_h = min(card_w * 1.35, available_for_cards / total_rows)
+            total_rows = sum(len(r) for _, r in sections)
+            bars_total = SECTION_BAR_H * len(sections)
+            gutters_total = sum(max(0, len(r) - 1) * GUTTER_Y for _, r in sections)
+            gaps_total = BETWEEN_SECTIONS_GAP * max(0, len(sections) - 1)
+            bar_gaps_total = SECTION_BAR_GAP * len(sections)
+            needed_h = total_rows * CARD_H + gutters_total + bars_total + gaps_total + bar_gaps_total
 
-            def _render_grid(rows_: List[int]) -> None:
-                nonlocal y_cursor
-                if not rows_:
-                    return
+            extra = max(0.0, (cy1 - cy0) - needed_h)
+            extra_per_block = extra / max(1, len(sections) * 2)
 
-                rmap = {r: i for i, r in enumerate(rows_)}
+            for label, sec_rows in sections:
+                y_cursor -= extra_per_block
+                y_cursor -= SECTION_BAR_H
+                _draw_section_bar(c, cx0, y_cursor, content_w, SECTION_BAR_H, label)
+                y_cursor -= SECTION_BAR_GAP
+
+                n_cols = len(global_cols)
+                if n_cols <= 0:
+                    continue
+
+                x_positions: List[float] = []
+                x = cx0
+                for ci in range(n_cols):
+                    x_positions.append(x)
+                    x += CARD_W
+                    if ci < n_cols - 1:
+                        x += GUTTER_X * (gap_units[ci] if ci < len(gap_units) else 1)
+
+                rmap = {r: i for i, r in enumerate(sec_rows)}
                 cmap = {c_: i for i, c_ in enumerate(global_cols)}
-                row_set = set(rows_)
+                row_set = set(sec_rows)
 
                 occ: Dict[Tuple[int, int], CellData] = {}
                 for cell in pdata.cells:
                     if cell.row in row_set and cell.col in cmap:
                         occ[(rmap[cell.row], cmap[cell.col])] = cell
 
-                n_rows = len(rows_)
-                grid_h = n_rows * card_h + max(0, n_rows - 1) * gutter_y
+                n_rows = len(sec_rows)
+                grid_h = n_rows * CARD_H + max(0, n_rows - 1) * GUTTER_Y
                 grid_top = y_cursor
 
                 for ri in range(n_rows):
-                    y = grid_top - (ri + 1) * card_h - ri * gutter_y
+                    y = grid_top - (ri + 1) * CARD_H - ri * GUTTER_Y
                     for ci in range(n_cols):
                         x = x_positions[ci]
                         cell = occ.get((ri, ci))
                         if cell is None:
-                            _draw_card_box(c, x, y, card_w, card_h, filled=False)
+                            c.setFillColorRGB(1, 1, 1)
+                            c.setStrokeColorRGB(*EMPTY_STROKE)
+                            c.setLineWidth(0.45)
+                            c.rect(x, y, CARD_W, CARD_H, stroke=1, fill=0)
                             continue
 
                         match = _resolve(cell.last5, cell.name, matrix_idx) if cell.last5 else None
                         upc12 = match.upc12 if match else None
                         cpp = match.cpp_qty if match else None
-                        disp_name = (match.display_name if match and match.display_name else cell.name).strip()
+                        disp_name = (
+                            match.display_name if match and match.display_name else cell.name
+                        ).strip()
+
                         upc_str = upc12 if upc12 else f"???????{cell.last5}"
 
-                        _draw_card_box(c, x, y, card_w, card_h, filled=True)
-                        img = crop_image_cell(images_doc, pdata.page_index, cell.bbox, zoom=2.6, inset=0.045)
-                        _draw_card(c, x, y, card_w, card_h, img, upc_str, disp_name, cpp)
+                        c.setFillColorRGB(1, 1, 1)
+                        c.setStrokeColorRGB(*FILLED_STROKE)
+                        c.setLineWidth(0.75)
+                        c.rect(x, y, CARD_W, CARD_H, stroke=1, fill=1)
+
+                        img = crop_image_cell(
+                            images_doc, pdata.page_index, cell.bbox, zoom=2.6, inset=0.045
+                        )
+                        _draw_card(c, x, y, CARD_W, CARD_H, img, upc_str, disp_name, cpp)
 
                 y_cursor = grid_top - grid_h - BETWEEN_SECTIONS_GAP
-
-            _render_grid(pre_rows)
-
-            if bonus_rows:
-                y_cursor -= SECTION_BAR_H
-                _draw_section_bar(c, cx0, y_cursor, content_w, SECTION_BAR_H, "BONUS")
-                y_cursor -= SECTION_BAR_GAP
-                _render_grid(bonus_rows)
+                y_cursor -= extra_per_block
 
             c.showPage()
 
@@ -1345,116 +1449,53 @@ def render_standard_pog_pdf(
                     continue
 
                 c.setFillColorRGB(1, 1, 1)
-                c.setStrokeColorRGB(0.80, 0.80, 0.83)
+                c.setStrokeColorRGB(0.72, 0.72, 0.72)
                 c.setLineWidth(border_w)
                 c.rect(out_x0, out_bottom, out_w, out_h, stroke=1, fill=1)
 
-                if upc12:
-                    c.setFillColorRGB(0.08, 0.08, 0.10)
-                    c.setFont(BODY_BOLD_FONT, 9)
-                    c.drawString(out_x0 + 4, out_bottom + 4, upc12)
+                img_area_h = out_h * img_frac
+                text_area_h = out_h - img_area_h
 
+                img = crop_image_cell(images_doc, page.page_index, cell.bbox, zoom=3.2, inset=0.08)
+                img_w, img_h = img.size
+                img_scale = min(out_w * 0.86 / max(1, img_w), img_area_h * 0.84 / max(1, img_h))
+                draw_w, draw_h = img_w * img_scale, img_h * img_scale
+
+                c.drawImage(
+                    ImageReader(img),
+                    out_x0 + (out_w - draw_w) / 2,
+                    out_bottom + text_area_h + (img_area_h - draw_h) / 2,
+                    draw_w,
+                    draw_h,
+                    preserveAspectRatio=True,
+                    mask="auto",
+                )
+
+                c.setLineWidth(0.5)
+                c.setStrokeColorRGB(0.88, 0.88, 0.88)
+                c.line(out_x0 + 3, out_bottom + text_area_h, out_x1 - 3, out_bottom + text_area_h)
+
+                _draw_cell_text_block(
+                    c,
+                    out_x0,
+                    out_bottom,
+                    out_w,
+                    text_area_h,
+                    cell.name,
+                    upc12,
+                    cell.last5,
+                    qty,
+                )
+
+        c.showPage()
+        c.save()
+        return buf.getvalue()
     finally:
         images_doc.close()
 
-    c.save()
-    return buf.getvalue()
-
-
-def _draw_header(
-    c: canvas.Canvas,
-    page_w: float,
-    page_h: float,
-    top_bar_h: float,
-    title_prefix: str,
-    subtitle: str,
-    logo: Optional[Image.Image],
-    grad_left: Tuple[float, float, float],
-    grad_right: Tuple[float, float, float],
-) -> None:
-    c.setFillColorRGB(*grad_left)
-    c.rect(0, page_h - top_bar_h, page_w, top_bar_h, stroke=0, fill=1)
-    c.setFillColorRGB(1, 1, 1)
-    c.setFont(TITLE_FONT, 22)
-    c.drawString(44, page_h - top_bar_h + 30, title_prefix)
-    if subtitle:
-        c.setFont(BODY_FONT, 12)
-        c.drawString(44, page_h - top_bar_h + 12, subtitle)
-    if logo is not None:
-        try:
-            sw, sh = logo.size
-            max_h = top_bar_h - 22
-            r = min(1.0, max_h / max(1, sh))
-            dw, dh = sw * r, sh * r
-            c.drawImage(ImageReader(logo), page_w - dw - 44, page_h - top_bar_h + (top_bar_h - dh) / 2, dw, dh, mask="auto")
-        except Exception:
-            pass
-
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Standard Flat Display extraction (UNCHANGED)
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-@st.cache_data(show_spinner=False)
-def extract_pages_from_labels(labels_pdf_bytes: bytes, n_cols: int) -> List[PageData]:
-    pages: List[PageData] = []
-    with pdfplumber.open(io.BytesIO(labels_pdf_bytes)) as pdf:
-        for pidx, page in enumerate(pdf.pages):
-            words = page.extract_words(use_text_flow=True, keep_blank_chars=False) or []
-            five = [w for w in words if re.fullmatch(r"\d{5}", str(w.get("text", "")))]
-            if not five:
-                continue
-
-            xs = [(w["x0"] + w["x1"]) / 2 for w in five]
-            ys = [(w["top"] + w["bottom"]) / 2 for w in five]
-            x_centers = kmeans_1d(xs, k=n_cols)
-            y_centers = cluster_positions(ys, tol=max(8, float(page.height) * 0.015))
-
-            x_bounds = boundaries_from_centers(x_centers)
-            y_bounds = boundaries_from_centers(y_centers)
-
-            cell_map: Dict[Tuple[int, int], Tuple[float, dict]] = {}
-            for w, xc, yc in zip(five, xs, ys):
-                col = int(np.argmin(np.abs(x_centers - xc)))
-                row = int(np.argmin(np.abs(y_centers - yc)))
-                dist = abs(x_centers[col] - xc) + abs(y_centers[row] - yc)
-                key = (row, col)
-                if key not in cell_map or dist < cell_map[key][0]:
-                    cell_map[key] = (dist, w)
-
-            cells: List[CellData] = []
-            for (row, col), (_, token_w) in sorted(cell_map.items()):
-                bbox = (
-                    float(x_bounds[col]),
-                    float(y_bounds[row]),
-                    float(x_bounds[col + 1]),
-                    float(y_bounds[row + 1]),
-                )
-                txt = (page.crop(bbox).extract_text() or "").strip()
-                parsed_name, parsed_last5, qty = parse_label_cell_text(txt)
-                token_last5 = str(token_w.get("text", "")).strip()
-                last5 = token_last5 if re.fullmatch(r"\d{5}", token_last5) else parsed_last5
-
-                cells.append(
-                    CellData(
-                        row=row,
-                        col=col,
-                        bbox=bbox,
-                        name=parsed_name,
-                        last5=last5 or "",
-                        qty=qty,
-                        upc12=None,
-                    )
-                )
-
-            pages.append(PageData(page_index=pidx, x_bounds=x_bounds, y_bounds=y_bounds, cells=cells))
-
-    return pages
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Main UI (Standard Flat Display branch preserved)
+# Streamlit UI
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -1475,45 +1516,14 @@ def main() -> None:
         labels_pdf = st.file_uploader("Labels PDF", type=["pdf"])
         images_pdf = st.file_uploader("Images PDF", type=["pdf"])
 
-        # New inputs (Full Pallet only)
-        pptx_file = (
-            st.file_uploader("Top Cards PowerPoint (.pptx)", type=["pptx"])
-            if display_type == DISPLAY_FULL_PALLET
-            else None
-        )
-        holder_pog_file = (
-            st.file_uploader("Gift Card Holders POG (.xlsx)", type=["xlsx"], key="holder_pog")
-            if display_type == DISPLAY_FULL_PALLET
-            else None
-        )
-        ppt_cpp_global = (
-            st.number_input(
-                "PPT CPP (applies to all PPT cards)",
-                min_value=0,
-                max_value=999,
-                value=30,
-                step=1,
-            )
-            if display_type == DISPLAY_FULL_PALLET
-            else None
-        )
-
         st.divider()
         title_prefix = st.text_input("PDF title prefix", "POG")
         out_name = st.text_input("Output filename", "pog_export.pdf")
         generate = st.button("Generate POG PDF", type="primary", use_container_width=True)
 
-    # Requirements per mode (Standard unchanged)
-    if display_type == DISPLAY_FULL_PALLET:
-        if not (matrix_file and labels_pdf and images_pdf and pptx_file and holder_pog_file):
-            st.info(
-                "Upload Matrix XLSX + Labels PDF + Images PDF + Top Cards PPTX + Gift Card Holders POG XLSX to begin."
-            )
-            return
-    else:
-        if not (matrix_file and labels_pdf and images_pdf):
-            st.info("Upload Matrix XLSX + Labels PDF + Images PDF to begin.")
-            return
+    if not (matrix_file and labels_pdf and images_pdf):
+        st.info("Upload Matrix XLSX + Labels PDF + Images PDF to begin.")
+        return
 
     matrix_bytes = matrix_file.getvalue()
     labels_bytes = labels_pdf.getvalue()
@@ -1521,7 +1531,6 @@ def main() -> None:
 
     matrix_idx = load_matrix_index(matrix_bytes)
 
-    # Standard Flat Display (unchanged path)
     if display_type == DISPLAY_STANDARD:
         pages = extract_pages_from_labels(labels_bytes, N_COLS)
         if not pages:
@@ -1546,7 +1555,11 @@ def main() -> None:
                     }
                 )
 
-        st.dataframe(pd.DataFrame(rows).sort_values(["Side", "Row", "Col"]), use_container_width=True, height=420)
+        st.dataframe(
+            pd.DataFrame(rows).sort_values(["Side", "Row", "Col"]),
+            use_container_width=True,
+            height=420,
+        )
 
         if generate:
             with st.spinner("Rendering PDF…"):
@@ -1564,54 +1577,52 @@ def main() -> None:
                 mime="application/pdf",
                 use_container_width=True,
             )
-        return
 
-    # Full Pallet / Multi-Zone Display (new path)
-    fp_pages = extract_full_pallet_pages(labels_bytes)
-    if not fp_pages:
-        st.error("No product cells detected in Labels PDF.")
-        return
+    else:
+        fp_pages = extract_full_pallet_pages(labels_bytes)
+        if not fp_pages:
+            st.error("No product cells detected in Labels PDF.")
+            return
 
-    st.subheader(f"Detected {len(fp_pages)} side(s) — one output page per side")
-    rows = []
-    for pg in fp_pages:
-        for cell in pg.cells:
-            match = _resolve(cell.last5, cell.name, matrix_idx) if cell.last5 else None
-            rows.append(
-                {
-                    "Side": pg.side_letter,
-                    "Row": cell.row,
-                    "Col": cell.col,
-                    "Name": cell.name,
-                    "Last5": cell.last5,
-                    "CPP (Excel)": match.cpp_qty if match else None,
-                    "UPC12": match.upc12 if match else None,
-                }
-            )
-    st.dataframe(pd.DataFrame(rows).sort_values(["Side", "Row", "Col"]), use_container_width=True, height=420)
+        st.subheader(f"Detected {len(fp_pages)} side(s) — one output page per side")
+        rows = []
+        for pg in fp_pages:
+            for cell in pg.cells:
+                match = _resolve(cell.last5, cell.name, matrix_idx) if cell.last5 else None
+                rows.append(
+                    {
+                        "Side": pg.side_letter,
+                        "Row": cell.row,
+                        "Col": cell.col,
+                        "Name": cell.name,
+                        "Last5": cell.last5,
+                        "CPP (Excel)": match.cpp_qty if match else None,
+                        "UPC12": match.upc12 if match else None,
+                    }
+                )
 
-    if generate:
-        with st.spinner("Rendering PDF…"):
-            ppt_cards = parse_ppt_side_cards(pptx_file.getvalue())
-            holder_items = load_holder_items(holder_pog_file.getvalue())
-
-            pdf = render_full_pallet_pdf(
-                fp_pages,
-                images_bytes,
-                matrix_idx,
-                ppt_cards,
-                holder_items,
-                int(ppt_cpp_global) if ppt_cpp_global is not None else None,
-                title_prefix.strip() or "POG",
-            )
-        st.success("Done.")
-        st.download_button(
-            "⬇ Download Planogram PDF",
-            pdf,
-            file_name=out_name if out_name.endswith(".pdf") else f"{out_name}.pdf",
-            mime="application/pdf",
+        st.dataframe(
+            pd.DataFrame(rows).sort_values(["Side", "Row", "Col"]),
             use_container_width=True,
+            height=420,
         )
+
+        if generate:
+            with st.spinner("Rendering PDF…"):
+                pdf = render_full_pallet_pdf(
+                    fp_pages,
+                    images_bytes,
+                    matrix_idx,
+                    title_prefix.strip() or "POG",
+                )
+            st.success("Done.")
+            st.download_button(
+                "⬇ Download Planogram PDF",
+                pdf,
+                file_name=out_name if out_name.endswith(".pdf") else f"{out_name}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
 
 
 if __name__ == "__main__":
