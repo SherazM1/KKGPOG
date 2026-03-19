@@ -1,4 +1,3 @@
-# home.py
 """
 Streamlit Planogram Generator
 
@@ -288,7 +287,15 @@ def load_matrix_index(matrix_bytes: bytes) -> Dict[str, List[MatrixRow]]:
 
 @st.cache_data(show_spinner=False)
 def load_full_pallet_matrix_index(matrix_bytes: bytes) -> Dict[str, List[MatrixRow]]:
-    """Full-pallet specific matrix index using all UPC-like columns and strict last5 keys."""
+    """Full-pallet matrix index.
+
+    Index key  = last 5 digits of the 11-digit UPC column (column header "UPC").
+    Stored upc12 = 11-digit UPC zero-padded to 12 chars.
+
+    The labels PDF encodes each product as the last 5 digits of its 11-digit UPC,
+    so indexing on that column is required for correct resolution.  The zero-padded
+    11-digit value matches what the reference planogram displays as the product UPC.
+    """
     df_raw = pd.read_excel(io.BytesIO(matrix_bytes), header=None)
     hrow = _find_header_row(df_raw)
 
@@ -306,9 +313,18 @@ def load_full_pallet_matrix_index(matrix_bytes: bytes) -> Dict[str, List[MatrixR
     name_col = _pick_col(headers, ["NAME", "DESCRIPTION"], 1 if len(headers) > 1 else 0)
     cpp_col = _pick_col_optional(headers, ["CPP"])
 
-    upc_cols = [c for c in headers if "UPC" in c.upper()]
-    if not upc_cols:
-        upc_cols = [_pick_col(headers, ["UPC"], 0)]
+    # ── FIX A: use ONLY the 11-digit UPC column as the index key ─────────────
+    # The labels PDF encodes items as the last 5 digits of the 11-digit UPC.
+    # Using the 12-digit UPC column would give a different last-5 (check digit
+    # appended) and break all lookups.  Prefer the exact header "UPC"; fall back
+    # to the first column whose normalised name contains "UPC".
+    upc11_col: Optional[str] = None
+    for h in headers:
+        if h.upper() == "UPC":
+            upc11_col = h
+            break
+    if upc11_col is None:
+        upc11_col = _pick_col(headers, ["UPC"], 0)
 
     df["__name"] = df[name_col].astype(str).fillna("")
     if cpp_col and cpp_col in df.columns:
@@ -318,31 +334,36 @@ def load_full_pallet_matrix_index(matrix_bytes: bytes) -> Dict[str, List[MatrixR
     df["__norm"] = df["__name"].map(_norm_name)
 
     idx: Dict[str, List[MatrixRow]] = {}
-    seen_pairs: set[Tuple[str, str]] = set()
+    seen_pairs: set = set()
     for _, r in df.iterrows():
         display_name = str(r["__name"]).strip()
         cpp_val = r.get("__cpp")
         cpp = None if pd.isna(cpp_val) else int(cpp_val) if cpp_val is not None else None
 
-        for upc_col in upc_cols:
-            upc12 = _coerce_upc12(r.get(upc_col))
-            if not upc12:
-                continue
-            last5 = _to_last5(upc12)
-            if not last5:
-                continue
-            pair = (last5, upc12)
-            if pair in seen_pairs:
-                continue
-            seen_pairs.add(pair)
-            idx.setdefault(last5, []).append(
-                MatrixRow(
-                    upc12=upc12,
-                    norm_name=str(r["__norm"]),
-                    display_name=display_name,
-                    cpp_qty=cpp,
-                )
+        raw_upc11 = r.get(upc11_col)
+        if raw_upc11 is None:
+            continue
+        upc11_str = re.sub(r"\.0$", "", str(raw_upc11).strip())
+        digits11 = re.sub(r"[^0-9]", "", upc11_str)
+        if len(digits11) < 5:
+            continue
+        last5 = digits11[-5:]
+        # Store as 11-digit UPC zero-padded to 12 chars — this is the format
+        # shown in the reference planogram output (e.g. "019674209969").
+        upc12_display = digits11.zfill(12)
+
+        pair = (last5, upc12_display)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        idx.setdefault(last5, []).append(
+            MatrixRow(
+                upc12=upc12_display,
+                norm_name=str(r["__norm"]),
+                display_name=display_name,
+                cpp_qty=cpp,
             )
+        )
     return idx
 
 
@@ -407,7 +428,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             side_letter = chr(ord("A") + min(sidx, 3))
 
         entries: List[Tuple[float, float, PptCard]] = []
-        dedupe_keys: set[Tuple[int, int, str]] = set()
+        dedupe_keys: set = set()
         for shape in slide.shapes:
             if not getattr(shape, "has_text_frame", False):
                 continue
@@ -511,21 +532,6 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
     if full_pallet_sheet is None:
         raise ValueError("FULL PALLET sheet/table missing in workbook.")
 
-    full_df_raw = xls[full_pallet_sheet].copy()
-    header_row = find_header_row(full_df_raw, ["ITEM", "QTY"])
-    if header_row < 0:
-        raise ValueError("FULL PALLET holder table missing ITEM/QTY columns.")
-
-    headers = normalize_headers(full_df_raw.iloc[header_row].tolist())
-    full_df = full_df_raw.iloc[header_row + 1 :].copy()
-    full_df.columns = headers
-
-    item_col = pick_col(headers, ["ITEM", "ITEM_#", "SKU"])
-    qty_col = pick_col(headers, ["QTY", "QUANTITY"])
-    side_col = pick_col(headers, ["SIDE"])
-    if item_col is None or qty_col is None:
-        raise ValueError("FULL PALLET holder table missing ITEM/QTY columns.")
-
     desc_map: Dict[str, str] = {}
     for _, sheet_df in xls.items():
         hdr = find_header_row(sheet_df, ["ITEM", "DESCRIPTION"])
@@ -546,9 +552,94 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
             if desc:
                 desc_map[item_no] = desc
 
-    holders: Dict[str, List[GiftHolder]] = {s: [] for s in "ABCD"}
-    current_side = "A"
+    full_df_raw = xls[full_pallet_sheet].copy()
 
+    item_row = -1
+    qty_row = -1
+    desc_row = -1
+    for i in range(len(full_df_raw)):
+        row_vals = [str(v or "").strip().upper() for v in full_df_raw.iloc[i].tolist()]
+        if item_row < 0 and any("ITEM #" in v or v == "ITEM" for v in row_vals):
+            numeric_items = sum(1 for v in row_vals if _coerce_item_no(v))
+            if numeric_items >= 4:
+                item_row = i
+        if item_row >= 0 and i <= item_row and qty_row < 0:
+            if any(v == "QTY" or v.startswith("QTY") for v in row_vals):
+                qty_row = i
+        if item_row >= 0 and i >= item_row and desc_row < 0:
+            if any("DESCRIPTION" in v for v in row_vals):
+                desc_row = i
+        if item_row >= 0 and qty_row >= 0 and desc_row >= 0:
+            break
+
+    holders: Dict[str, List[GiftHolder]] = {s: [] for s in "ABCD"}
+    if item_row >= 0 and qty_row >= 0:
+        side_markers: List[Tuple[int, str]] = []
+        for r in range(max(0, item_row - 5), item_row + 1):
+            vals = [str(v or "").strip().upper() for v in full_df_raw.iloc[r].tolist()]
+            for cidx, txt in enumerate(vals):
+                m = re.search(r"SIDE\s*([A-D])", txt)
+                if m:
+                    side_markers.append((cidx, m.group(1)))
+        side_markers = sorted(side_markers, key=lambda t: t[0])
+
+        def side_for_col(cidx: int) -> str:
+            if not side_markers:
+                return "A"
+            chosen = side_markers[0][1]
+            for sc, ss in side_markers:
+                if cidx >= sc:
+                    chosen = ss
+                else:
+                    break
+            return chosen
+
+        seen_items: set = set()
+        ncols = full_df_raw.shape[1]
+        for cidx in range(ncols):
+            item_no = _coerce_item_no(full_df_raw.iat[item_row, cidx])
+            if not item_no:
+                continue
+            if (item_no, cidx) in seen_items:
+                continue
+            seen_items.add((item_no, cidx))
+            qty = _coerce_int(full_df_raw.iat[qty_row, cidx]) if qty_row >= 0 else None
+            raw_desc = (
+                str(full_df_raw.iat[desc_row, cidx]).strip()
+                if desc_row >= 0 and desc_row < len(full_df_raw)
+                else ""
+            )
+            name = desc_map.get(item_no) or raw_desc or "(missing description)"
+            side = side_for_col(cidx)
+            holders.setdefault(side, []).append(
+                GiftHolder(side=side, item_no=item_no, name=name, qty=qty)
+            )
+
+    if any(holders.values()):
+        non_empty = [s for s in "ABCD" if holders.get(s)]
+        if non_empty == ["A"]:
+            base_list = holders["A"]
+            for s in "BCD":
+                holders[s] = [
+                    GiftHolder(side=s, item_no=h.item_no, name=h.name, qty=h.qty) for h in base_list
+                ]
+        return holders
+
+    header_row = find_header_row(full_df_raw, ["ITEM", "QTY"])
+    if header_row < 0:
+        raise ValueError("FULL PALLET holder table missing ITEM/QTY columns.")
+
+    headers = normalize_headers(full_df_raw.iloc[header_row].tolist())
+    full_df = full_df_raw.iloc[header_row + 1 :].copy()
+    full_df.columns = headers
+
+    item_col = pick_col(headers, ["ITEM", "ITEM_#", "SKU"])
+    qty_col = pick_col(headers, ["QTY", "QUANTITY"])
+    side_col = pick_col(headers, ["SIDE"])
+    if item_col is None or qty_col is None:
+        raise ValueError("FULL PALLET holder table missing ITEM/QTY columns.")
+
+    current_side = "A"
     for _, row in full_df.iterrows():
         side_source = row.get(side_col) if side_col else " "
         current_side = parse_side(side_source, current_side)
@@ -560,16 +651,18 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
             continue
 
         qty = _coerce_int(row.get(qty_col))
-        name = desc_map[item_no] if item_no in desc_map else "(missing description)"
+        name = desc_map.get(item_no) or "(missing description)"
         side = current_side if current_side in "ABCD" else "A"
-
-        holders.setdefault(side, []).append(
-            GiftHolder(side=side, item_no=item_no, name=name, qty=qty)
-        )
+        holders.setdefault(side, []).append(GiftHolder(side=side, item_no=item_no, name=name, qty=qty))
 
     if not any(holders.values()):
         raise ValueError("No holder Item # rows found in FULL PALLET table.")
 
+    non_empty = [s for s in "ABCD" if holders.get(s)]
+    if non_empty == ["A"]:
+        base_list = holders["A"]
+        for s in "BCD":
+            holders[s] = [GiftHolder(side=s, item_no=h.item_no, name=h.name, qty=h.qty) for h in base_list]
     return holders
 
 
@@ -715,7 +808,7 @@ def extract_pages_from_labels(labels_pdf_bytes: bytes, n_cols: int) -> List[Page
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Full-pallet page extraction (UPDATED)
+# Full-pallet page extraction
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -789,6 +882,18 @@ def extract_full_pallet_pages(labels_pdf_bytes: bytes) -> List[FullPalletPage]:
                 continue
 
             pw, ph = float(page.width), float(page.height)
+
+            # ── FIX B: exclude tokens in the gift-card-holder zone ───────────
+            # The top ~31 % of each labels page contains the "WM GIFTCARD IN NEW
+            # PKG" holder labels plus GCI packaging product codes (08470, 08478,
+            # 08481, 08705, 08706, …).  These are physical display fixtures — not
+            # the gift cards that belong in the main / bonus product grid.
+            # Filtering them out prevents them from becoming phantom grid cells.
+            holder_zone_bottom = ph * 0.31
+            five = [w for w in five if float(w.get("top", 0)) >= holder_zone_bottom]
+            if not five:
+                continue
+
             xs = [(w["x0"] + w["x1"]) / 2 for w in five]
             ys = [(w["top"] + w["bottom"]) / 2 for w in five]
 
@@ -944,7 +1049,7 @@ def crop_image_cell(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Drawing helpers (existing + new for Full Pallet)
+# Drawing helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -1138,22 +1243,8 @@ def _draw_cell_text_block(
 
 
 _STOPWORDS = {
-    "GIFT",
-    "CARD",
-    "CARDS",
-    "VALUE",
-    "THE",
-    "AND",
-    "FOR",
-    "WITH",
-    "IN",
-    "OF",
-    "A",
-    "AN",
-    "WALMART",
-    "WM",
-    "VGC",
-    "GC",
+    "GIFT", "CARD", "CARDS", "VALUE", "THE", "AND", "FOR", "WITH", "IN",
+    "OF", "A", "AN", "WALMART", "WM", "VGC", "GC",
 }
 
 
@@ -1167,7 +1258,7 @@ def _is_important_token(tok: str) -> bool:
         return True
     if re.search(r"\d", t) and any(u in t for u in ("PK", "CT", "OZ", "LB", "MG", "ML")):
         return True
-    if re.fullmatch(r"[A-Z]\d{1,3}", t):  # e.g., D82
+    if re.fullmatch(r"[A-Z]\d{1,3}", t):
         return True
     return False
 
@@ -1277,7 +1368,7 @@ def _draw_footer(c: canvas.Canvas, page_w: float, outer_margin: float, footer_h:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Full-Pallet Display renderer — TEMPLATE-STYLE REBUILD (UPDATED)
+# Full-Pallet Display renderer
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -1562,7 +1653,6 @@ def render_full_pallet_pdf(
             content_w = cx1 - cx0
             content_h = cy1 - cy0
 
-            # Fixed template-like bucket regions.
             bucket_a_h = content_h * 0.27
             bucket_b_h = content_h * 0.18
             bucket_d_h = content_h * 0.21
@@ -1579,7 +1669,7 @@ def render_full_pallet_pdf(
 
             global_cols, global_gap_units = _global_col_order_and_gaps(pdata)
             global_rows = _global_row_order(pdata)
-            product_rows, bonus_rows = _split_rows_by_bonus(pdata, global_rows)
+            above_bonus_rows, below_bonus_rows = _split_rows_by_bonus(pdata, global_rows)
 
             side_ppt = (
                 ppt_cards.get(pdata.side_letter, PptSideCards(pdata.side_letter, [], []))
@@ -1588,7 +1678,6 @@ def render_full_pallet_pdf(
             )
             side_holders = gift_holders.get(pdata.side_letter, []) if gift_holders else []
 
-            # Precompute matrix resolution for all product cells (main + bonus).
             product_map: Dict[Tuple[int, int], Tuple[Optional[MatrixRow], CellData]] = {}
             for cell in pdata.cells:
                 if cell.last5:
@@ -1609,7 +1698,7 @@ def render_full_pallet_pdf(
             unresolved_main: List[str] = []
             unresolved_bonus: List[str] = []
 
-            # Bucket A: PPT Top Cards (Top 8 + Side 6)
+            # Bucket A: PPT Top Cards
             a_gap_y = 8.0
             top_card_h = max(30.0, min(86.0, bucket_a_h * 0.34))
             top_xs, top_card_w, _, top_right, top_overflow = _fit_x_layout(
@@ -1628,15 +1717,8 @@ def render_full_pallet_pdf(
                 c.rect(x, top_row_y, top_card_w, top_card_h, stroke=1, fill=1)
                 if card:
                     _draw_card(
-                        c,
-                        x,
-                        top_row_y,
-                        top_card_w,
-                        top_card_h,
-                        None,
-                        f"ID# {card.card_id}",
-                        card.title,
-                        ppt_cpp_global,
+                        c, x, top_row_y, top_card_w, top_card_h,
+                        None, f"ID# {card.card_id}", card.title, ppt_cpp_global,
                     )
 
             side_block_w = 2 * top_card_w + 6.0
@@ -1648,7 +1730,7 @@ def render_full_pallet_pdf(
             for row in range(3):
                 y = side_top - (row + 1) * side_card_h - row * a_gap_y
                 for col in range(2):
-                    idx = col * 3 + row  # top-to-bottom then left-to-right
+                    idx = col * 3 + row
                     x = side_xs[col]
                     card = side_ppt.side6[idx] if idx < len(side_ppt.side6) else None
                     c.setFillColorRGB(1, 1, 1)
@@ -1657,19 +1739,11 @@ def render_full_pallet_pdf(
                     c.rect(x, y, top_card_w, side_card_h, stroke=1, fill=1)
                     if card:
                         _draw_card(
-                            c,
-                            x,
-                            y,
-                            top_card_w,
-                            side_card_h,
-                            None,
-                            f"ID# {card.card_id}",
-                            card.title,
-                            ppt_cpp_global,
+                            c, x, y, top_card_w, side_card_h,
+                            None, f"ID# {card.card_id}", card.title, ppt_cpp_global,
                         )
                     rightmost_used = max(rightmost_used, x + top_card_w)
 
-            ppt_bottom = side_top - (3 * side_card_h + 2 * a_gap_y)
             if debug_overlay:
                 _draw_debug_box(c, cx0, bucket_a_bottom, content_w, bucket_a_top - bucket_a_bottom, "PPT")
 
@@ -1702,15 +1776,8 @@ def render_full_pallet_pdf(
                     c.rect(x, y, holder_card_w, holder_card_h, stroke=1, fill=1)
                     if holder:
                         _draw_card(
-                            c,
-                            x,
-                            y,
-                            holder_card_w,
-                            holder_card_h,
-                            None,
-                            holder.item_no,
-                            holder.name,
-                            holder.qty,
+                            c, x, y, holder_card_w, holder_card_h,
+                            None, holder.item_no, holder.name, holder.qty,
                         )
 
             if debug_overlay:
@@ -1802,20 +1869,17 @@ def render_full_pallet_pdf(
 
                 if debug_overlay:
                     _draw_debug_box(
-                        c,
-                        cx0,
-                        sec_bottom,
-                        content_w,
-                        sec_top - sec_bottom,
-                        label or "MAIN",
+                        c, cx0, sec_bottom, content_w, sec_top - sec_bottom, label or "MAIN",
                     )
                 return len(sec_cols), n_rows, overflow
 
+            # Bucket C: main product grid (rows above BONUS bar in labels PDF)
             main_cols, main_rows_count, main_over = draw_product_grid(
-                product_rows, bucket_c_top, bucket_c_bottom, None, unresolved_main
+                above_bonus_rows, bucket_c_top, bucket_c_bottom, None, unresolved_main
             )
+            # Bucket D: bonus product grid (rows below BONUS bar in labels PDF)
             bonus_cols, bonus_rows_count, bonus_over = draw_product_grid(
-                bonus_rows, bucket_d_top, bucket_d_bottom, "BONUS", unresolved_bonus
+                below_bonus_rows, bucket_d_top, bucket_d_bottom, "BONUS", unresolved_bonus
             )
             adjusted_to_fit = adjusted_to_fit or main_over or bonus_over
 
@@ -1823,10 +1887,10 @@ def render_full_pallet_pdf(
             exceeded = rightmost_used > right_limit + 0.001
             adjusted_to_fit = adjusted_to_fit or exceeded
 
-            main_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(product_rows)})
-            bonus_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(bonus_rows)})
-            main_slots_total = sum(1 for c in pdata.cells if c.row in set(product_rows))
-            bonus_slots_total = sum(1 for c in pdata.cells if c.row in set(bonus_rows))
+            main_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(above_bonus_rows)})
+            bonus_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(below_bonus_rows)})
+            main_slots_total = sum(1 for c in pdata.cells if c.row in set(above_bonus_rows))
+            bonus_slots_total = sum(1 for c in pdata.cells if c.row in set(below_bonus_rows))
 
             if debug:
                 st.write(
@@ -1940,15 +2004,8 @@ def render_standard_pog_pdf(
 
     try:
         _draw_header(
-            c,
-            page_w,
-            page_h,
-            top_bar_h,
-            title_prefix or "POG",
-            "",
-            logo_img,
-            grad_left,
-            grad_right,
+            c, page_w, page_h, top_bar_h,
+            title_prefix or "POG", "", logo_img, grad_left, grad_right,
         )
 
         cells_top = page_h - top_bar_h - side_label_h
@@ -2034,15 +2091,8 @@ def render_standard_pog_pdf(
                 c.line(out_x0 + 3, out_bottom + text_area_h, out_x1 - 3, out_bottom + text_area_h)
 
                 _draw_cell_text_block(
-                    c,
-                    out_x0,
-                    out_bottom,
-                    out_w,
-                    text_area_h,
-                    cell.name,
-                    upc12,
-                    cell.last5,
-                    qty,
+                    c, out_x0, out_bottom, out_w, text_area_h,
+                    cell.name, upc12, cell.last5, qty,
                 )
 
         c.showPage()
@@ -2122,10 +2172,7 @@ def main() -> None:
         if generate:
             with st.spinner("Rendering PDF…"):
                 pdf = render_standard_pog_pdf(
-                    pages,
-                    images_bytes,
-                    matrix_idx,
-                    title_prefix.strip() or "POG",
+                    pages, images_bytes, matrix_idx, title_prefix.strip() or "POG",
                 )
             st.success("Done.")
             st.download_button(
