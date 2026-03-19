@@ -29,11 +29,6 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
-try:
-    from pptx import Presentation  # type: ignore
-except Exception:
-    Presentation = None
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Constants
 # ──────────────────────────────────────────────────────────────────────────────
@@ -96,8 +91,15 @@ class FullPalletPage:
 
 @dataclass(frozen=True)
 class PptCard:
-    id: str
+    card_id: str
     title: str
+
+
+@dataclass(frozen=True)
+class PptSideCards:
+    side: str
+    top8: List[PptCard]
+    side6: List[PptCard]
 
 
 @dataclass(frozen=True)
@@ -296,184 +298,187 @@ def _coerce_item_no(v: object) -> Optional[str]:
 
 
 @st.cache_data(show_spinner=False)
-def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, Dict[str, List[PptCard]]]:
-    """Parse PPTX and return per-side card lists.
+def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
+    """Parse PPTX and return per-side cards in deterministic top8 + side6 order."""
 
-    Returns a dict mapping side letter (A/B/C/D) to dict with keys:
-      - "top": List[PptCard] (top 8 cards in left-to-right order)
-      - "side": List[PptCard] (side block cards in scan order)
-
-    If python-pptx is not installed, raises ImportError.
-    """
-
-    if Presentation is None:
-        raise ImportError("python-pptx is not installed")
+    try:
+        from pptx import Presentation  # type: ignore
+    except Exception as e:
+        raise ImportError("python-pptx is not installed") from e
 
     prs = Presentation(io.BytesIO(pptx_bytes))
-    sides: Dict[str, Dict[str, List[PptCard]]] = {}
+    id_re = re.compile(r"\bID\s*#?\s*[:\-]?\s*(\d{1,8})\b", re.IGNORECASE)
+    side_re = re.compile(r"\bSIDE\s*([A-D])\b", re.IGNORECASE)
 
-    id_re = re.compile(r"ID\s*#\s*(\d+)", re.IGNORECASE)
+    best_slide_cards: Dict[str, List[Tuple[float, float, PptCard]]] = {}
 
     for sidx, slide in enumerate(prs.slides):
-        side_letter = "?"
+        side_letter: Optional[str] = None
         for shape in slide.shapes:
-            if not shape.has_text_frame:
+            if not getattr(shape, "has_text_frame", False):
                 continue
-            txt = str(shape.text).strip().upper()
-            m = re.search(r"\bSIDE\s*([A-D])\b", txt)
+            text = str(getattr(shape, "text", "") or "").strip()
+            m = side_re.search(text)
             if m:
-                side_letter = m.group(1)
+                side_letter = m.group(1).upper()
                 break
-        if side_letter == "?":
-            # fallback to slide index
+        if side_letter is None:
             side_letter = chr(ord("A") + min(sidx, 3))
 
-        items: List[Tuple[float, float, PptCard]] = []
+        entries: List[Tuple[float, float, PptCard]] = []
         for shape in slide.shapes:
-            if not shape.has_text_frame:
+            if not getattr(shape, "has_text_frame", False):
                 continue
-            text = str(shape.text).strip()
-            for m in id_re.finditer(text):
-                id_num = m.group(1)
-                title = re.sub(id_re, "", text).strip(" -:;")
-                if not title:
-                    # try to use whole shape text if only ID found
-                    title = ""
-                # use shape position for ordering
-                left = float(getattr(shape, "left", 0))
-                top = float(getattr(shape, "top", 0))
-                items.append((top, left, PptCard(id=f"ID#{id_num}", title=title)))
+            text = str(getattr(shape, "text", "") or "").strip()
+            if not text:
+                continue
+            m = id_re.search(text)
+            if not m:
+                continue
+            card_id = m.group(1).strip()
+            title = id_re.sub("", text)
+            title = side_re.sub("", title).strip(" -:;,\n\t")
+            entries.append(
+                (
+                    float(getattr(shape, "top", 0)),
+                    float(getattr(shape, "left", 0)),
+                    PptCard(card_id=card_id, title=title),
+                )
+            )
 
-        # Sort items by vertical then horizontal position
-        items.sort(key=lambda t: (t[0], t[1]))
-        tops = [t for t, _, _ in items]
-        # group by top to find first row
-        rows: Dict[float, List[Tuple[float, float, PptCard]]] = {}
-        for top, left, card in items:
-            # bucket by top with tolerance
-            key = None
-            for k in list(rows.keys()):
-                if abs(k - top) < 12:
-                    key = k
-                    break
-            if key is None:
-                key = top
-                rows[key] = []
-            rows[key].append((top, left, card))
+        if len(entries) > len(best_slide_cards.get(side_letter, [])):
+            best_slide_cards[side_letter] = entries
 
-        row_keys = sorted(rows.keys())
-        top_row_cards: List[PptCard] = []
-        side_cards: List[PptCard] = []
+    parsed: Dict[str, PptSideCards] = {}
+    for side in "ABCD":
+        entries = sorted(best_slide_cards.get(side, []), key=lambda x: (x[0], x[1]))
+        top8 = [card for _, _, card in entries[:8]]
+        side6 = [card for _, _, card in sorted(entries[8:], key=lambda x: (x[1], x[0]))[:6]]
+        parsed[side] = PptSideCards(side=side, top8=top8, side6=side6)
 
-        if row_keys:
-            # top row is first by y
-            top_row = sorted(rows[row_keys[0]], key=lambda t: t[1])
-            top_row_cards = [c for _, _, c in top_row]
+    return parsed
 
-            # remaining cards
-            remaining = []
-            for rk in row_keys[1:]:
-                remaining.extend(rows[rk])
-            remaining_sorted = sorted(remaining, key=lambda t: (t[0], t[1]))
-            side_cards = [c for _, _, c in remaining_sorted]
 
-        sides[side_letter] = {
-            "top": top_row_cards[:8],
-            "side": side_cards[:6],
-        }
-
-    return sides
+def validate_ppt_side_cards(ppt_cards: Dict[str, PptSideCards]) -> List[str]:
+    issues: List[str] = []
+    for side in "ABCD":
+        side_cards = ppt_cards.get(side, PptSideCards(side=side, top8=[], side6=[]))
+        if len(side_cards.top8) != 8 or len(side_cards.side6) != 6:
+            issues.append(
+                f"SIDE {side}: found top8={len(side_cards.top8)} and side6={len(side_cards.side6)} (expected 8 and 6)."
+            )
+    return issues
 
 
 @st.cache_data(show_spinner=False)
 def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
-    """Parse Gift Card Holders workbook and return per-side holder lists."""
+    """Parse POG workbook holder section and return ordered per-side holders."""
 
     try:
         xls = pd.read_excel(io.BytesIO(gift_bytes), sheet_name=None, header=None)
     except Exception as e:
         raise ValueError(f"Unable to read Gift Card Holders workbook: {e}")
 
-    # Find candidate sheet for holders
-    best_sheet = None
-    for name in xls.keys():
-        if "gift" in name.lower() or "card" in name.lower() or "holder" in name.lower():
-            best_sheet = name
-            break
-    if best_sheet is None:
-        # fall back to first sheet
-        best_sheet = list(xls.keys())[0]
-
-    df = xls[best_sheet].copy()
-
-    def find_header_row(df: pd.DataFrame, tokens: List[str]) -> int:
-        for i in range(min(len(df), 50)):
-            row = df.iloc[i].astype(str).str.upper().tolist()
+    def find_header_row(df: pd.DataFrame, tokens: List[str], max_rows: int = 120) -> int:
+        for i in range(min(len(df), max_rows)):
+            row = df.iloc[i].astype(str).fillna("").str.upper().tolist()
             if all(any(tok in c for c in row) for tok in tokens):
                 return i
-        return 0
+        return -1
 
-    # Identify columns
-    header_row = find_header_row(df, ["ITEM", "QTY"])
-    headers = [str(v).strip() for v in df.iloc[header_row].tolist()]
-    df = df.iloc[header_row + 1 :].copy()
-    df.columns = headers
+    def normalize_headers(raw_headers: List[object]) -> List[str]:
+        headers: List[str] = []
+        seen: Dict[str, int] = {}
+        for v in raw_headers:
+            base = _norm_header(v)
+            n = seen.get(base, 0) + 1
+            seen[base] = n
+            headers.append(base if n == 1 else f"{base}_{n}")
+        return headers
 
-    def pick_col(tokens: List[str]) -> Optional[str]:
+    def pick_col(headers: List[str], tokens: List[str]) -> Optional[str]:
+        up = [h.upper() for h in headers]
         for tok in tokens:
-            for c in headers:
-                if tok in str(c).upper():
-                    return c
+            for i, h in enumerate(up):
+                if tok in h:
+                    return headers[i]
         return None
 
-    item_col = pick_col(["ITEM", "ITEM #", "ITEM#", "SKU"])
-    qty_col = pick_col(["QTY", "QTY.", "QTY/CASE", "QUANTITY"])
-    side_col = pick_col(["SIDE"])
-    name_col = pick_col(["NAME", "DESCRIPTION", "DESC"])
+    def parse_side(value: object, current_side: str) -> str:
+        text = str(value or "").upper()
+        m = re.search(r"SIDE\s*([A-D])", text)
+        if m:
+            return m.group(1)
+        m = re.fullmatch(r"\s*([A-D])\s*", text)
+        if m:
+            return m.group(1)
+        return current_side
 
+    full_pallet_sheet = next(
+        (name for name in xls.keys() if "FULL" in name.upper() and "PALLET" in name.upper()),
+        None,
+    )
+    if full_pallet_sheet is None:
+        raise ValueError("FULL PALLET sheet/table missing in workbook.")
+
+    full_df_raw = xls[full_pallet_sheet].copy()
+    header_row = find_header_row(full_df_raw, ["ITEM", "QTY"])
+    if header_row < 0:
+        raise ValueError("FULL PALLET holder table missing ITEM/QTY columns.")
+
+    headers = normalize_headers(full_df_raw.iloc[header_row].tolist())
+    full_df = full_df_raw.iloc[header_row + 1 :].copy()
+    full_df.columns = headers
+
+    item_col = pick_col(headers, ["ITEM", "ITEM_#", "SKU"])
+    qty_col = pick_col(headers, ["QTY", "QUANTITY"])
+    side_col = pick_col(headers, ["SIDE"])
     if item_col is None or qty_col is None:
-        raise ValueError("Gift Card Holders sheet missing required ITEM and QTY columns")
+        raise ValueError("FULL PALLET holder table missing ITEM/QTY columns.")
 
-    # Build description lookup from any sheet containing item->description mapping
     desc_map: Dict[str, str] = {}
-    for sheet_name, sheet_df in xls.items():
-        df_s = sheet_df.copy()
-        # try to find header row for item/description table
-        hdr = find_header_row(df_s, ["ITEM", "DESCRIPTION"])
-        cols = [str(v).strip() for v in df_s.iloc[hdr].tolist()]
-        df_s = df_s.iloc[hdr + 1 :].copy()
-        df_s.columns = cols
-        itemc = pick_col(["ITEM", "ITEM #", "ITEM#", "SKU"])
-        desc_c = pick_col(["DESCRIPTION", "DESC", "NAME"])
-        if not itemc or not desc_c:
+    for _, sheet_df in xls.items():
+        hdr = find_header_row(sheet_df, ["ITEM", "DESCRIPTION"])
+        if hdr < 0:
             continue
-        for _, r in df_s.iterrows():
-            item_no = _coerce_item_no(r.get(itemc))
+        cols = normalize_headers(sheet_df.iloc[hdr].tolist())
+        data = sheet_df.iloc[hdr + 1 :].copy()
+        data.columns = cols
+        item_lookup_col = pick_col(cols, ["ITEM", "ITEM_#", "SKU"])
+        desc_lookup_col = pick_col(cols, ["DESCRIPTION", "DESC", "NAME"])
+        if not item_lookup_col or not desc_lookup_col:
+            continue
+        for _, row in data.iterrows():
+            item_no = _coerce_item_no(row.get(item_lookup_col))
             if not item_no:
                 continue
-            desc_val = str(r.get(desc_c, "") or "").strip()
-            if desc_val:
-                desc_map.setdefault(item_no, desc_val)
+            desc = str(row.get(desc_lookup_col, "") or "").strip()
+            if desc:
+                desc_map[item_no] = desc
 
-    holders: Dict[str, List[GiftHolder]] = {}
-    for _, r in df.iterrows():
-        item_no = _coerce_item_no(r.get(item_col))
+    holders: Dict[str, List[GiftHolder]] = {s: [] for s in "ABCD"}
+    current_side = "A"
+
+    for _, row in full_df.iterrows():
+        side_source = row.get(side_col) if side_col else " "
+        current_side = parse_side(side_source, current_side)
+
+        item_no = _coerce_item_no(row.get(item_col))
         if not item_no:
+            row_text = " ".join(str(v or "") for v in row.tolist())
+            current_side = parse_side(row_text, current_side)
             continue
-        qty = _coerce_int(r.get(qty_col))
-        side = str(r.get(side_col, "") or "").strip().upper()[:1] if side_col else "A"
-        if not side or side not in "ABCD":
-            side = "A"
-        name = str(r.get(name_col, "") or "").strip() if name_col else ""
-        if not name and item_no in desc_map:
-            name = desc_map[item_no]
-        elif item_no in desc_map:
-            # prefer canonical description
-            name = desc_map[item_no]
+
+        qty = _coerce_int(row.get(qty_col))
+        name = desc_map[item_no] if item_no in desc_map else "(missing description)"
+        side = current_side if current_side in "ABCD" else "A"
 
         holders.setdefault(side, []).append(
             GiftHolder(side=side, item_no=item_no, name=name, qty=qty)
         )
+
+    if not any(holders.values()):
+        raise ValueError("No holder Item # rows found in FULL PALLET table.")
 
     return holders
 
@@ -1190,10 +1195,11 @@ def render_full_pallet_pdf(
     images_pdf_bytes: bytes,
     matrix_idx: Dict[str, List[MatrixRow]],
     title_prefix: str = "POG",
-    ppt_cards: Optional[Dict[str, Dict[str, List[PptCard]]]] = None,
+    ppt_cards: Optional[Dict[str, PptSideCards]] = None,
     gift_holders: Optional[Dict[str, List[GiftHolder]]] = None,
-    ppt_cpp: Optional[int] = None,
+    ppt_cpp_global: Optional[int] = None,
     debug: bool = False,
+    debug_overlay: bool = False,
 ) -> bytes:
     buf = io.BytesIO()
     images_doc = fitz.open(stream=images_pdf_bytes, filetype="pdf")
@@ -1269,12 +1275,10 @@ def render_full_pallet_pdf(
         yc = [row_to_y[r] for r in global_rows]
 
         if bonus_y is not None and len(yc) >= 2:
-            boundary = 0
-            for i in range(len(yc) - 1):
-                if yc[i] < bonus_y < yc[i + 1]:
-                    boundary = i
-                    break
-            return global_rows[: boundary + 1], global_rows[boundary + 1 :]
+            above = [r for r in global_rows if row_to_y[r] < bonus_y]
+            below = [r for r in global_rows if row_to_y[r] >= bonus_y]
+            if above and below:
+                return above, below
 
         if len(yc) < 2:
             return global_rows, []
@@ -1334,6 +1338,84 @@ def render_full_pallet_pdf(
 
         pw, ph = LANDSCAPE
         return pw, ph, 62.0, 54.0, 6.0, 10.0
+
+    def _fit_x_layout(
+        x0: float,
+        x1: float,
+        n_cols: int,
+        gap_units: List[int],
+        desired_card_w: float,
+        desired_gap: float,
+    ) -> Tuple[List[float], float, float, float, bool]:
+        if n_cols <= 0:
+            return [], desired_card_w, desired_gap, x0, False
+
+        units = [max(1, int(gap_units[i])) if i < len(gap_units) else 1 for i in range(n_cols - 1)]
+        avail_w = max(1.0, x1 - x0)
+        gap = max(0.0, desired_gap)
+        card_w = max(24.0, desired_card_w)
+
+        def total_w(cw: float, gp: float) -> float:
+            return n_cols * cw + sum(units) * gp
+
+        t = total_w(card_w, gap)
+        overflowed = t > avail_w
+
+        if t > avail_w and sum(units) > 0:
+            max_gap = (avail_w - n_cols * card_w) / sum(units)
+            gap = max(2.0, min(gap, max_gap))
+            t = total_w(card_w, gap)
+        if t > avail_w:
+            card_w = max(24.0, (avail_w - sum(units) * gap) / n_cols)
+            t = total_w(card_w, gap)
+        if t > avail_w:
+            gap = 0.0
+            card_w = max(24.0, avail_w / n_cols)
+            t = total_w(card_w, gap)
+
+        xs: List[float] = []
+        cur = x0
+        for i in range(n_cols):
+            xs.append(cur)
+            cur += card_w
+            if i < n_cols - 1:
+                cur += gap * units[i]
+
+        right = xs[-1] + card_w
+        if right > x1:
+            shift = right - x1
+            xs = [x - shift for x in xs]
+            right = xs[-1] + card_w
+            overflowed = True
+
+        return xs, card_w, gap, right, overflowed
+
+    def _section_cols_and_gaps(
+        p: FullPalletPage,
+        sec_rows: List[int],
+        global_cols: List[int],
+        global_gap_units: List[int],
+    ) -> Tuple[List[int], List[int]]:
+        if not sec_rows:
+            return [], []
+        row_set = set(sec_rows)
+        global_rank = {c_: i for i, c_ in enumerate(global_cols)}
+        sec_cols = sorted(
+            {c.col for c in p.cells if c.row in row_set},
+            key=lambda c_: global_rank.get(c_, 10**6 + c_),
+        )
+        if len(sec_cols) <= 1:
+            return sec_cols, []
+        gap_units: List[int] = []
+        for i in range(len(sec_cols) - 1):
+            lidx = global_rank.get(sec_cols[i], i)
+            ridx = global_rank.get(sec_cols[i + 1], lidx + 1)
+            if ridx <= lidx:
+                gap_units.append(1)
+                continue
+            unit = sum(global_gap_units[lidx:ridx]) if global_gap_units else 1
+            gap_units.append(max(1, int(unit)))
+        return sec_cols, gap_units
 
     def _draw_section_bar(
         c: canvas.Canvas, x: float, y: float, w: float, h: float, label: str
@@ -1409,50 +1491,34 @@ def render_full_pallet_pdf(
         tw = pdfmetrics.stringWidth(cpp_str, BODY_BOLD_FONT, cpp_fs)
         c.drawString(ix + (iw - tw) / 2, iy + (cpp_h - cpp_fs) / 2, cpp_str)
 
+    def _draw_debug_box(
+        c: canvas.Canvas, x: float, y: float, w: float, h: float, label: str
+    ) -> None:
+        c.setStrokeColorRGB(0.92, 0.20, 0.20)
+        c.setLineWidth(0.7)
+        c.rect(x, y, w, h, stroke=1, fill=0)
+        c.setFillColorRGB(0.75, 0.10, 0.10)
+        c.setFont("Helvetica", 7)
+        c.drawString(x + 2, y + h - 9, label)
+
     try:
         if not pages:
             c = canvas.Canvas(buf, pagesize=LANDSCAPE)
             c.save()
             return buf.getvalue()
 
-        # Choose geometry based on first side, then keep consistent.
+        # Choose geometry from first side and keep it fixed for template consistency.
         p0 = pages[0]
         global_cols0, gap_units0 = _global_col_order_and_gaps(p0)
         global_rows0 = _global_row_order(p0)
-
-        # Estimate sections based on annotation markers (gift card holders + bonus)
-        gift_marker_y0 = _marker_y(p0, "gift_card_holders")
-        bonus_marker_y0 = _marker_y(p0, "bonus_strip")
-        row_y0: Dict[int, float] = {}
-        row_has_last5: Dict[int, bool] = {}
-        for r in global_rows0:
-            cells = [c for c in p0.cells if c.row == r]
-            ys = [(_cell_center(c)[1]) for c in cells]
-            row_y0[r] = float(np.mean(ys)) if ys else 0.0
-            row_has_last5[r] = any(bool(c.last5) for c in cells)
-
-        def _row_section(y: float, r: int) -> str:
-            if bonus_marker_y0 is not None and y >= bonus_marker_y0:
-                return "BONUS"
-            if row_has_last5.get(r):
-                return "PRODUCT"
-            if gift_marker_y0 is not None and y >= gift_marker_y0:
-                return "GIFT"
-            return "PPT"
-
-        ppt_rows0 = [r for r in global_rows0 if _row_section(row_y0.get(r, 0.0), r) == "PPT"]
-        gift_rows0 = [r for r in global_rows0 if _row_section(row_y0.get(r, 0.0), r) == "GIFT"]
-        product_rows0 = [r for r in global_rows0 if _row_section(row_y0.get(r, 0.0), r) == "PRODUCT"]
-        bonus_rows0 = [r for r in global_rows0 if _row_section(row_y0.get(r, 0.0), r) == "BONUS"]
-
-        other_rows0 = [r for r in global_rows0 if r not in ppt_rows0 and r not in bonus_rows0]
-        product_rows0 = [r for r in other_rows0 if r not in gift_rows0]
+        product_rows0, bonus_rows0 = _split_rows_by_bonus(p0, global_rows0)
+        holder_cols0 = max(1, min(8, len(global_cols0) if global_cols0 else 8))
+        first_holders = gift_holders.get(p0.side_letter, []) if gift_holders else []
+        holder_rows0 = max(1, int(math.ceil(len(first_holders) / holder_cols0)))
 
         meta_first: List[Tuple[int, int, List[int]]] = []
-        if ppt_rows0:
-            meta_first.append((len(ppt_rows0), len(global_cols0), gap_units0))
-        if gift_rows0:
-            meta_first.append((len(gift_rows0), len(global_cols0), gap_units0))
+        meta_first.append((4, 8, [1] * 7))  # PPT bucket: 8 across + side 6 block
+        meta_first.append((holder_rows0, holder_cols0, [1] * max(0, holder_cols0 - 1)))
         if product_rows0:
             meta_first.append((len(product_rows0), len(global_cols0), gap_units0))
         if bonus_rows0:
@@ -1485,190 +1551,273 @@ def render_full_pallet_pdf(
 
             global_cols, gap_units = _global_col_order_and_gaps(pdata)
             global_rows = _global_row_order(pdata)
+            product_rows, bonus_rows = _split_rows_by_bonus(pdata, global_rows)
 
-            gift_marker_y = _marker_y(pdata, "gift_card_holders")
-            bonus_marker_y = _marker_y(pdata, "bonus_strip")
+            side_ppt = (
+                ppt_cards.get(pdata.side_letter, PptSideCards(pdata.side_letter, [], []))
+                if ppt_cards
+                else PptSideCards(pdata.side_letter, [], [])
+            )
+            side_holders = gift_holders.get(pdata.side_letter, []) if gift_holders else []
 
-            row_y: Dict[int, float] = {}
-            for r in global_rows:
-                ys = [(_cell_center(c)[1]) for c in pdata.cells if c.row == r]
-                row_y[r] = float(np.mean(ys)) if ys else 0.0
-
-            row_has_last5: Dict[int, bool] = {}
-            for r in global_rows:
-                row_has_last5[r] = any(
-                    bool(c.last5) and c.row == r for c in pdata.cells if c.row == r
-                )
-
-            def _row_section(y: float, r: int) -> str:
-                if bonus_marker_y is not None and y >= bonus_marker_y:
-                    return "BONUS"
-                if row_has_last5.get(r):
-                    return "PRODUCT"
-                if gift_marker_y is not None and y >= gift_marker_y:
-                    return "GIFT"
-                return "PPT"
-
-            ppt_rows = [r for r in global_rows if _row_section(row_y.get(r, 0.0), r) == "PPT"]
-            gift_rows = [r for r in global_rows if _row_section(row_y.get(r, 0.0), r) == "GIFT"]
-            product_rows = [r for r in global_rows if _row_section(row_y.get(r, 0.0), r) == "PRODUCT"]
-            bonus_rows = [r for r in global_rows if _row_section(row_y.get(r, 0.0), r) == "BONUS"]
-
-            # Build helper maps for sorting by column
-            cmap = {c_: i for i, c_ in enumerate(global_cols)}
-
-            # Identify slots for PPT and Gift Holder sections (use all cells in those rows)
-            ppt_cells = [c for c in pdata.cells if c.row in ppt_rows]
-            gift_cells = [c for c in pdata.cells if c.row in gift_rows]
-
-            # Sort placeholder cells by position
-            ppt_cells.sort(key=lambda c: (row_y.get(c.row, 0.0), cmap.get(c.col, 0)))
-            gift_cells.sort(key=lambda c: (row_y.get(c.row, 0.0), cmap.get(c.col, 0)))
-
-            # Assign PPT cards into placeholder grid slots
-            ppt_map: Dict[Tuple[int, int], PptCard] = {}
-            if ppt_cards and pdata.side_letter in ppt_cards:
-                side_cards = ppt_cards[pdata.side_letter]
-                top_cards = side_cards.get("top", [])
-                side_block = side_cards.get("side", [])
-
-                # Determine which placeholder cells belong to the top row
-                top_row = None
-                if ppt_rows:
-                    top_row = min(ppt_rows, key=lambda r: row_y.get(r, 0.0))
-
-                top_row_cells = [c for c in ppt_cells if c.row == top_row] if top_row is not None else []
-                top_row_cells.sort(key=lambda c: cmap.get(c.col, 0))
-
-                for card, cell in zip(top_cards, top_row_cells):
-                    ppt_map[(cell.row, cell.col)] = card
-
-                # Remaining cells for side block
-                remaining = [c for c in ppt_cells if (c.row, c.col) not in ppt_map]
-                remaining.sort(key=lambda c: (row_y.get(c.row, 0.0), cmap.get(c.col, 0)))
-                for card, cell in zip(side_block, remaining):
-                    ppt_map[(cell.row, cell.col)] = card
-
-            # Assign gift holders into placeholder grid slots
-            holder_map: Dict[Tuple[int, int], GiftHolder] = {}
-            if gift_holders and pdata.side_letter in gift_holders:
-                for holder, cell in zip(gift_holders[pdata.side_letter], gift_cells):
-                    holder_map[(cell.row, cell.col)] = holder
-
-            # Precompute game maps for products
+            # Precompute matrix resolution for all product cells (main + bonus).
             product_map: Dict[Tuple[int, int], Tuple[Optional[MatrixRow], CellData]] = {}
             for cell in pdata.cells:
                 if cell.last5:
                     match = _resolve(cell.last5, cell.name, matrix_idx)
                     product_map[(cell.row, cell.col)] = (match, cell)
 
-            if debug:
-                st.write(
-                    f"Side {pdata.side_letter}: ppt cards={len(ppt_map)}, holders={len(holder_map)}, product cells={len(product_map)}, total cells={len(pdata.cells)}"
-                )
+            holder_cols = max(1, min(8, len(global_cols) if global_cols else 8))
+            holder_rows = max(1, int(math.ceil(len(side_holders) / holder_cols)))
 
-            # Determine which rows should be drawn for each major section.
-            # Rows classified as PPT are used to place PPT cards (TOP + SIDE blocks).
-            # Rows with product tokens (last5) are treated as product rows.
-            # Rows between gift marker and bonus marker without product tokens are treated as gift holder rows.
-            sections: List[Tuple[str, List[int]]] = []
-            if ppt_rows:
-                sections.append(("PPT CARDS", ppt_rows))
-            if gift_rows:
-                sections.append(("GIFT CARD HOLDERS", gift_rows))
-            if product_rows:
-                sections.append(("PRODUCTS", product_rows))
-            if bonus_rows:
-                sections.append(("BONUS", bonus_rows))
+            card_h = CARD_H
+            gutter_y = GUTTER_Y
 
-            total_rows = sum(len(r) for _, r in sections)
-            bars_total = SECTION_BAR_H * len(sections)
-            gutters_total = sum(max(0, len(r) - 1) * GUTTER_Y for _, r in sections)
-            gaps_total = BETWEEN_SECTIONS_GAP * max(0, len(sections) - 1)
-            bar_gaps_total = SECTION_BAR_GAP * len(sections)
-            needed_h = total_rows * CARD_H + gutters_total + bars_total + gaps_total + bar_gaps_total
+            def bucket_heights(ch: float, gy: float) -> Tuple[float, float, float, float]:
+                ppt_h = ch + SECTION_BAR_GAP + (3 * ch + 2 * gy)
+                gift_h = SECTION_BAR_H + SECTION_BAR_GAP + holder_rows * ch + max(0, holder_rows - 1) * gy
+                prod_h = len(product_rows) * ch + max(0, len(product_rows) - 1) * gy
+                bonus_h = SECTION_BAR_H + SECTION_BAR_GAP + len(bonus_rows) * ch + max(0, len(bonus_rows) - 1) * gy
+                return ppt_h, gift_h, prod_h, bonus_h
 
-            extra = max(0.0, (cy1 - cy0) - needed_h)
-            extra_per_block = extra / max(1, len(sections) * 2)
+            ppt_h, gift_h, prod_h, bonus_h = bucket_heights(card_h, gutter_y)
+            fixed_gaps = BETWEEN_SECTIONS_GAP * 3
+            needed_h = ppt_h + gift_h + prod_h + bonus_h + fixed_gaps
+            avail_h = cy1 - cy0
+            if needed_h > avail_h and needed_h > 1:
+                scale = max(0.72, avail_h / needed_h)
+                card_h = max(34.0, card_h * scale)
+                gutter_y = max(3.0, gutter_y * scale)
+                ppt_h, gift_h, prod_h, bonus_h = bucket_heights(card_h, gutter_y)
 
-            for label, sec_rows in sections:
-                y_cursor -= extra_per_block
-                y_cursor -= SECTION_BAR_H
-                # Only draw bar for gift and bonus sections
-                if label in {"GIFT CARD HOLDERS", "BONUS"}:
+            if debug_overlay:
+                c.setStrokeColorRGB(0.20, 0.70, 0.25)
+                c.setLineWidth(0.8)
+                c.rect(cx0, cy0, cx1 - cx0, cy1 - cy0, stroke=1, fill=0)
+                c.setStrokeColorRGB(0.95, 0.10, 0.10)
+                c.line(cx1, cy0, cx1, cy1)
+
+            rightmost_used = cx0
+            overflowed_any = False
+            matched_cells = 0
+            unmatched_cells = 0
+
+            # Bucket A: Top PPT cards (8 top + 6 right block)
+            top_xs, top_card_w, _, top_right, top_overflow = _fit_x_layout(
+                cx0, cx1, 8, [1] * 7, CARD_W, GUTTER_X
+            )
+            overflowed_any = overflowed_any or top_overflow
+            rightmost_used = max(rightmost_used, top_right)
+
+            top_row_y = y_cursor - card_h
+            for i in range(8):
+                x = top_xs[i]
+                card = side_ppt.top8[i] if i < len(side_ppt.top8) else None
+                c.setFillColorRGB(1, 1, 1)
+                c.setStrokeColorRGB(*FILLED_STROKE if card else EMPTY_STROKE)
+                c.setLineWidth(0.75 if card else 0.45)
+                c.rect(x, top_row_y, top_card_w, card_h, stroke=1, fill=1)
+                if card:
+                    _draw_card(
+                        c,
+                        x,
+                        top_row_y,
+                        top_card_w,
+                        card_h,
+                        None,
+                        f"ID# {card.card_id}",
+                        card.title,
+                        ppt_cpp_global,
+                    )
+
+            side_block_w = 2 * top_card_w + GUTTER_X
+            sx0 = max(cx0, cx1 - side_block_w)
+            side_xs = [sx0, min(cx1 - top_card_w, sx0 + top_card_w + GUTTER_X)]
+            side_top = top_row_y - SECTION_BAR_GAP
+            for row in range(3):
+                y = side_top - (row + 1) * card_h - row * gutter_y
+                for col in range(2):
+                    idx = col * 3 + row  # top-to-bottom then left-to-right
+                    x = side_xs[col]
+                    card = side_ppt.side6[idx] if idx < len(side_ppt.side6) else None
+                    c.setFillColorRGB(1, 1, 1)
+                    c.setStrokeColorRGB(*FILLED_STROKE if card else EMPTY_STROKE)
+                    c.setLineWidth(0.75 if card else 0.45)
+                    c.rect(x, y, top_card_w, card_h, stroke=1, fill=1)
+                    if card:
+                        _draw_card(
+                            c,
+                            x,
+                            y,
+                            top_card_w,
+                            card_h,
+                            None,
+                            f"ID# {card.card_id}",
+                            card.title,
+                            ppt_cpp_global,
+                        )
+                    rightmost_used = max(rightmost_used, x + top_card_w)
+
+            ppt_bottom = side_top - (3 * card_h + 2 * gutter_y)
+            if debug_overlay:
+                _draw_debug_box(c, cx0, ppt_bottom, content_w, y_cursor - ppt_bottom, "PPT")
+            y_cursor = ppt_bottom - BETWEEN_SECTIONS_GAP
+
+            # Bucket B: Gift Card Holders
+            y_cursor -= SECTION_BAR_H
+            _draw_section_bar(c, cx0, y_cursor, content_w, SECTION_BAR_H, "GIFT CARD HOLDERS")
+            y_cursor -= SECTION_BAR_GAP
+
+            holder_xs, holder_card_w, _, holder_right, holder_overflow = _fit_x_layout(
+                cx0, cx1, holder_cols, [1] * max(0, holder_cols - 1), CARD_W, GUTTER_X
+            )
+            overflowed_any = overflowed_any or holder_overflow
+            rightmost_used = max(rightmost_used, holder_right)
+
+            gift_top = y_cursor
+            for ri in range(holder_rows):
+                y = gift_top - (ri + 1) * card_h - ri * gutter_y
+                for ci in range(holder_cols):
+                    idx = ri * holder_cols + ci
+                    x = holder_xs[ci]
+                    holder = side_holders[idx] if idx < len(side_holders) else None
+                    c.setFillColorRGB(1, 1, 1)
+                    c.setStrokeColorRGB(*FILLED_STROKE if holder else EMPTY_STROKE)
+                    c.setLineWidth(0.75 if holder else 0.45)
+                    c.rect(x, y, holder_card_w, card_h, stroke=1, fill=1)
+                    if holder:
+                        _draw_card(
+                            c,
+                            x,
+                            y,
+                            holder_card_w,
+                            card_h,
+                            None,
+                            holder.item_no,
+                            holder.name,
+                            holder.qty,
+                        )
+
+            gift_bottom = gift_top - (holder_rows * card_h + max(0, holder_rows - 1) * gutter_y)
+            if debug_overlay:
+                _draw_debug_box(c, cx0, gift_bottom, content_w, y_cursor - gift_bottom + SECTION_BAR_H + SECTION_BAR_GAP, "HOLDERS")
+            y_cursor = gift_bottom - BETWEEN_SECTIONS_GAP
+
+            # Bucket C and D: Main product and BONUS grids from matrix+images logic.
+            def draw_product_grid(sec_rows: List[int], label: Optional[str]) -> Tuple[float, int, int, bool]:
+                nonlocal y_cursor, rightmost_used, overflowed_any, matched_cells, unmatched_cells
+                if label is not None:
+                    y_cursor -= SECTION_BAR_H
                     _draw_section_bar(c, cx0, y_cursor, content_w, SECTION_BAR_H, label)
-                y_cursor -= SECTION_BAR_GAP
+                    y_cursor -= SECTION_BAR_GAP
 
-                n_cols = len(global_cols)
-                if n_cols <= 0:
-                    continue
+                sec_rows_sorted = list(sec_rows)
+                if not sec_rows_sorted:
+                    return y_cursor, 0, 0, False
 
-                x_positions: List[float] = []
-                x = cx0
-                for ci in range(n_cols):
-                    x_positions.append(x)
-                    x += CARD_W
-                    if ci < n_cols - 1:
-                        x += GUTTER_X * (gap_units[ci] if ci < len(gap_units) else 1)
+                sec_cols, sec_gap_units = _section_cols_and_gaps(pdata, sec_rows_sorted, global_cols, gap_units)
+                sec_col_rank = {c_: i for i, c_ in enumerate(sec_cols)}
+                xs, sec_card_w, _, right, overflow = _fit_x_layout(
+                    cx0, cx1, len(sec_cols), sec_gap_units, CARD_W, GUTTER_X
+                )
+                overflowed_any = overflowed_any or overflow
+                rightmost_used = max(rightmost_used, right)
 
-                rmap = {r: i for i, r in enumerate(sec_rows)}
-                row_set = set(sec_rows)
-
+                rmap = {r: i for i, r in enumerate(sec_rows_sorted)}
+                row_set = set(sec_rows_sorted)
                 occ: Dict[Tuple[int, int], CellData] = {}
                 for cell in pdata.cells:
-                    if cell.row in row_set and cell.col in cmap:
-                        occ[(rmap[cell.row], cmap[cell.col])] = cell
+                    if cell.row in row_set and cell.col in sec_col_rank:
+                        occ[(rmap[cell.row], sec_col_rank[cell.col])] = cell
 
-                n_rows = len(sec_rows)
-                grid_h = n_rows * CARD_H + max(0, n_rows - 1) * GUTTER_Y
+                n_rows = len(sec_rows_sorted)
                 grid_top = y_cursor
-
                 for ri in range(n_rows):
-                    y = grid_top - (ri + 1) * CARD_H - ri * GUTTER_Y
-                    for ci in range(n_cols):
-                        x = x_positions[ci]
+                    y = grid_top - (ri + 1) * card_h - ri * gutter_y
+                    for ci in range(len(sec_cols)):
+                        x = xs[ci]
                         cell = occ.get((ri, ci))
                         if cell is None:
                             c.setFillColorRGB(1, 1, 1)
                             c.setStrokeColorRGB(*EMPTY_STROKE)
                             c.setLineWidth(0.45)
-                            c.rect(x, y, CARD_W, CARD_H, stroke=1, fill=0)
+                            c.rect(x, y, sec_card_w, card_h, stroke=1, fill=0)
                             continue
 
                         key = (cell.row, cell.col)
-                        if key in ppt_map:
-                            card = ppt_map[key]
-                            upc_str = card.id
-                            disp_name = card.title
-                            cpp = ppt_cpp
-                            img = None
-                        elif key in holder_map:
-                            holder = holder_map[key]
-                            upc_str = holder.item_no
-                            disp_name = holder.name
-                            cpp = holder.qty
-                            img = None
+                        match, _cell = product_map.get(key, (None, cell))
+                        upc12 = match.upc12 if match else None
+                        cpp = match.cpp_qty if match else None
+                        disp_name = (
+                            match.display_name if match and match.display_name else cell.name
+                        ).strip()
+                        upc_str = upc12 if upc12 else f"???????{cell.last5}"
+                        img = crop_image_cell(
+                            images_doc, pdata.page_index, cell.bbox, zoom=2.6, inset=0.045
+                        )
+
+                        if match:
+                            matched_cells += 1
                         else:
-                            match, _cell = product_map.get(key, (None, cell))
-                            upc12 = match.upc12 if match else None
-                            cpp = match.cpp_qty if match else None
-                            disp_name = (
-                                match.display_name if match and match.display_name else cell.name
-                            ).strip()
-                            upc_str = upc12 if upc12 else f"???????{cell.last5}"
-                            img = crop_image_cell(
-                                images_doc, pdata.page_index, cell.bbox, zoom=2.6, inset=0.045
-                            )
+                            unmatched_cells += 1
 
                         c.setFillColorRGB(1, 1, 1)
                         c.setStrokeColorRGB(*FILLED_STROKE)
                         c.setLineWidth(0.75)
-                        c.rect(x, y, CARD_W, CARD_H, stroke=1, fill=1)
+                        c.rect(x, y, sec_card_w, card_h, stroke=1, fill=1)
+                        _draw_card(c, x, y, sec_card_w, card_h, img, upc_str, disp_name, cpp)
 
-                        _draw_card(c, x, y, CARD_W, CARD_H, img, upc_str, disp_name, cpp)
+                grid_h = n_rows * card_h + max(0, n_rows - 1) * gutter_y
+                bottom = grid_top - grid_h
+                if debug_overlay:
+                    _draw_debug_box(
+                        c,
+                        cx0,
+                        bottom,
+                        content_w,
+                        (grid_top - bottom) + (SECTION_BAR_H + SECTION_BAR_GAP if label else 0.0),
+                        label or "MAIN",
+                    )
+                y_cursor = bottom - BETWEEN_SECTIONS_GAP
+                return y_cursor, len(sec_cols), n_rows, overflow
 
-                y_cursor = grid_top - grid_h - BETWEEN_SECTIONS_GAP
-                y_cursor -= extra_per_block
+            _, main_cols, main_rows, main_over = draw_product_grid(product_rows, None)
+            _, bonus_cols, bonus_rows_n, bonus_over = draw_product_grid(bonus_rows, "BONUS")
+            overflowed_any = overflowed_any or main_over or bonus_over
+
+            right_limit = cx1
+            exceeded = rightmost_used > right_limit + 0.001
+            overflowed_any = overflowed_any or exceeded
+
+            if debug:
+                st.write(
+                    {
+                        "side": pdata.side_letter,
+                        "page_size": f"{PW}x{PH}",
+                        "margins": {"left": cx0, "right": cx1, "top": cy1, "bottom": cy0},
+                        "grid_detected": {
+                            "main_cols": main_cols,
+                            "main_rows": main_rows,
+                            "bonus_cols": bonus_cols,
+                            "bonus_rows": bonus_rows_n,
+                        },
+                        "layout_width": {
+                            "rightmost_x": round(rightmost_used, 2),
+                            "right_limit": round(right_limit, 2),
+                            "exceeded": exceeded,
+                            "adjusted_to_fit": overflowed_any,
+                        },
+                        "ppt_counts": {
+                            "top8": len(side_ppt.top8),
+                            "side6": len(side_ppt.side6),
+                        },
+                        "holders": len(side_holders),
+                        "matrix_matches": {
+                            "matched": matched_cells,
+                            "unmatched": unmatched_cells,
+                        },
+                    }
+                )
 
             c.showPage()
 
@@ -1927,12 +2076,13 @@ def main() -> None:
 
     else:
         pptx_file = st.file_uploader("Top Cards Blueprint (.pptx)", type=["pptx"])
-        gift_file = st.file_uploader("Gift Card Holders (.xlsx)", type=["xlsx"])
-        ppt_cpp = st.number_input("PPT Cards CPP", min_value=0, value=0, step=1)
-        show_debug = st.checkbox("Show debug details")
+        gift_file = st.file_uploader("2025 D82 POG Workbook (.xlsx)", type=["xlsx"])
+        ppt_cpp_global = st.number_input("PPT Cards CPP (Global)", min_value=0, value=0, step=1)
+        show_debug = st.checkbox("Show Full Pallet debug details")
+        show_layout_overlay = st.checkbox("Show Full Pallet layout overlay")
 
         if not (pptx_file and gift_file):
-            st.info("Upload PPTX + Gift Card Holders XLSX for Full Pallet mode.")
+            st.info("Upload PPTX + POG XLSX for Full Pallet mode.")
             return
 
         try:
@@ -1948,12 +2098,20 @@ def main() -> None:
             st.error("Unable to parse Top Cards Blueprint (.pptx). Please verify the file.")
             return
 
+        ppt_issues = validate_ppt_side_cards(ppt_cards)
+        if ppt_issues:
+            st.error("Top Cards Blueprint validation failed:\n" + "\n".join(f"- {msg}" for msg in ppt_issues))
+            return
+
+        if ppt_cpp_global in (None, 0):
+            st.warning("PPT CPP global is 0 or empty. PPT cards will render with CPP: 0.")
+
         try:
             gift_holders = load_gift_card_holders(gift_file.getvalue())
         except Exception as e:
             if show_debug:
                 st.exception(e)
-            st.error("Unable to parse Gift Card Holders workbook. Please verify the file format.")
+            st.error(f"Unable to parse POG workbook holder table: {e}")
             return
 
         fp_pages = extract_full_pallet_pages(labels_bytes)
@@ -1994,8 +2152,9 @@ def main() -> None:
                         title_prefix.strip() or "POG",
                         ppt_cards=ppt_cards,
                         gift_holders=gift_holders,
-                        ppt_cpp=ppt_cpp,
+                        ppt_cpp_global=ppt_cpp_global,
                         debug=show_debug,
+                        debug_overlay=show_layout_overlay,
                     )
                 except Exception as e:
                     if show_debug:
