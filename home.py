@@ -169,6 +169,15 @@ def _coerce_int(v: object) -> Optional[int]:
         return None
 
 
+def _to_last5(v: object) -> str:
+    s = DIGITS_RE.sub("", str(v or "").strip())
+    if not s:
+        return ""
+    if len(s) >= 5:
+        return s[-5:]
+    return s.zfill(5)
+
+
 def _norm_header(v: object) -> str:
     s = re.sub(r"[^A-Z0-9]+", "_", str(v).strip().upper()).strip("_")
     return s or "COL"
@@ -277,6 +286,77 @@ def load_matrix_index(matrix_bytes: bytes) -> Dict[str, List[MatrixRow]]:
     return idx
 
 
+@st.cache_data(show_spinner=False)
+def load_full_pallet_matrix_index(matrix_bytes: bytes) -> Dict[str, List[MatrixRow]]:
+    """Full-pallet specific matrix index using all UPC-like columns and strict last5 keys."""
+    df_raw = pd.read_excel(io.BytesIO(matrix_bytes), header=None)
+    hrow = _find_header_row(df_raw)
+
+    headers: List[str] = []
+    seen: Dict[str, int] = {}
+    for v in df_raw.iloc[hrow].tolist():
+        base = _norm_header(v)
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        headers.append(base if n == 0 else f"{base}_{n+1}")
+
+    df = df_raw.iloc[hrow + 1 :].copy()
+    df.columns = headers
+
+    name_col = _pick_col(headers, ["NAME", "DESCRIPTION"], 1 if len(headers) > 1 else 0)
+    cpp_col = _pick_col_optional(headers, ["CPP"])
+
+    upc_cols = [c for c in headers if "UPC" in c.upper()]
+    if not upc_cols:
+        upc_cols = [_pick_col(headers, ["UPC"], 0)]
+
+    df["__name"] = df[name_col].astype(str).fillna("")
+    if cpp_col and cpp_col in df.columns:
+        df["__cpp"] = df[cpp_col].map(_coerce_int)
+    else:
+        df["__cpp"] = None
+    df["__norm"] = df["__name"].map(_norm_name)
+
+    idx: Dict[str, List[MatrixRow]] = {}
+    seen_pairs: set[Tuple[str, str]] = set()
+    for _, r in df.iterrows():
+        display_name = str(r["__name"]).strip()
+        cpp_val = r.get("__cpp")
+        cpp = None if pd.isna(cpp_val) else int(cpp_val) if cpp_val is not None else None
+
+        for upc_col in upc_cols:
+            upc12 = _coerce_upc12(r.get(upc_col))
+            if not upc12:
+                continue
+            last5 = _to_last5(upc12)
+            if not last5:
+                continue
+            pair = (last5, upc12)
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            idx.setdefault(last5, []).append(
+                MatrixRow(
+                    upc12=upc12,
+                    norm_name=str(r["__norm"]),
+                    display_name=display_name,
+                    cpp_qty=cpp,
+                )
+            )
+    return idx
+
+
+def resolve_full_pallet(last5: str, label_name: str, idx: Dict[str, List[MatrixRow]]) -> Optional[MatrixRow]:
+    key = _to_last5(last5)
+    rows = idx.get(key, [])
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return rows[0]
+    target = _norm_name(label_name)
+    return max(rows, key=lambda r: difflib.SequenceMatcher(None, target, r.norm_name).ratio())
+
+
 def _resolve(last5: str, label_name: str, idx: Dict[str, List[MatrixRow]]) -> Optional[MatrixRow]:
     rows = idx.get(last5, [])
     if not rows:
@@ -309,6 +389,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
     prs = Presentation(io.BytesIO(pptx_bytes))
     id_re = re.compile(r"\bID\s*#?\s*[:\-]?\s*(\d{1,8})\b", re.IGNORECASE)
     side_re = re.compile(r"\bSIDE\s*([A-D])\b", re.IGNORECASE)
+    promo_tail_re = re.compile(r"\b(?:PROMO|UPC)\b.*$", re.IGNORECASE)
 
     best_slide_cards: Dict[str, List[Tuple[float, float, PptCard]]] = {}
 
@@ -326,6 +407,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             side_letter = chr(ord("A") + min(sidx, 3))
 
         entries: List[Tuple[float, float, PptCard]] = []
+        dedupe_keys: set[Tuple[int, int, str]] = set()
         for shape in slide.shapes:
             if not getattr(shape, "has_text_frame", False):
                 continue
@@ -336,12 +418,20 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             if not m:
                 continue
             card_id = m.group(1).strip()
-            title = id_re.sub("", text)
+            before_id = text[: m.start()].strip()
+            title = before_id if before_id else id_re.sub("", text)
             title = side_re.sub("", title).strip(" -:;,\n\t")
+            title = promo_tail_re.sub("", title).strip(" -:;,\n\t")
+            left = float(getattr(shape, "left", 0))
+            top = float(getattr(shape, "top", 0))
+            dkey = (int(round(top)), int(round(left)), card_id)
+            if dkey in dedupe_keys:
+                continue
+            dedupe_keys.add(dkey)
             entries.append(
                 (
-                    float(getattr(shape, "top", 0)),
-                    float(getattr(shape, "left", 0)),
+                    top,
+                    left,
                     PptCard(card_id=card_id, title=title),
                 )
             )
@@ -733,7 +823,8 @@ def extract_full_pallet_pages(labels_pdf_bytes: bytes) -> List[FullPalletPage]:
                 txt = (page.crop(bbox).extract_text() or "").strip()
                 parsed_name, parsed_last5, qty = parse_label_cell_text(txt)
                 token_last5 = str(token_w.get("text", "")).strip()
-                last5 = token_last5 if re.fullmatch(r"\d{5}", token_last5) else parsed_last5
+                raw_last5 = token_last5 if re.fullmatch(r"\d{5}", token_last5) else parsed_last5
+                last5 = _to_last5(raw_last5)
 
                 cells.append(
                     CellData(
@@ -824,7 +915,7 @@ def extract_full_pallet_pages(labels_pdf_bytes: bytes) -> List[FullPalletPage]:
             pages.append(
                 FullPalletPage(
                     page_index=pidx,
-                    side_letter=chr(ord("A") + pidx),
+                    side_letter=chr(ord("A") + min(pidx, 3)),
                     cells=cells,
                     annotations=annotations,
                 )
@@ -1204,18 +1295,13 @@ def render_full_pallet_pdf(
     buf = io.BytesIO()
     images_doc = fitz.open(stream=images_pdf_bytes, filetype="pdf")
 
-    PORTRAIT = (936.0, 1296.0)
-    LANDSCAPE = (1296.0, 936.0)
-
-    MARGIN = 28.0
+    PAGE_W, PAGE_H = 792.0, 1224.0  # 11x17 portrait template
+    MARGIN = 24.0
     HEADER_H = 56.0
-    FOOTER_H = 38.0
-
-    SECTION_BAR_H = 26.0
+    FOOTER_H = 36.0
+    SECTION_BAR_H = 24.0
     SECTION_BAR_GAP = 10.0
-    BETWEEN_SECTIONS_GAP = 16.0
-
-    BASE_GUTTER_X = 14.0
+    BUCKET_GAP = 12.0
     BAR_FILL = _hex_to_rgb("#77B5F0")
     BAR_TEXT = NAVY_RGB
 
@@ -1288,56 +1374,6 @@ def render_full_pallet_pdf(
         if gaps[i_max] < float(np.median(gaps)) * 1.6:
             return global_rows, []
         return global_rows[: i_max + 1], global_rows[i_max + 1 :]
-
-    def _choose_geometry(
-        sections_meta: List[Tuple[int, int, List[int]]]
-    ) -> Tuple[float, float, float, float, float, float]:
-        def eval_page(pw: float, ph: float) -> Optional[Tuple[float, float, float, float, float, float]]:
-            cx0 = MARGIN
-            cx1 = pw - MARGIN
-            cy0 = MARGIN + FOOTER_H
-            cy1 = ph - MARGIN - HEADER_H
-
-            avail_w = cx1 - cx0
-            avail_h = cy1 - cy0
-            if avail_w <= 100 or avail_h <= 100:
-                return None
-
-            card_w_candidates: List[float] = []
-            for _, n_cols, gap_units in sections_meta:
-                gap_sum = sum(gap_units) * BASE_GUTTER_X
-                card_w = (avail_w - gap_sum) / max(1, n_cols)
-                card_w_candidates.append(card_w)
-
-            card_w = min(card_w_candidates) if card_w_candidates else 80.0
-            gutter_y = max(6.0, min(12.0, card_w * 0.10))
-            total_rows = sum(r for r, _, _ in sections_meta)
-            if total_rows <= 0:
-                return None
-
-            bars_total = SECTION_BAR_H * len(sections_meta)
-            gaps_total = BETWEEN_SECTIONS_GAP * max(0, len(sections_meta) - 1)
-            gutters_total = sum(max(0, r - 1) * gutter_y for r, _, _ in sections_meta)
-            bar_gaps_total = SECTION_BAR_GAP * len(sections_meta)
-
-            card_h = (
-                (avail_h - bars_total - gaps_total - gutters_total - bar_gaps_total) / total_rows
-            )
-            card_h = min(card_h, card_w * 1.35)
-
-            if card_w < 62.0 or card_h < 54.0:
-                return None
-            return pw, ph, card_w, card_h, gutter_y, BASE_GUTTER_X
-
-        cand = eval_page(*LANDSCAPE)
-        if cand is not None:
-            return cand
-        cand = eval_page(*PORTRAIT)
-        if cand is not None:
-            return cand
-
-        pw, ph = LANDSCAPE
-        return pw, ph, 62.0, 54.0, 6.0, 10.0
 
     def _fit_x_layout(
         x0: float,
@@ -1447,8 +1483,8 @@ def render_full_pallet_pdf(
         iw = w - 2 * pad
         ih = h - 2 * pad
 
-        text_h = max(28.0, min(46.0, ih * 0.32))
-        img_h = max(10.0, ih - text_h - 2.0)
+        text_h = max(8.0, min(34.0, ih * 0.42))
+        img_h = max(8.0, ih - text_h - 2.0)
         img_y = iy + text_h + 2.0
 
         if img is not None and iw > 6 and img_h > 6:
@@ -1503,53 +1539,45 @@ def render_full_pallet_pdf(
 
     try:
         if not pages:
-            c = canvas.Canvas(buf, pagesize=LANDSCAPE)
+            c = canvas.Canvas(buf, pagesize=(PAGE_W, PAGE_H))
             c.save()
             return buf.getvalue()
 
-        # Choose geometry from first side and keep it fixed for template consistency.
-        p0 = pages[0]
-        global_cols0, gap_units0 = _global_col_order_and_gaps(p0)
-        global_rows0 = _global_row_order(p0)
-        product_rows0, bonus_rows0 = _split_rows_by_bonus(p0, global_rows0)
-        holder_cols0 = max(1, min(8, len(global_cols0) if global_cols0 else 8))
-        first_holders = gift_holders.get(p0.side_letter, []) if gift_holders else []
-        holder_rows0 = max(1, int(math.ceil(len(first_holders) / holder_cols0)))
-
-        meta_first: List[Tuple[int, int, List[int]]] = []
-        meta_first.append((4, 8, [1] * 7))  # PPT bucket: 8 across + side 6 block
-        meta_first.append((holder_rows0, holder_cols0, [1] * max(0, holder_cols0 - 1)))
-        if product_rows0:
-            meta_first.append((len(product_rows0), len(global_cols0), gap_units0))
-        if bonus_rows0:
-            meta_first.append((len(bonus_rows0), len(global_cols0), gap_units0))
-        if not meta_first:
-            meta_first.append((len(global_rows0), len(global_cols0), gap_units0))
-
-        PW, PH, CARD_W, CARD_H, GUTTER_Y, GUTTER_X = _choose_geometry(meta_first)
-
-        c = canvas.Canvas(buf, pagesize=(PW, PH))
+        c = canvas.Canvas(buf, pagesize=(PAGE_W, PAGE_H))
 
         for pdata in pages:
             _draw_full_pallet_header(
                 c,
-                PW,
-                PH,
+                PAGE_W,
+                PAGE_H,
                 HEADER_H,
                 title_prefix.strip() or "POG",
                 f"SIDE {pdata.side_letter}",
                 logo,
             )
-            _draw_footer(c, PW, MARGIN, FOOTER_H)
+            _draw_footer(c, PAGE_W, MARGIN, FOOTER_H)
 
-            cx0 = MARGIN
-            cx1 = PW - MARGIN
-            cy0 = MARGIN + FOOTER_H
-            cy1 = PH - MARGIN - HEADER_H
+            cx0, cx1 = MARGIN, PAGE_W - MARGIN
+            cy0, cy1 = MARGIN + FOOTER_H, PAGE_H - MARGIN - HEADER_H
             content_w = cx1 - cx0
-            y_cursor = cy1
+            content_h = cy1 - cy0
 
-            global_cols, gap_units = _global_col_order_and_gaps(pdata)
+            # Fixed template-like bucket regions.
+            bucket_a_h = content_h * 0.27
+            bucket_b_h = content_h * 0.18
+            bucket_d_h = content_h * 0.21
+            bucket_c_h = content_h - bucket_a_h - bucket_b_h - bucket_d_h - BUCKET_GAP * 3
+
+            bucket_a_top = cy1
+            bucket_a_bottom = bucket_a_top - bucket_a_h
+            bucket_b_top = bucket_a_bottom - BUCKET_GAP
+            bucket_b_bottom = bucket_b_top - bucket_b_h
+            bucket_c_top = bucket_b_bottom - BUCKET_GAP
+            bucket_c_bottom = bucket_c_top - bucket_c_h
+            bucket_d_top = bucket_c_bottom - BUCKET_GAP
+            bucket_d_bottom = cy0
+
+            global_cols, global_gap_units = _global_col_order_and_gaps(pdata)
             global_rows = _global_row_order(pdata)
             product_rows, bonus_rows = _split_rows_by_bonus(pdata, global_rows)
 
@@ -1564,31 +1592,8 @@ def render_full_pallet_pdf(
             product_map: Dict[Tuple[int, int], Tuple[Optional[MatrixRow], CellData]] = {}
             for cell in pdata.cells:
                 if cell.last5:
-                    match = _resolve(cell.last5, cell.name, matrix_idx)
+                    match = resolve_full_pallet(cell.last5, cell.name, matrix_idx)
                     product_map[(cell.row, cell.col)] = (match, cell)
-
-            holder_cols = max(1, min(8, len(global_cols) if global_cols else 8))
-            holder_rows = max(1, int(math.ceil(len(side_holders) / holder_cols)))
-
-            card_h = CARD_H
-            gutter_y = GUTTER_Y
-
-            def bucket_heights(ch: float, gy: float) -> Tuple[float, float, float, float]:
-                ppt_h = ch + SECTION_BAR_GAP + (3 * ch + 2 * gy)
-                gift_h = SECTION_BAR_H + SECTION_BAR_GAP + holder_rows * ch + max(0, holder_rows - 1) * gy
-                prod_h = len(product_rows) * ch + max(0, len(product_rows) - 1) * gy
-                bonus_h = SECTION_BAR_H + SECTION_BAR_GAP + len(bonus_rows) * ch + max(0, len(bonus_rows) - 1) * gy
-                return ppt_h, gift_h, prod_h, bonus_h
-
-            ppt_h, gift_h, prod_h, bonus_h = bucket_heights(card_h, gutter_y)
-            fixed_gaps = BETWEEN_SECTIONS_GAP * 3
-            needed_h = ppt_h + gift_h + prod_h + bonus_h + fixed_gaps
-            avail_h = cy1 - cy0
-            if needed_h > avail_h and needed_h > 1:
-                scale = max(0.72, avail_h / needed_h)
-                card_h = max(34.0, card_h * scale)
-                gutter_y = max(3.0, gutter_y * scale)
-                ppt_h, gift_h, prod_h, bonus_h = bucket_heights(card_h, gutter_y)
 
             if debug_overlay:
                 c.setStrokeColorRGB(0.20, 0.70, 0.25)
@@ -1598,44 +1603,50 @@ def render_full_pallet_pdf(
                 c.line(cx1, cy0, cx1, cy1)
 
             rightmost_used = cx0
-            overflowed_any = False
+            adjusted_to_fit = False
             matched_cells = 0
             unmatched_cells = 0
+            unresolved_main: List[str] = []
+            unresolved_bonus: List[str] = []
 
-            # Bucket A: Top PPT cards (8 top + 6 right block)
+            # Bucket A: PPT Top Cards (Top 8 + Side 6)
+            a_gap_y = 8.0
+            top_card_h = max(30.0, min(86.0, bucket_a_h * 0.34))
             top_xs, top_card_w, _, top_right, top_overflow = _fit_x_layout(
-                cx0, cx1, 8, [1] * 7, CARD_W, GUTTER_X
+                cx0, cx1, 8, [1] * 7, 72.0, 6.0
             )
-            overflowed_any = overflowed_any or top_overflow
+            adjusted_to_fit = adjusted_to_fit or top_overflow
             rightmost_used = max(rightmost_used, top_right)
 
-            top_row_y = y_cursor - card_h
+            top_row_y = bucket_a_top - top_card_h
             for i in range(8):
                 x = top_xs[i]
                 card = side_ppt.top8[i] if i < len(side_ppt.top8) else None
                 c.setFillColorRGB(1, 1, 1)
                 c.setStrokeColorRGB(*FILLED_STROKE if card else EMPTY_STROKE)
                 c.setLineWidth(0.75 if card else 0.45)
-                c.rect(x, top_row_y, top_card_w, card_h, stroke=1, fill=1)
+                c.rect(x, top_row_y, top_card_w, top_card_h, stroke=1, fill=1)
                 if card:
                     _draw_card(
                         c,
                         x,
                         top_row_y,
                         top_card_w,
-                        card_h,
+                        top_card_h,
                         None,
                         f"ID# {card.card_id}",
                         card.title,
                         ppt_cpp_global,
                     )
 
-            side_block_w = 2 * top_card_w + GUTTER_X
+            side_block_w = 2 * top_card_w + 6.0
             sx0 = max(cx0, cx1 - side_block_w)
-            side_xs = [sx0, min(cx1 - top_card_w, sx0 + top_card_w + GUTTER_X)]
+            side_xs = [sx0, min(cx1 - top_card_w, sx0 + top_card_w + 6.0)]
             side_top = top_row_y - SECTION_BAR_GAP
+            side_available_h = max(36.0, side_top - bucket_a_bottom)
+            side_card_h = max(20.0, min(top_card_h, (side_available_h - 2 * a_gap_y) / 3))
             for row in range(3):
-                y = side_top - (row + 1) * card_h - row * gutter_y
+                y = side_top - (row + 1) * side_card_h - row * a_gap_y
                 for col in range(2):
                     idx = col * 3 + row  # top-to-bottom then left-to-right
                     x = side_xs[col]
@@ -1643,14 +1654,14 @@ def render_full_pallet_pdf(
                     c.setFillColorRGB(1, 1, 1)
                     c.setStrokeColorRGB(*FILLED_STROKE if card else EMPTY_STROKE)
                     c.setLineWidth(0.75 if card else 0.45)
-                    c.rect(x, y, top_card_w, card_h, stroke=1, fill=1)
+                    c.rect(x, y, top_card_w, side_card_h, stroke=1, fill=1)
                     if card:
                         _draw_card(
                             c,
                             x,
                             y,
                             top_card_w,
-                            card_h,
+                            side_card_h,
                             None,
                             f"ID# {card.card_id}",
                             card.title,
@@ -1658,25 +1669,29 @@ def render_full_pallet_pdf(
                         )
                     rightmost_used = max(rightmost_used, x + top_card_w)
 
-            ppt_bottom = side_top - (3 * card_h + 2 * gutter_y)
+            ppt_bottom = side_top - (3 * side_card_h + 2 * a_gap_y)
             if debug_overlay:
-                _draw_debug_box(c, cx0, ppt_bottom, content_w, y_cursor - ppt_bottom, "PPT")
-            y_cursor = ppt_bottom - BETWEEN_SECTIONS_GAP
+                _draw_debug_box(c, cx0, bucket_a_bottom, content_w, bucket_a_top - bucket_a_bottom, "PPT")
 
             # Bucket B: Gift Card Holders
-            y_cursor -= SECTION_BAR_H
-            _draw_section_bar(c, cx0, y_cursor, content_w, SECTION_BAR_H, "GIFT CARD HOLDERS")
-            y_cursor -= SECTION_BAR_GAP
+            holder_bar_y = bucket_b_top - SECTION_BAR_H
+            _draw_section_bar(c, cx0, holder_bar_y, content_w, SECTION_BAR_H, "GIFT CARD HOLDERS")
+            holder_grid_top = holder_bar_y - SECTION_BAR_GAP
+            holder_grid_h = max(24.0, holder_grid_top - bucket_b_bottom)
+            holder_cols = max(1, min(8, len(global_cols) if global_cols else 8))
+            holder_rows = max(1, int(math.ceil(len(side_holders) / holder_cols)))
+            holder_gutter_y = 6.0
+            holder_card_h = max(16.0, (holder_grid_h - max(0, holder_rows - 1) * holder_gutter_y) / holder_rows)
 
             holder_xs, holder_card_w, _, holder_right, holder_overflow = _fit_x_layout(
-                cx0, cx1, holder_cols, [1] * max(0, holder_cols - 1), CARD_W, GUTTER_X
+                cx0, cx1, holder_cols, [1] * max(0, holder_cols - 1), 74.0, 6.0
             )
-            overflowed_any = overflowed_any or holder_overflow
+            adjusted_to_fit = adjusted_to_fit or holder_overflow
             rightmost_used = max(rightmost_used, holder_right)
 
-            gift_top = y_cursor
+            gift_top = holder_grid_top
             for ri in range(holder_rows):
-                y = gift_top - (ri + 1) * card_h - ri * gutter_y
+                y = gift_top - (ri + 1) * holder_card_h - ri * holder_gutter_y
                 for ci in range(holder_cols):
                     idx = ri * holder_cols + ci
                     x = holder_xs[ci]
@@ -1684,43 +1699,53 @@ def render_full_pallet_pdf(
                     c.setFillColorRGB(1, 1, 1)
                     c.setStrokeColorRGB(*FILLED_STROKE if holder else EMPTY_STROKE)
                     c.setLineWidth(0.75 if holder else 0.45)
-                    c.rect(x, y, holder_card_w, card_h, stroke=1, fill=1)
+                    c.rect(x, y, holder_card_w, holder_card_h, stroke=1, fill=1)
                     if holder:
                         _draw_card(
                             c,
                             x,
                             y,
                             holder_card_w,
-                            card_h,
+                            holder_card_h,
                             None,
                             holder.item_no,
                             holder.name,
                             holder.qty,
                         )
 
-            gift_bottom = gift_top - (holder_rows * card_h + max(0, holder_rows - 1) * gutter_y)
             if debug_overlay:
-                _draw_debug_box(c, cx0, gift_bottom, content_w, y_cursor - gift_bottom + SECTION_BAR_H + SECTION_BAR_GAP, "HOLDERS")
-            y_cursor = gift_bottom - BETWEEN_SECTIONS_GAP
+                _draw_debug_box(c, cx0, bucket_b_bottom, content_w, bucket_b_top - bucket_b_bottom, "HOLDERS")
 
-            # Bucket C and D: Main product and BONUS grids from matrix+images logic.
-            def draw_product_grid(sec_rows: List[int], label: Optional[str]) -> Tuple[float, int, int, bool]:
-                nonlocal y_cursor, rightmost_used, overflowed_any, matched_cells, unmatched_cells
+            def draw_product_grid(
+                sec_rows: List[int],
+                sec_top: float,
+                sec_bottom: float,
+                label: Optional[str],
+                unresolved_bucket: List[str],
+            ) -> Tuple[int, int, bool]:
+                nonlocal rightmost_used, adjusted_to_fit, matched_cells, unmatched_cells
+                y_cursor = sec_top
                 if label is not None:
-                    y_cursor -= SECTION_BAR_H
-                    _draw_section_bar(c, cx0, y_cursor, content_w, SECTION_BAR_H, label)
-                    y_cursor -= SECTION_BAR_GAP
+                    bar_y = y_cursor - SECTION_BAR_H
+                    _draw_section_bar(c, cx0, bar_y, content_w, SECTION_BAR_H, label)
+                    y_cursor = bar_y - SECTION_BAR_GAP
 
                 sec_rows_sorted = list(sec_rows)
                 if not sec_rows_sorted:
-                    return y_cursor, 0, 0, False
+                    return 0, 0, False
 
-                sec_cols, sec_gap_units = _section_cols_and_gaps(pdata, sec_rows_sorted, global_cols, gap_units)
-                sec_col_rank = {c_: i for i, c_ in enumerate(sec_cols)}
-                xs, sec_card_w, _, right, overflow = _fit_x_layout(
-                    cx0, cx1, len(sec_cols), sec_gap_units, CARD_W, GUTTER_X
+                sec_cols, sec_gap_units = _section_cols_and_gaps(
+                    pdata, sec_rows_sorted, global_cols, global_gap_units
                 )
-                overflowed_any = overflowed_any or overflow
+                sec_col_rank = {c_: i for i, c_ in enumerate(sec_cols)}
+                n_rows = len(sec_rows_sorted)
+                row_gutter = 6.0
+                available_h = max(24.0, y_cursor - sec_bottom)
+                card_h = max(12.0, (available_h - max(0, n_rows - 1) * row_gutter) / n_rows)
+                xs, sec_card_w, _, right, overflow = _fit_x_layout(
+                    cx0, cx1, len(sec_cols), sec_gap_units, 74.0, 6.0
+                )
+                adjusted_to_fit = adjusted_to_fit or overflow
                 rightmost_used = max(rightmost_used, right)
 
                 rmap = {r: i for i, r in enumerate(sec_rows_sorted)}
@@ -1730,10 +1755,9 @@ def render_full_pallet_pdf(
                     if cell.row in row_set and cell.col in sec_col_rank:
                         occ[(rmap[cell.row], sec_col_rank[cell.col])] = cell
 
-                n_rows = len(sec_rows_sorted)
                 grid_top = y_cursor
                 for ri in range(n_rows):
-                    y = grid_top - (ri + 1) * card_h - ri * gutter_y
+                    y = grid_top - (ri + 1) * card_h - ri * row_gutter
                     for ci in range(len(sec_cols)):
                         x = xs[ci]
                         cell = occ.get((ri, ci))
@@ -1746,15 +1770,24 @@ def render_full_pallet_pdf(
 
                         key = (cell.row, cell.col)
                         match, _cell = product_map.get(key, (None, cell))
+                        last5_key = _to_last5(cell.last5)
                         upc12 = match.upc12 if match else None
                         cpp = match.cpp_qty if match else None
                         disp_name = (
                             match.display_name if match and match.display_name else cell.name
                         ).strip()
-                        upc_str = upc12 if upc12 else f"???????{cell.last5}"
-                        img = crop_image_cell(
-                            images_doc, pdata.page_index, cell.bbox, zoom=2.6, inset=0.045
-                        )
+                        if upc12:
+                            upc_str = upc12
+                        else:
+                            upc_str = f"LAST5 {last5_key}"
+                            disp_name = f"UNRESOLVED {last5_key}"
+                            unresolved_bucket.append(last5_key)
+                        try:
+                            img = crop_image_cell(
+                                images_doc, pdata.page_index, cell.bbox, zoom=2.6, inset=0.045
+                            )
+                        except Exception:
+                            img = None
 
                         if match:
                             matched_cells += 1
@@ -1767,51 +1800,80 @@ def render_full_pallet_pdf(
                         c.rect(x, y, sec_card_w, card_h, stroke=1, fill=1)
                         _draw_card(c, x, y, sec_card_w, card_h, img, upc_str, disp_name, cpp)
 
-                grid_h = n_rows * card_h + max(0, n_rows - 1) * gutter_y
-                bottom = grid_top - grid_h
                 if debug_overlay:
                     _draw_debug_box(
                         c,
                         cx0,
-                        bottom,
+                        sec_bottom,
                         content_w,
-                        (grid_top - bottom) + (SECTION_BAR_H + SECTION_BAR_GAP if label else 0.0),
+                        sec_top - sec_bottom,
                         label or "MAIN",
                     )
-                y_cursor = bottom - BETWEEN_SECTIONS_GAP
-                return y_cursor, len(sec_cols), n_rows, overflow
+                return len(sec_cols), n_rows, overflow
 
-            _, main_cols, main_rows, main_over = draw_product_grid(product_rows, None)
-            _, bonus_cols, bonus_rows_n, bonus_over = draw_product_grid(bonus_rows, "BONUS")
-            overflowed_any = overflowed_any or main_over or bonus_over
+            main_cols, main_rows_count, main_over = draw_product_grid(
+                product_rows, bucket_c_top, bucket_c_bottom, None, unresolved_main
+            )
+            bonus_cols, bonus_rows_count, bonus_over = draw_product_grid(
+                bonus_rows, bucket_d_top, bucket_d_bottom, "BONUS", unresolved_bonus
+            )
+            adjusted_to_fit = adjusted_to_fit or main_over or bonus_over
 
             right_limit = cx1
             exceeded = rightmost_used > right_limit + 0.001
-            overflowed_any = overflowed_any or exceeded
+            adjusted_to_fit = adjusted_to_fit or exceeded
+
+            main_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(product_rows)})
+            bonus_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(bonus_rows)})
+            main_slots_total = sum(1 for c in pdata.cells if c.row in set(product_rows))
+            bonus_slots_total = sum(1 for c in pdata.cells if c.row in set(bonus_rows))
 
             if debug:
                 st.write(
                     {
                         "side": pdata.side_letter,
-                        "page_size": f"{PW}x{PH}",
+                        "page_size": f"{PAGE_W}x{PAGE_H}",
                         "margins": {"left": cx0, "right": cx1, "top": cy1, "bottom": cy0},
+                        "bucket_regions": {
+                            "ppt": [round(bucket_a_top, 1), round(bucket_a_bottom, 1)],
+                            "holders": [round(bucket_b_top, 1), round(bucket_b_bottom, 1)],
+                            "main": [round(bucket_c_top, 1), round(bucket_c_bottom, 1)],
+                            "bonus": [round(bucket_d_top, 1), round(bucket_d_bottom, 1)],
+                        },
                         "grid_detected": {
                             "main_cols": main_cols,
-                            "main_rows": main_rows,
+                            "main_rows": main_rows_count,
                             "bonus_cols": bonus_cols,
-                            "bonus_rows": bonus_rows_n,
+                            "bonus_rows": bonus_rows_count,
                         },
                         "layout_width": {
                             "rightmost_x": round(rightmost_used, 2),
                             "right_limit": round(right_limit, 2),
                             "exceeded": exceeded,
-                            "adjusted_to_fit": overflowed_any,
+                            "adjusted_to_fit": adjusted_to_fit,
                         },
                         "ppt_counts": {
                             "top8": len(side_ppt.top8),
                             "side6": len(side_ppt.side6),
+                            "ids_top8": [c_.card_id for c_ in side_ppt.top8],
+                            "ids_side6": [c_.card_id for c_ in side_ppt.side6],
                         },
-                        "holders": len(side_holders),
+                        "holders": {
+                            "count": len(side_holders),
+                            "items": [h.item_no for h in side_holders],
+                        },
+                        "slot_codes": {
+                            "main_total_slots": main_slots_total,
+                            "bonus_total_slots": bonus_slots_total,
+                            "main_unique_count": len(main_last5_codes),
+                            "bonus_unique_count": len(bonus_last5_codes),
+                            "main": main_last5_codes,
+                            "bonus": bonus_last5_codes,
+                        },
+                        "unresolved_last5": {
+                            "main": sorted({x for x in unresolved_main if x}),
+                            "bonus": sorted({x for x in unresolved_bonus if x}),
+                        },
                         "matrix_matches": {
                             "matched": matched_cells,
                             "unmatched": unmatched_cells,
@@ -2078,7 +2140,7 @@ def main() -> None:
         pptx_file = st.file_uploader("Top Cards Blueprint (.pptx)", type=["pptx"])
         gift_file = st.file_uploader("2025 D82 POG Workbook (.xlsx)", type=["xlsx"])
         ppt_cpp_global = st.number_input("PPT Cards CPP (Global)", min_value=0, value=0, step=1)
-        show_debug = st.checkbox("Show Full Pallet debug details")
+        show_debug = st.checkbox("Show debug details")
         show_layout_overlay = st.checkbox("Show Full Pallet layout overlay")
 
         if not (pptx_file and gift_file):
@@ -2114,6 +2176,14 @@ def main() -> None:
             st.error(f"Unable to parse POG workbook holder table: {e}")
             return
 
+        try:
+            fp_matrix_idx = load_full_pallet_matrix_index(matrix_bytes)
+        except Exception as e:
+            if show_debug:
+                st.exception(e)
+            st.error("Unable to parse D82 Item List for Full Pallet matching.")
+            return
+
         fp_pages = extract_full_pallet_pages(labels_bytes)
         if not fp_pages:
             st.error("No product cells detected in Labels PDF.")
@@ -2123,7 +2193,7 @@ def main() -> None:
         rows = []
         for pg in fp_pages:
             for cell in pg.cells:
-                match = _resolve(cell.last5, cell.name, matrix_idx) if cell.last5 else None
+                match = resolve_full_pallet(cell.last5, cell.name, fp_matrix_idx) if cell.last5 else None
                 rows.append(
                     {
                         "Side": pg.side_letter,
@@ -2148,7 +2218,7 @@ def main() -> None:
                     pdf = render_full_pallet_pdf(
                         fp_pages,
                         images_bytes,
-                        matrix_idx,
+                        fp_matrix_idx,
                         title_prefix.strip() or "POG",
                         ppt_cards=ppt_cards,
                         gift_holders=gift_holders,
