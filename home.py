@@ -741,6 +741,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
                     "card_id": str(card_id),
                     "title": str(title),
                     "top": y,
+                    "bottom": y + h,
                     "x0": x,
                     "x1": x + w,
                     "cx": x + w / 2.0,
@@ -796,46 +797,141 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             )
 
         # --- Option A: direct label -> primitive matching (NO clustering into tiles) ---
-        # We match each ID label to the nearest image primitive above it (no overlap) with 1:1 assignment.
-        tol_y = slide_h * 0.08  # safety margin for the "image above text" rule
-
         # Deterministic label order (top -> bottom, then left -> right)
         labels.sort(key=lambda d: (d["top"], d["cx"]))
 
-        unused = list(primitives)
+        def _build_candidates(cfg: Dict[str, float]) -> List[List[Tuple[float, int]]]:
+            out: List[List[Tuple[float, int]]] = []
+            for lab in labels:
+                lab_w = max(1.0, float(lab["x1"] - lab["x0"]))
+                lab_h = max(1.0, float(lab["bottom"] - lab["top"]))
+                row_radius = max(lab_h * 1.8, slide_h * float(cfg["row_frac"]))
+                max_dx = max(lab_w * float(cfg["cx_mult"]), slide_w * float(cfg["dx_frac"]))
+                cands: List[Tuple[float, int]] = []
 
-        def _best_match_for_label(lab: dict, xmin: float) -> Optional[int]:
-            best_i = None
-            best_score = None
-            for i, p in enumerate(unused):
-                if p["bottom"] > lab["top"] + tol_y:
-                    continue
-                if _x_overlap_ratio(lab["x0"], lab["x1"], p["x0"], p["x1"]) < xmin:
-                    continue
-                dy = max(0.0, lab["top"] - p["bottom"])
-                dx = abs(lab["cx"] - p["cx"])
-                score = dy + 0.35 * dx
-                if best_score is None or score < best_score:
-                    best_score = score
-                    best_i = i
-            return best_i
+                for pidx, p in enumerate(primitives):
+                    x_ov = _x_overlap_ratio(lab["x0"], lab["x1"], p["x0"], p["x1"])
+                    dx = abs(lab["cx"] - p["cx"])
+                    if x_ov < float(cfg["xmin"]) and dx > max_dx:
+                        continue
+                    if p["top"] > lab["top"] + row_radius:
+                        continue
+                    if bool(cfg["require_above"]) and p["bottom"] > lab["top"] + float(cfg["tol_y"]):
+                        continue
 
-        # Try progressively looser horizontal overlap; keeps it strict but avoids false negatives.
-        xmins = [0.35, 0.25, 0.18, 0.12, 0.08, 0.03]
+                    dy_up = max(0.0, lab["top"] - p["bottom"])
+                    dy_down = max(0.0, p["bottom"] - (lab["top"] + float(cfg["tol_y"])))
+                    score = (
+                        dy_up
+                        + float(cfg["down_w"]) * dy_down
+                        + float(cfg["dx_w"]) * dx
+                        + float(cfg["size_w"]) * abs(p["h"] - lab_h)
+                        - float(cfg["xov_bonus"]) * x_ov * slide_w
+                    )
+                    cands.append((score, pidx))
+
+                cands.sort(key=lambda t: (t[0], t[1]))
+                out.append(cands)
+            return out
+
+        def _try_bipartite(cands: List[List[Tuple[float, int]]]) -> Optional[List[int]]:
+            if not cands:
+                return []
+            if any(len(c) == 0 for c in cands):
+                return None
+
+            match_prim_to_lab = [-1] * len(primitives)
+
+            def _dfs(lab_idx: int, seen: set[int]) -> bool:
+                for _, prim_idx in cands[lab_idx]:
+                    if prim_idx in seen:
+                        continue
+                    seen.add(prim_idx)
+                    prev_lab = match_prim_to_lab[prim_idx]
+                    if prev_lab == -1 or _dfs(prev_lab, seen):
+                        match_prim_to_lab[prim_idx] = lab_idx
+                        return True
+                return False
+
+            order = sorted(range(len(labels)), key=lambda i: (len(cands[i]), labels[i]["top"], labels[i]["cx"]))
+            for lab_idx in order:
+                if not _dfs(lab_idx, set()):
+                    return None
+
+            lab_to_prim = [-1] * len(labels)
+            for prim_idx, lab_idx in enumerate(match_prim_to_lab):
+                if lab_idx != -1:
+                    lab_to_prim[lab_idx] = prim_idx
+            if any(pidx < 0 for pidx in lab_to_prim):
+                return None
+            return lab_to_prim
+
+        matching_phases: List[Dict[str, float]] = [
+            {
+                "xmin": 0.30,
+                "tol_y": slide_h * 0.08,
+                "dx_w": 0.35,
+                "down_w": 6.0,
+                "xov_bonus": 0.06,
+                "size_w": 0.02,
+                "cx_mult": 1.1,
+                "dx_frac": 0.05,
+                "row_frac": 0.10,
+                "require_above": 1.0,
+            },
+            {
+                "xmin": 0.16,
+                "tol_y": slide_h * 0.14,
+                "dx_w": 0.30,
+                "down_w": 5.0,
+                "xov_bonus": 0.05,
+                "size_w": 0.015,
+                "cx_mult": 1.5,
+                "dx_frac": 0.08,
+                "row_frac": 0.14,
+                "require_above": 1.0,
+            },
+            {
+                "xmin": 0.05,
+                "tol_y": slide_h * 0.22,
+                "dx_w": 0.25,
+                "down_w": 3.0,
+                "xov_bonus": 0.03,
+                "size_w": 0.01,
+                "cx_mult": 2.0,
+                "dx_frac": 0.12,
+                "row_frac": 0.20,
+                "require_above": 0.0,
+            },
+        ]
+
+        assignments: Optional[List[int]] = None
+        loosest_cands: Optional[List[List[Tuple[float, int]]]] = None
+        for phase in matching_phases:
+            cands = _build_candidates(phase)
+            loosest_cands = cands
+            assignments = _try_bipartite(cands)
+            if assignments is not None:
+                break
+
+        if assignments is None:
+            # Identify the first problematic label for actionable diagnostics.
+            bad_idx = 0
+            if loosest_cands:
+                for i, c in enumerate(loosest_cands):
+                    if not c:
+                        bad_idx = i
+                        break
+            bad = labels[bad_idx]
+            cand_count = len(loosest_cands[bad_idx]) if loosest_cands else 0
+            raise ValueError(
+                f"PPT side {side_letter}: could not match label ID {bad['card_id']} to any image primitive "
+                f"(candidates in loosest phase={cand_count}, labels={len(labels)}, primitives={len(primitives)})"
+            )
 
         matched: List[dict] = []
-        for lab in labels:
-            chosen = None
-            for xmin in xmins:
-                chosen = _best_match_for_label(lab, xmin)
-                if chosen is not None:
-                    break
-            if chosen is None:
-                raise ValueError(
-                    f"PPT side {side_letter}: could not match label ID {lab['card_id']} to any image primitive"
-                )
-
-            prim = unused.pop(chosen)
+        for lab_idx, lab in enumerate(labels):
+            prim = primitives[assignments[lab_idx]]
 
             # Use the matched primitive's image directly (in this deck it is the full card image).
             img_bytes = prim["blob"]
