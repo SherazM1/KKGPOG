@@ -559,9 +559,23 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
 
         # (B) Picture fill (blipFill) on non-picture shapes
         try:
+            # Prefer namespace-aware lookup; fall back to local-name XPath for decks
+            # where namespace prefixes are not resolved by the element wrapper.
             blips = sh._element.xpath(".//a:blip")
+            if not blips:
+                blips = sh._element.xpath(".//*[local-name()='blip']")
             if blips:
-                rid = blips[0].get(f"{{{R_NS}}}embed")
+                blip = blips[0]
+                rid = (
+                    blip.get(f"{{{R_NS}}}embed")
+                    or blip.get("r:embed")
+                    or blip.get("embed")
+                )
+                if not rid:
+                    for k, v in blip.attrib.items():
+                        if str(k).endswith("}embed") or str(k).endswith(":embed") or str(k) == "embed":
+                            rid = v
+                            break
                 if rid:
                     part = sh.part.related_parts.get(rid)
                     if part is not None and hasattr(part, "blob"):
@@ -740,7 +754,12 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
         # --- image primitives (pictures and picture fills) ---
         primitives: List[dict] = []
         z = 0
-        for sh in slide.shapes:
+        recursive_shapes = _iter_shapes_recursive(slide.shapes)
+        for sh in recursive_shapes:
+            # Group containers are not directly renderable image tiles and can
+            # duplicate nested picture references.
+            if getattr(sh, "shape_type", None) == MSO_SHAPE_TYPE.GROUP:
+                continue
             res = _extract_picture_blob(sh)
             if not res:
                 continue
@@ -771,7 +790,10 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             z += 1
 
         if not primitives:
-            raise ValueError(f"PPT side {side_letter}: found {len(labels)} ID labels but 0 image primitives")
+            raise ValueError(
+                f"PPT side {side_letter}: found {len(labels)} ID labels but 0 image primitives "
+                f"(scanned {len(recursive_shapes)} shapes recursively)"
+            )
 
         # --- Option A: direct label -> primitive matching (NO clustering into tiles) ---
         # We match each ID label to the nearest image primitive above it (no overlap) with 1:1 assignment.
