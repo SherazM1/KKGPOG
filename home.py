@@ -914,20 +914,68 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             if assignments is not None:
                 break
 
+        fallback_cands: Optional[List[List[Tuple[float, int]]]] = None
         if assignments is None:
-            # Identify the first problematic label for actionable diagnostics.
-            bad_idx = 0
-            if loosest_cands:
-                for i, c in enumerate(loosest_cands):
-                    if not c:
-                        bad_idx = i
+            # Final fallback: permit every primitive as a candidate (soft-penalized)
+            # so uncommon layouts do not hard-fail when strict geometry gates are too tight.
+            fallback_cands = []
+            for lab in labels:
+                lab_w = max(1.0, float(lab["x1"] - lab["x0"]))
+                lab_h = max(1.0, float(lab["bottom"] - lab["top"]))
+                cands: List[Tuple[float, int]] = []
+                for pidx, p in enumerate(primitives):
+                    x_ov = _x_overlap_ratio(lab["x0"], lab["x1"], p["x0"], p["x1"])
+                    dx = abs(lab["cx"] - p["cx"])
+                    dy_up = max(0.0, lab["top"] - p["bottom"])
+                    dy_down = max(0.0, p["bottom"] - lab["top"])
+                    # Lower score is better. Strongly discourage images placed
+                    # materially below their labels while still allowing recovery.
+                    score = (
+                        dy_up
+                        + 7.0 * dy_down
+                        + 0.28 * dx
+                        + 0.02 * abs(p["h"] - lab_h)
+                        + 0.01 * abs((p["x1"] - p["x0"]) - lab_w)
+                        - 0.03 * x_ov * slide_w
+                    )
+                    cands.append((score, pidx))
+                cands.sort(key=lambda t: (t[0], t[1]))
+                fallback_cands.append(cands)
+
+            assignments = _try_bipartite(fallback_cands)
+
+        if assignments is None:
+            # Last-resort degradation: allow primitive reuse (best-scored choice per label)
+            # rather than failing the entire side.
+            if not primitives:
+                bad = labels[0]
+                raise ValueError(
+                    f"PPT side {side_letter}: could not match label ID {bad['card_id']} to any image primitive "
+                    f"(labels={len(labels)}, primitives=0)"
+                )
+            if fallback_cands is None:
+                fallback_cands = []
+                for lab in labels:
+                    cands: List[Tuple[float, int]] = []
+                    for pidx, p in enumerate(primitives):
+                        dx = abs(lab["cx"] - p["cx"])
+                        dy = abs(lab["top"] - p["bottom"])
+                        cands.append((dy + 0.3 * dx, pidx))
+                    cands.sort(key=lambda t: (t[0], t[1]))
+                    fallback_cands.append(cands)
+
+            assignments = []
+            used: set[int] = set()
+            for cands in fallback_cands:
+                pick = None
+                for _, pidx in cands:
+                    if pidx not in used:
+                        pick = pidx
                         break
-            bad = labels[bad_idx]
-            cand_count = len(loosest_cands[bad_idx]) if loosest_cands else 0
-            raise ValueError(
-                f"PPT side {side_letter}: could not match label ID {bad['card_id']} to any image primitive "
-                f"(candidates in loosest phase={cand_count}, labels={len(labels)}, primitives={len(primitives)})"
-            )
+                if pick is None:
+                    pick = cands[0][1]
+                assignments.append(pick)
+                used.add(pick)
 
         matched: List[dict] = []
         for lab_idx, lab in enumerate(labels):
