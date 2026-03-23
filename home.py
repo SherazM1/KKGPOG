@@ -549,7 +549,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
     # helpers: image extraction from shapes
     # ----------------------------
     def _extract_picture_blob(sh) -> Optional[Tuple[bytes, str]]:
-        # (A) Normal picture shape
+    # (A) Normal picture shape
         if getattr(sh, "shape_type", None) == MSO_SHAPE_TYPE.PICTURE:
             img = getattr(sh, "image", None)
             blob = getattr(img, "blob", None)
@@ -557,9 +557,9 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
                 ext = str(getattr(img, "ext", "png") or "png")
                 return bytes(blob), ext
 
-        # (B) Picture fill / blipFill on non-picture shapes (common in PPT)
+    # (B) Picture fill (blipFill) on non-picture shapes
         try:
-            blips = sh._element.xpath(".//a:blip", namespaces=NS)
+            blips = sh._element.xpath(".//a:blip")  # <-- NO namespaces kwarg with python-pptx
             if blips:
                 rid = blips[0].get(f"{{{R_NS}}}embed")
                 if rid:
