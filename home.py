@@ -405,32 +405,32 @@ def _coerce_item_no(v: object) -> Optional[str]:
 @st.cache_data(show_spinner=False)
 def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
     """
-    Full Pallet / Multi-Zone only.
+    Full Pallet / Multi-Zone: Top Cards Blueprint (.pptx)
 
-    Robust PPT extraction:
-      - Tile anchor: text box containing "ID #nn"
-      - Tile image container: top-level GROUP containing picture descendants
-      - Enforce: #labels == #tile_groups (variable count OK)
-      - Match: label <-> group via global greedy assignment on geometric score (1:1)
-      - Image: composite ALL picture descendants in the matched group (frame + artwork) into one PNG
-      - Order: reading order by group bbox (row clustering + left->right)
+    Robust logic:
+      - Anchor tiles on text boxes containing "ID #nn"
+      - Tile container = top-level GROUP with picture descendants OR top-level PICTURE tile
+        (SIDE B & D have a standalone PICTURE tile, not grouped)
+      - Match label -> container (container must be above label; no overlap)
+      - Image bytes:
+          * GROUP: composite all picture descendants into one PNG (full card)
+          * PICTURE: use its blob directly (already full card)
+      - Order tiles by container position (row clustering, then left->right)
+      - Variable count OK; top8 = first row (cap 8), side6 = remaining in reading order (cap 6)
     """
     import io
     import re
     import math
-    import hashlib
     import statistics
-    from dataclasses import replace
-    from collections import defaultdict
+    import hashlib
     from io import BytesIO
     from typing import Dict, List, Optional, Tuple
 
-    from PIL import Image  # pillow
+    from PIL import Image
     from pptx import Presentation  # type: ignore
     from pptx.enum.shapes import MSO_SHAPE_TYPE  # type: ignore
     from pptx.oxml.ns import qn  # type: ignore
 
-    # PPT uses EMU. 1 inch = 914400 EMU, 1 pt = 12700 EMU.
     EMU_PER_PT = 12700.0
 
     id_re = re.compile(r"\bID\s*#?\s*[:\-]?\s*(\d{1,8})\b", re.IGNORECASE)
@@ -441,26 +441,56 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
     slide_h = float(prs.slide_height)
     slide_area = slide_w * slide_h
 
-    def _bbox_from_xfrm(elem) -> Optional[Tuple[float, float, float, float]]:
-        xfrms = elem.xpath(".//a:xfrm")
-        if not xfrms:
+    def _shape_bbox(sh) -> Tuple[float, float, float, float]:
+        x = float(getattr(sh, "left", 0) or 0)
+        y = float(getattr(sh, "top", 0) or 0)
+        w = float(getattr(sh, "width", 0) or 0)
+        h = float(getattr(sh, "height", 0) or 0)
+        return x, y, w, h
+
+    def _parse_label(txt: str) -> Optional[Tuple[str, str]]:
+        lines = [ln.strip() for ln in (txt or "").splitlines() if ln.strip()]
+        if not lines:
             return None
-        xfrm = xfrms[0]
-        off = xfrm.find(qn("a:off"))
-        ext = xfrm.find(qn("a:ext"))
-        if off is None or ext is None:
+        id_idx = None
+        card_id = None
+        for i, ln in enumerate(lines):
+            m = id_re.search(ln)
+            if m:
+                id_idx = i
+                card_id = m.group(1).strip()
+                break
+        if id_idx is None or not card_id:
             return None
-        x = float(off.get("x", 0))
-        y = float(off.get("y", 0))
-        w = float(ext.get("cx", 0))
-        h = float(ext.get("cy", 0))
-        return (x, y, w, h)
+        title = " ".join(lines[:id_idx]).strip()
+        return card_id, title
+
+    def _x_overlap_ratio(a0: float, a1: float, b0: float, b1: float) -> float:
+        inter = max(0.0, min(a1, b1) - max(a0, b0))
+        denom = max(1.0, min(a1 - a0, b1 - b0))
+        return inter / denom
+
+    def _cluster_rows(items: List[dict], tol: float) -> List[List[dict]]:
+        rows: List[dict] = []
+        for it in sorted(items, key=lambda d: d["cy"]):
+            placed = False
+            for row in rows:
+                if abs(it["cy"] - row["cy"]) <= tol:
+                    row["items"].append(it)
+                    row["cy"] = statistics.mean([x["cy"] for x in row["items"]])
+                    placed = True
+                    break
+            if not placed:
+                rows.append({"cy": it["cy"], "items": [it]})
+        rows.sort(key=lambda r: r["cy"])
+        for row in rows:
+            row["items"].sort(key=lambda d: d["cx"])
+        return [r["items"] for r in rows]
 
     def _group_child_transform(grp_elem) -> Optional[Tuple[float, float, float, float]]:
         """
-        Returns (tx, ty, sx, sy) mapping coordinates in group's child coord-space to parent coord-space:
-          parent_x = tx + sx * child_x
-          parent_y = ty + sy * child_y
+        (tx, ty, sx, sy) mapping group-child coords -> slide coords:
+          slide = (tx + sx*x, ty + sy*y)
         """
         xfrms = grp_elem.xpath(".//a:xfrm")
         if not xfrms:
@@ -486,21 +516,9 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
         sx = (ext_x / ch_ext_x) if ch_ext_x else 1.0
         sy = (ext_y / ch_ext_y) if ch_ext_y else 1.0
 
-        # parent = off + scale*(child - chOff)  =>  parent = (off - scale*chOff) + scale*child
         tx = off_x - sx * ch_off_x
         ty = off_y - sy * ch_off_y
         return (tx, ty, sx, sy)
-
-    def _compose_transform(parent: Tuple[float, float, float, float], child: Tuple[float, float, float, float]):
-        """
-        Compose transforms:
-          parent: abs = (ptx + psx*x, pty + psy*y)
-          child:  parentCoord = (ctx + csx*x, cty + csy*y)
-          => abs = (ptx + psx*(ctx + csx*x), ...)
-        """
-        ptx, pty, psx, psy = parent
-        ctx, cty, csx, csy = child
-        return (ptx + psx * ctx, pty + psy * cty, psx * csx, psy * csy)
 
     def _shape_off_ext(elem) -> Optional[Tuple[float, float, float, float]]:
         xfrms = elem.xpath(".//a:xfrm")
@@ -518,139 +536,77 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             float(ext.get("cy", 0)),
         )
 
-    def _parse_label(txt: str) -> Optional[Tuple[str, str]]:
+    def _iter_pictures_group_local(group_shape) -> List[Tuple[int, bytes, float, float, float, float]]:
         """
-        Name = lines above the line containing ID #.
-        """
-        lines = [ln.strip() for ln in (txt or "").splitlines() if ln.strip()]
-        if not lines:
-            return None
-        id_line_idx = None
-        card_id = None
-        for i, ln in enumerate(lines):
-            m = id_re.search(ln)
-            if m:
-                id_line_idx = i
-                card_id = m.group(1).strip()
-                break
-        if id_line_idx is None or not card_id:
-            return None
-        name_lines = lines[:id_line_idx]
-        title = " ".join(name_lines).strip()
-        return card_id, title
-
-    def _x_overlap_ratio(a0: float, a1: float, b0: float, b1: float) -> float:
-        inter = max(0.0, min(a1, b1) - max(a0, b0))
-        denom = max(1.0, min(a1 - a0, b1 - b0))
-        return inter / denom
-
-    def _cluster_rows(items: List[dict], tol: float) -> List[List[dict]]:
-        rows: List[dict] = []
-        for it in sorted(items, key=lambda d: d["cy"]):
-            placed = False
-            for row in rows:
-                if abs(it["cy"] - row["cy"]) <= tol:
-                    row["items"].append(it)
-                    row["cy"] = statistics.mean([x["cy"] for x in row["items"]])
-                    placed = True
-                    break
-            if not placed:
-                rows.append({"cy": it["cy"], "items": [it]})
-        rows.sort(key=lambda r: r["cy"])
-        for row in rows:
-            row["items"].sort(key=lambda d: d["cx"])
-        return [r["items"] for r in rows]
-
-    def _iter_pictures_with_abs_bbox(group_shape) -> List[Tuple[int, bytes, float, float, float, float]]:
-        """
-        Returns list of (z_index, blob, abs_x, abs_y, abs_w, abs_h) for all picture descendants.
-        Handles nested groups by composing transforms.
+        Return list of picture descendants with bbox in GROUP-LOCAL coords (EMU).
+        Uses group a:xfrm child transform to normalize into group-local space.
         """
         items: List[Tuple[int, bytes, float, float, float, float]] = []
-
-        # Transform from this group's child-space -> slide abs
-        g_xfrm = _group_child_transform(group_shape._element)
-        if g_xfrm is None:
-            # Fallback: treat as identity; will still extract blobs, but positioning may be off.
-            base_t = (0.0, 0.0, 1.0, 1.0)
-        else:
-            base_t = _compose_transform((0.0, 0.0, 1.0, 1.0), g_xfrm)
-
         z = 0
 
-        def walk(sh, t_abs: Tuple[float, float, float, float]):
+        # group-local: (0,0) .. (group.width, group.height)
+        # For child shapes, we get their off/ext in child coord-space; map to slide and then to group-local by subtracting group slide origin.
+        g_tx = _group_child_transform(group_shape._element)
+        if not g_tx:
+            return items
+        gtx, gty, gsx, gsy = g_tx
+
+        gx, gy, gw, gh = _shape_bbox(group_shape)
+
+        def walk(sh):
             nonlocal z
             if getattr(sh, "shape_type", None) == MSO_SHAPE_TYPE.GROUP:
-                child_t = _group_child_transform(sh._element)
-                next_t = _compose_transform(t_abs, child_t) if child_t else t_abs
                 for c in sh.shapes:
-                    walk(c, next_t)
+                    walk(c)
                 return
-
             if getattr(sh, "shape_type", None) != MSO_SHAPE_TYPE.PICTURE:
                 return
-
-            off_ext = _shape_off_ext(sh._element)
-            if not off_ext:
-                return
-            ox, oy, ow, oh = off_ext
-            tx, ty, sx, sy = t_abs
-
-            ax = tx + sx * ox
-            ay = ty + sy * oy
-            aw = sx * ow
-            ah = sy * oh
-
             try:
                 blob = bytes(sh.image.blob)
             except Exception:
                 return
+            oe = _shape_off_ext(sh._element)
+            if not oe:
+                return
+            ox, oy, ow, oh = oe
+
+            # child->slide via group transform, then slide->group_local
+            ax = (gtx + gsx * ox) - gx
+            ay = (gty + gsy * oy) - gy
+            aw = gsx * ow
+            ah = gsy * oh
 
             items.append((z, blob, ax, ay, aw, ah))
             z += 1
 
-        for child in group_shape.shapes:
-            walk(child, base_t)
+        for c in group_shape.shapes:
+            walk(c)
 
         return items
 
-    def _composite_group_image(group_shape, scale_px_per_pt: float = 2.0) -> bytes:
-        """
-        Composite picture descendants into one PNG in the group's bbox.
-        """
-        # Group bbox in slide coords (EMU)
-        gxfrm = _bbox_from_xfrm(group_shape._element)
-        if not gxfrm:
-            # fallback to python-pptx; OK for top-level groups
-            gox = float(group_shape.left)
-            goy = float(group_shape.top)
-            gex = float(group_shape.width)
-            gey = float(group_shape.height)
-        else:
-            gox, goy, gex, gey = gxfrm
-
-        w_px = max(1, int(round((gex / EMU_PER_PT) * scale_px_per_pt)))
-        h_px = max(1, int(round((gey / EMU_PER_PT) * scale_px_per_pt)))
+    def _composite_group_image_png(group_shape, scale_px_per_pt: float = 2.0) -> bytes:
+        gx, gy, gw, gh = _shape_bbox(group_shape)
+        w_px = max(1, int(round((gw / EMU_PER_PT) * scale_px_per_pt)))
+        h_px = max(1, int(round((gh / EMU_PER_PT) * scale_px_per_pt)))
         canvas = Image.new("RGBA", (w_px, h_px), (255, 255, 255, 0))
 
-        # Cache decoded images for speed (frame repeats a lot)
-        img_cache: Dict[str, Image.Image] = {}
+        cache: Dict[str, Image.Image] = {}
+        pics = _iter_pictures_group_local(group_shape)
+        if not pics:
+            raise ValueError("Group had no picture descendants")
 
-        pics = _iter_pictures_with_abs_bbox(group_shape)
-        # Keep XML-ish order; it works for this deck (art first, frame overlay, etc.).
-        for _, blob, ax, ay, aw, ah in pics:
+        for _, blob, x, y, w, h in pics:
             key = hashlib.sha1(blob).hexdigest()
-            if key in img_cache:
-                src = img_cache[key]
+            if key in cache:
+                src = cache[key]
             else:
                 src = Image.open(BytesIO(blob)).convert("RGBA")
-                img_cache[key] = src
+                cache[key] = src
 
-            rx = (ax - gox) / EMU_PER_PT * scale_px_per_pt
-            ry = (ay - goy) / EMU_PER_PT * scale_px_per_pt
-            rw = aw / EMU_PER_PT * scale_px_per_pt
-            rh = ah / EMU_PER_PT * scale_px_per_pt
-
+            rx = (x / EMU_PER_PT) * scale_px_per_pt
+            ry = (y / EMU_PER_PT) * scale_px_per_pt
+            rw = (w / EMU_PER_PT) * scale_px_per_pt
+            rh = (h / EMU_PER_PT) * scale_px_per_pt
             if rw <= 1 or rh <= 1:
                 continue
 
@@ -661,27 +617,26 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
         canvas.save(out, format="PNG")
         return out.getvalue()
 
-    # Keep best slide per side (if duplicates)
+    def _picture_blob_png(picture_shape) -> bytes:
+        return bytes(picture_shape.image.blob)
+
     best_by_side: Dict[str, Tuple[int, List[PptCard], List[PptCard]]] = {}
 
     for sidx, slide in enumerate(prs.slides):
-        # detect side
+        # side letter
         side_letter: Optional[str] = None
         for sh in slide.shapes:
             if getattr(sh, "has_text_frame", False):
-                txt = (sh.text or "").strip()
-                m = side_re.search(txt)
+                m = side_re.search((sh.text or "").strip())
                 if m:
                     side_letter = m.group(1).upper()
                     break
         if side_letter is None:
             side_letter = chr(ord("A") + min(sidx, 3))
 
-        # labels (top-level text boxes)
+        # labels
         labels: List[dict] = []
         for sh in slide.shapes:
-            if getattr(sh, "shape_type", None) != MSO_SHAPE_TYPE.TEXT_BOX:
-                continue
             if not getattr(sh, "has_text_frame", False):
                 continue
             txt = (sh.text or "").strip()
@@ -689,120 +644,145 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             if not parsed:
                 continue
             card_id, title = parsed
-            x = float(sh.left)
-            y = float(sh.top)
-            w = float(sh.width)
-            h = float(sh.height)
+            x, y, w, h = _shape_bbox(sh)
             labels.append(
-                {"card_id": card_id, "title": title, "x0": x, "x1": x + w, "top": y, "cx": x + w / 2.0}
+                {"card_id": str(card_id), "title": str(title), "x0": x, "x1": x + w, "top": y, "cx": x + w / 2.0}
             )
-
         if not labels:
             continue
 
-        # tile containers (top-level groups with pictures)
-        groups: List[dict] = []
+        # containers = GROUP tiles + standalone PICTURE tiles
+        containers: List[dict] = []
+
         for sh in slide.shapes:
-            if getattr(sh, "shape_type", None) != MSO_SHAPE_TYPE.GROUP:
+            st = getattr(sh, "shape_type", None)
+            x, y, w, h = _shape_bbox(sh)
+            area = w * h
+            if area <= 0:
                 continue
 
-            # ignore huge background-ish groups
-            bx = float(sh.left)
-            by = float(sh.top)
-            bw = float(sh.width)
-            bh = float(sh.height)
-            area = bw * bh
-            if area <= 0 or area > slide_area * 0.35:
+            # drop huge backgrounds
+            if area > slide_area * 0.35:
+                continue
+            # drop tiny icons
+            if area < slide_area * 0.002:
                 continue
 
-            pics = _iter_pictures_with_abs_bbox(sh)
-            if not pics:
-                continue
+            if st == MSO_SHAPE_TYPE.GROUP:
+                # must contain at least one picture descendant
+                has_pic = False
+                stack = [sh]
+                while stack:
+                    cur = stack.pop()
+                    if getattr(cur, "shape_type", None) == MSO_SHAPE_TYPE.GROUP:
+                        stack.extend(list(cur.shapes))
+                    elif getattr(cur, "shape_type", None) == MSO_SHAPE_TYPE.PICTURE:
+                        has_pic = True
+                        break
+                if not has_pic:
+                    continue
 
-            groups.append(
-                {
-                    "shape": sh,
-                    "x0": bx,
-                    "x1": bx + bw,
-                    "top": by,
-                    "bottom": by + bh,
-                    "cx": bx + bw / 2.0,
-                    "cy": by + bh / 2.0,
-                    "h": bh,
-                }
-            )
+                containers.append(
+                    {
+                        "kind": "group",
+                        "shape": sh,
+                        "x0": x,
+                        "x1": x + w,
+                        "top": y,
+                        "bottom": y + h,
+                        "cx": x + w / 2.0,
+                        "cy": y + h / 2.0,
+                        "h": h,
+                        "area": area,
+                    }
+                )
 
-        if not groups:
-            continue
+            elif st == MSO_SHAPE_TYPE.PICTURE:
+                containers.append(
+                    {
+                        "kind": "picture",
+                        "shape": sh,
+                        "x0": x,
+                        "x1": x + w,
+                        "top": y,
+                        "bottom": y + h,
+                        "cx": x + w / 2.0,
+                        "cy": y + h / 2.0,
+                        "h": h,
+                        "area": area,
+                    }
+                )
 
-        # Filter groups to "tile-like" by area around median (drops stray logos if any)
-        areas = [abs(g["x1"] - g["x0"]) * g["h"] for g in groups]
-        med_area = statistics.median(areas) if areas else 1.0
-        tile_groups = [g for g, a in zip(groups, areas) if (med_area * 0.35) <= a <= (med_area * 2.85)]
-        if len(tile_groups) < len(labels):
-            tile_groups = groups  # fallback: don't over-filter
+        if not containers:
+            raise ValueError(f"PPT side {side_letter}: found {len(labels)} ID labels but no tile containers")
 
-        # Build candidate pairs (label, group) and do global greedy assignment
-        tol_y = slide_h * 0.06  # generous; bbox math is not perfect
+        # optional: keep only tile-like containers near median area (helps if extra logos exist)
+        med_area = statistics.median([c["area"] for c in containers])
+        tile_like = [c for c in containers if (med_area * 0.35) <= c["area"] <= (med_area * 2.85)]
+        if len(tile_like) >= len(labels):
+            containers = tile_like
+
+        # global greedy 1:1 matching label -> container
+        tol_y = slide_h * 0.04
         pairs: List[Tuple[float, int, int]] = []
         for li, lab in enumerate(labels):
-            for gi, grp in enumerate(tile_groups):
-                # group must be above label (no overlap, allow tiny tolerance)
-                if grp["bottom"] > lab["top"] + tol_y:
+            for ci, c in enumerate(containers):
+                if c["bottom"] > lab["top"] + tol_y:
                     continue
-                # require meaningful x alignment
-                if _x_overlap_ratio(lab["x0"], lab["x1"], grp["x0"], grp["x1"]) < 0.25:
+                if _x_overlap_ratio(lab["x0"], lab["x1"], c["x0"], c["x1"]) < 0.25:
                     continue
-                dy = max(0.0, lab["top"] - grp["bottom"])
-                dx = abs(lab["cx"] - grp["cx"])
+                dy = max(0.0, lab["top"] - c["bottom"])
+                dx = abs(lab["cx"] - c["cx"])
                 score = dy + 0.35 * dx
-                pairs.append((score, li, gi))
+                pairs.append((score, li, ci))
 
         pairs.sort(key=lambda t: t[0])
-
-        used_labels = set()
-        used_groups = set()
+        used_l, used_c = set(), set()
         assign: Dict[int, int] = {}
 
-        for _, li, gi in pairs:
-            if li in used_labels or gi in used_groups:
+        for _, li, ci in pairs:
+            if li in used_l or ci in used_c:
                 continue
-            used_labels.add(li)
-            used_groups.add(gi)
-            assign[li] = gi
+            used_l.add(li)
+            used_c.add(ci)
+            assign[li] = ci
             if len(assign) == len(labels):
                 break
 
-        if len(assign) != len(labels) or len(used_groups) != len(labels):
+        if len(assign) != len(labels):
             raise ValueError(
-                f"PPT side {side_letter}: cannot 1:1 match labels({len(labels)}) to groups({len(tile_groups)}). "
-                f"matched_labels={len(assign)} matched_groups={len(used_groups)}"
+                f"PPT side {side_letter}: cannot 1:1 match labels({len(labels)}) to containers({len(containers)}). "
+                f"matched={len(assign)}"
             )
 
         matched_tiles: List[dict] = []
         for li, lab in enumerate(labels):
-            gi = assign[li]
-            grp = tile_groups[gi]
-            img_png = _composite_group_image(grp["shape"], scale_px_per_pt=2.0)
+            c = containers[assign[li]]
+            if c["kind"] == "group":
+                img_bytes = _composite_group_image_png(c["shape"], scale_px_per_pt=2.0)
+                img_ext = "png"
+            else:
+                img_bytes = _picture_blob_png(c["shape"])
+                img_ext = str(getattr(c["shape"].image, "ext", "png") or "png")
 
             card = PptCard(
-                card_id=str(lab["card_id"]),
-                title=str(lab["title"]),
-                image_bytes=img_png,
-                image_ext="png",
+                card_id=lab["card_id"],
+                title=lab["title"],
+                image_bytes=img_bytes,
+                image_ext=img_ext,
             )
-            matched_tiles.append({"card": card, "cx": grp["cx"], "cy": grp["cy"], "h": grp["h"]})
+            matched_tiles.append({"card": card, "cx": c["cx"], "cy": c["cy"], "h": c["h"]})
 
-        # order by group positions
+        # order by container positions
         med_h = statistics.median([t["h"] for t in matched_tiles]) if matched_tiles else (slide_h * 0.1)
         rows = _cluster_rows(matched_tiles, tol=0.35 * med_h)
+        ordered = [it["card"] for row in rows for it in row]
 
-        ordered_cards = [it["card"] for row in rows for it in row]
-        # top row is "top8" bucket; rest is "side6" bucket
-        top8 = ordered_cards[:8]
-        side6 = ordered_cards[8:14]
+        # split by slide storage order
+        top8 = ordered[:8]
+        side6 = ordered[8:14]
 
-        total = len(ordered_cards)
+        total = len(ordered)
         prev = best_by_side.get(side_letter)
         if prev is None or total > prev[0]:
             best_by_side[side_letter] = (total, top8, side6)
