@@ -410,20 +410,20 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
     Extracts per SIDE slide:
       - card_id from "ID #nn"
       - title as lines above the ID line in the same textbox
-      - image as a composited PNG of all image layers belonging to the matched tile
+      - image as the matched image primitive directly (Option A)
 
     Robustness:
       - Supports nested groups
       - Supports picture shapes and picture-fill shapes (blipFill)
       - Does not assume grouping consistency
-      - Builds "tile clusters" from image primitives, then matches ID-label textboxes to clusters (1:1)
+      - Option A: matches ID-label textboxes directly to image primitives (NO global clustering into tiles)
       - Orders tiles in visual reading order (row clustering then left->right)
 
     Output:
       Dict[side_letter] = PptSideCards(side, top8, side6)
 
     Notes:
-      - Assumes (per your constraint) images and text never overlap: tile.bottom <= label.top (+tol)
+      - Assumes (per your constraint) images and text never overlap: prim.bottom <= label.top (+tol)
       - If matching fails, raises ValueError with an actionable message.
     """
     import io
@@ -452,7 +452,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
     slide_h = float(prs.slide_height)
     slide_area = slide_w * slide_h
 
-    # Namespaces for XPath (lxml)
+    # Namespaces for relationship lookup (NOT for BaseOxmlElement.xpath kwargs)
     A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
     R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
     NS = {"a": A_NS, "r": R_NS}
@@ -549,7 +549,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
     # helpers: image extraction from shapes
     # ----------------------------
     def _extract_picture_blob(sh) -> Optional[Tuple[bytes, str]]:
-    # (A) Normal picture shape
+        # (A) Normal picture shape
         if getattr(sh, "shape_type", None) == MSO_SHAPE_TYPE.PICTURE:
             img = getattr(sh, "image", None)
             blob = getattr(img, "blob", None)
@@ -557,9 +557,9 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
                 ext = str(getattr(img, "ext", "png") or "png")
                 return bytes(blob), ext
 
-    # (B) Picture fill (blipFill) on non-picture shapes
+        # (B) Picture fill (blipFill) on non-picture shapes
         try:
-            blips = sh._element.xpath(".//a:blip")  # <-- NO namespaces kwarg with python-pptx
+            blips = sh._element.xpath(".//a:blip")
             if blips:
                 rid = blips[0].get(f"{{{R_NS}}}embed")
                 if rid:
@@ -572,7 +572,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
         return None
 
     # ----------------------------
-    # helpers: cluster images into "tiles"
+    # helpers: cluster images into "tiles"  (kept for later, unused in Option A)
     # ----------------------------
     class DSU:
         def __init__(self, n: int):
@@ -597,10 +597,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
 
     def _build_image_tiles(primitives: List[dict]) -> List[dict]:
         """
-        Takes image primitives (each: blob, bbox, z) and clusters them into tile clusters.
-        Each cluster yields:
-          - bbox union
-          - layers ordered by z
+        Unused in Option A (kept for reference).
         """
         if not primitives:
             return []
@@ -610,7 +607,6 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
 
         dsu = DSU(len(primitives))
 
-        # union if overlapping or very close (frame+art stacked)
         for i in range(len(primitives)):
             bi = primitives[i]["bbox"]
             xi, yi, wi, hi = bi
@@ -623,7 +619,6 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
                     dsu.union(i, j)
                     continue
 
-                # proximity rule: strong x overlap + small vertical gap
                 x_ov = _x_overlap_ratio(xi, xi + wi, xj, xj + wj)
                 if x_ov >= 0.60:
                     gap = min(abs((yi + hi) - yj), abs((yj + hj) - yi))
@@ -658,17 +653,12 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
                 }
             )
 
-        # filter out huge background-ish tiles
         tiles = [t for t in tiles if 0 < t["area"] <= slide_area * 0.40]
-        # filter out tiny icons
         tiles = [t for t in tiles if t["area"] >= slide_area * 0.001]
 
         return tiles
 
     def _composite_tile_png(tile: dict, scale_px_per_pt: float = 2.2) -> bytes:
-        """
-        Composite tile layers into one PNG, using tile bbox as canvas.
-        """
         x, y, w, h = tile["bbox"]
         w_px = max(1, int(round((w / EMU_PER_PT) * scale_px_per_pt)))
         h_px = max(1, int(round((h / EMU_PER_PT) * scale_px_per_pt)))
@@ -783,69 +773,70 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
         if not primitives:
             raise ValueError(f"PPT side {side_letter}: found {len(labels)} ID labels but 0 image primitives")
 
-        tiles = _build_image_tiles(primitives)
-        if not tiles:
-            raise ValueError(f"PPT side {side_letter}: found {len(labels)} ID labels but 0 image tiles after clustering")
+        # --- Option A: direct label -> primitive matching (NO clustering into tiles) ---
+        # We match each ID label to the nearest image primitive above it (no overlap) with 1:1 assignment.
+        tol_y = slide_h * 0.04  # safety margin for the "image above text" rule
 
-        # Optional: keep tile-like tiles near median area (reduces chance of picking signage)
-        med_area = statistics.median([t["area"] for t in tiles])
-        tile_like = [t for t in tiles if (med_area * 0.30) <= t["area"] <= (med_area * 3.50)]
-        if len(tile_like) >= len(labels):
-            tiles = tile_like
+        # Deterministic label order (top -> bottom, then left -> right)
+        labels.sort(key=lambda d: (d["top"], d["cx"]))
 
-        # --- global 1:1 matching label -> tile ---
-        # strict above-only rule (no overlap ever)
-        tol_y = slide_h * 0.04
+        unused = list(primitives)
 
-        def _match_with_xmin(xmin: float) -> Dict[int, int]:
-            pairs: List[Tuple[float, int, int]] = []
-            for li, lab in enumerate(labels):
-                for ti, tile in enumerate(tiles):
-                    if tile["bottom"] > lab["top"] + tol_y:
-                        continue
-                    if _x_overlap_ratio(lab["x0"], lab["x1"], tile["x0"], tile["x1"]) < xmin:
-                        continue
-                    dy = max(0.0, lab["top"] - tile["bottom"])
-                    dx = abs(lab["cx"] - tile["cx"])
-                    score = dy + 0.35 * dx
-                    pairs.append((score, li, ti))
-
-            pairs.sort(key=lambda t: t[0])
-            used_l, used_t = set(), set()
-            assign: Dict[int, int] = {}
-            for _, li, ti in pairs:
-                if li in used_l or ti in used_t:
+        def _best_match_for_label(lab: dict, xmin: float) -> Optional[int]:
+            best_i = None
+            best_score = None
+            for i, p in enumerate(unused):
+                if p["bottom"] > lab["top"] + tol_y:
                     continue
-                used_l.add(li)
-                used_t.add(ti)
-                assign[li] = ti
-                if len(assign) == len(labels):
-                    break
-            return assign
+                if _x_overlap_ratio(lab["x0"], lab["x1"], p["x0"], p["x1"]) < xmin:
+                    continue
+                dy = max(0.0, lab["top"] - p["bottom"])
+                dx = abs(lab["cx"] - p["cx"])
+                score = dy + 0.35 * dx
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_i = i
+            return best_i
 
-        assign = _match_with_xmin(0.25)
-        if len(assign) != len(labels):
-            # relax slightly (some text boxes are narrower than the card)
-            assign = _match_with_xmin(0.12)
+        # Try progressively looser horizontal overlap; keeps it strict but avoids false negatives.
+        xmins = [0.35, 0.25, 0.18, 0.12, 0.08]
 
-        if len(assign) != len(labels):
-            raise ValueError(
-                f"PPT side {side_letter}: cannot 1:1 match labels({len(labels)}) to tiles({len(tiles)}). "
-                f"matched={len(assign)} (try inspecting tile filters/thresholds)"
-            )
-
-        # --- build matched cards using composited tile images ---
         matched: List[dict] = []
-        for li, lab in enumerate(labels):
-            tile = tiles[assign[li]]
-            img_png = _composite_tile_png(tile, scale_px_per_pt=2.2)
+        for lab in labels:
+            chosen = None
+            for xmin in xmins:
+                chosen = _best_match_for_label(lab, xmin)
+                if chosen is not None:
+                    break
+            if chosen is None:
+                raise ValueError(
+                    f"PPT side {side_letter}: could not match label ID {lab['card_id']} to any image primitive"
+                )
+
+            prim = unused.pop(chosen)
+
+            # Use the matched primitive's image directly (in this deck it is the full card image).
+            img_bytes = prim["blob"]
+            img_ext = prim.get("ext") or "png"
+
+            # Normalize to PNG for consistent downstream rendering.
+            if str(img_ext).lower() != "png":
+                try:
+                    im = Image.open(BytesIO(img_bytes)).convert("RGBA")
+                    out = BytesIO()
+                    im.save(out, format="PNG")
+                    img_bytes = out.getvalue()
+                    img_ext = "png"
+                except Exception:
+                    pass
+
             card = PptCard(
                 card_id=lab["card_id"],
                 title=lab["title"],
-                image_bytes=img_png,
-                image_ext="png",
+                image_bytes=img_bytes,
+                image_ext=img_ext,
             )
-            matched.append({"card": card, "cx": tile["cx"], "cy": tile["cy"], "h": tile["h"]})
+            matched.append({"card": card, "cx": prim["cx"], "cy": prim["cy"], "h": prim["h"]})
 
         # --- order in reading order ---
         med_h = statistics.median([m["h"] for m in matched]) if matched else (slide_h * 0.1)
@@ -870,7 +861,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             top8, side6 = [], []
         parsed[side] = PptSideCards(side=side, top8=top8, side6=side6)
 
-    return parsed
+    return parsed    
 
 
 def validate_ppt_side_cards(ppt_cards: Dict[str, PptSideCards]) -> List[str]:
