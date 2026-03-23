@@ -740,7 +740,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
         # --- image primitives (pictures and picture fills) ---
         primitives: List[dict] = []
         z = 0
-        for sh in _iter_shapes_recursive(slide.shapes):
+        for sh in slide.shapes:
             res = _extract_picture_blob(sh)
             if not res:
                 continue
@@ -750,7 +750,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             if area <= 0:
                 continue
             # drop huge backgrounds + tiny icons early
-            if area > slide_area * 0.40 or area < slide_area * 0.0008:
+            if area > slide_area * 0.55 or area < slide_area * 0.0004:
                 continue
 
             primitives.append(
@@ -775,7 +775,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
 
         # --- Option A: direct label -> primitive matching (NO clustering into tiles) ---
         # We match each ID label to the nearest image primitive above it (no overlap) with 1:1 assignment.
-        tol_y = slide_h * 0.04  # safety margin for the "image above text" rule
+        tol_y = slide_h * 0.08  # safety margin for the "image above text" rule
 
         # Deterministic label order (top -> bottom, then left -> right)
         labels.sort(key=lambda d: (d["top"], d["cx"]))
@@ -799,7 +799,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             return best_i
 
         # Try progressively looser horizontal overlap; keeps it strict but avoids false negatives.
-        xmins = [0.35, 0.25, 0.18, 0.12, 0.08]
+        xmins = [0.35, 0.25, 0.18, 0.12, 0.08, 0.03]
 
         matched: List[dict] = []
         for lab in labels:
