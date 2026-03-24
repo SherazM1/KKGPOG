@@ -1809,13 +1809,17 @@ def render_full_pallet_pdf(
     buf = io.BytesIO()
     images_doc = fitz.open(stream=images_pdf_bytes, filetype="pdf")
 
-    PAGE_W, PAGE_H = 792.0, 1224.0  # 11x17 portrait template
+    PAGE_W, BASE_PAGE_H = 792.0, 1224.0  # base 11x17 portrait; full-pallet pages may grow taller
     MARGIN = 24.0
     HEADER_H = 56.0
     FOOTER_H = 36.0
     SECTION_BAR_H = 24.0
     SECTION_BAR_GAP = 10.0
     BUCKET_GAP = 12.0
+
+    BASE_CONTENT_H = BASE_PAGE_H - (2 * MARGIN) - HEADER_H - FOOTER_H
+    PPT_SECTION_H = BASE_CONTENT_H * 0.27
+    HOLDER_SECTION_H = BASE_CONTENT_H * 0.18
     BAR_FILL = _hex_to_rgb("#77B5F0")
     BAR_TEXT = NAVY_RGB
 
@@ -2053,40 +2057,15 @@ def render_full_pallet_pdf(
 
     try:
         if not pages:
-            c = canvas.Canvas(buf, pagesize=(PAGE_W, PAGE_H))
+            c = canvas.Canvas(buf, pagesize=(PAGE_W, BASE_PAGE_H))
             c.save()
             return buf.getvalue()
 
-        c = canvas.Canvas(buf, pagesize=(PAGE_W, PAGE_H))
+        c = canvas.Canvas(buf, pagesize=(PAGE_W, BASE_PAGE_H))
 
         for pdata in pages:
-            _draw_full_pallet_header(
-                c,
-                PAGE_W,
-                PAGE_H,
-                HEADER_H,
-                title_prefix.strip() or "POG",
-                f"SIDE {pdata.side_letter}",
-                logo,
-            )
-            _draw_footer(c, PAGE_W, MARGIN, FOOTER_H)
-
             cx0, cx1 = MARGIN, PAGE_W - MARGIN
-            cy0, cy1 = MARGIN + FOOTER_H, PAGE_H - MARGIN - HEADER_H
             content_w = cx1 - cx0
-            content_h = cy1 - cy0
-
-            bucket_a_h = content_h * 0.27
-            bucket_b_h = content_h * 0.18
-
-            bucket_a_top = cy1
-            bucket_a_bottom = bucket_a_top - bucket_a_h
-            bucket_b_top = bucket_a_bottom - BUCKET_GAP
-            bucket_b_bottom = bucket_b_top - bucket_b_h
-
-            products_top = bucket_b_bottom - BUCKET_GAP
-            products_bottom = cy0
-            products_avail_h = max(24.0, products_top - products_bottom)
 
             global_cols, global_gap_units = _global_col_order_and_gaps(pdata)
             global_rows = _global_row_order(pdata)
@@ -2105,6 +2084,65 @@ def render_full_pallet_pdf(
                     match = resolve_full_pallet(cell.last5, cell.name, matrix_idx)
                     product_map[(cell.row, cell.col)] = (match, cell)
 
+            unresolved_main: List[str] = []
+            unresolved_bonus: List[str] = []
+
+            main_items, main_matched, main_unmatched = _collect_section_items(
+                pdata,
+                above_bonus_rows,
+                "main",
+                unresolved_main,
+                global_rows,
+                global_cols,
+                product_map,
+            )
+            bonus_items, bonus_matched, bonus_unmatched = _collect_section_items(
+                pdata,
+                below_bonus_rows,
+                "bonus",
+                unresolved_bonus,
+                global_rows,
+                global_cols,
+                product_map,
+            )
+
+            main_plan = _choose_product_layout(len(main_items), "main", content_w, include_bar=False)
+            bonus_plan = _choose_product_layout(len(bonus_items), "bonus", content_w, include_bar=bool(bonus_items))
+
+            products_block_h = main_plan["total_h"]
+            if main_items and bonus_items:
+                products_block_h += BUCKET_GAP
+            products_block_h += bonus_plan["total_h"]
+
+            required_content_h = PPT_SECTION_H + BUCKET_GAP + HOLDER_SECTION_H + BUCKET_GAP + products_block_h
+            dynamic_page_h = max(BASE_PAGE_H, (2 * MARGIN) + HEADER_H + FOOTER_H + required_content_h)
+
+            c.setPageSize((PAGE_W, dynamic_page_h))
+
+            _draw_full_pallet_header(
+                c,
+                PAGE_W,
+                dynamic_page_h,
+                HEADER_H,
+                title_prefix.strip() or "POG",
+                f"SIDE {pdata.side_letter}",
+                logo,
+            )
+            _draw_footer(c, PAGE_W, MARGIN, FOOTER_H)
+
+            cy0, cy1 = MARGIN + FOOTER_H, dynamic_page_h - MARGIN - HEADER_H
+            content_h = cy1 - cy0
+
+            bucket_a_h = PPT_SECTION_H
+            bucket_b_h = HOLDER_SECTION_H
+
+            bucket_a_top = cy1
+            bucket_a_bottom = bucket_a_top - bucket_a_h
+            bucket_b_top = bucket_a_bottom - BUCKET_GAP
+            bucket_b_bottom = bucket_b_top - bucket_b_h
+            products_top = bucket_b_bottom - BUCKET_GAP
+            products_bottom = cy0
+
             if debug_overlay:
                 c.setStrokeColorRGB(0.20, 0.70, 0.25)
                 c.setLineWidth(0.8)
@@ -2114,10 +2152,8 @@ def render_full_pallet_pdf(
 
             rightmost_used = cx0
             adjusted_to_fit = False
-            matched_cells = 0
-            unmatched_cells = 0
-            unresolved_main: List[str] = []
-            unresolved_bonus: List[str] = []
+            matched_cells = main_matched + bonus_matched
+            unmatched_cells = main_unmatched + bonus_unmatched
 
             # Bucket A: PPT Top Cards
             a_gap_y = 8.0
@@ -2361,8 +2397,10 @@ def render_full_pallet_pdf(
                 sec_rows: List[int],
                 section_kind: str,
                 unresolved_bucket: List[str],
-            ) -> List[dict]:
-                nonlocal matched_cells, unmatched_cells
+                global_rows: List[int],
+                global_cols: List[int],
+                product_map: Dict[Tuple[int, int], Tuple[Optional[MatrixRow], CellData]],
+            ) -> Tuple[List[dict], int, int]:
 
                 if not sec_rows:
                     return []
@@ -2383,6 +2421,9 @@ def render_full_pallet_pdf(
                 )
 
                 items: List[dict] = []
+                matched = 0
+                unmatched = 0
+
                 for cell in sec_cells:
                     key = (cell.row, cell.col)
                     match, _cell = product_map.get(key, (None, cell))
@@ -2410,9 +2451,9 @@ def render_full_pallet_pdf(
                         img = None
 
                     if match:
-                        matched_cells += 1
+                        matched += 1
                     else:
-                        unmatched_cells += 1
+                        unmatched += 1
 
                     items.append(
                         {
@@ -2424,7 +2465,16 @@ def render_full_pallet_pdf(
                         }
                     )
 
-                return items
+                return items, matched, unmatched
+
+            def _choose_product_layout(
+                item_count: int,
+                section_kind: str,
+                avail_w: float,
+                include_bar: bool,
+            ) -> dict:
+                candidates = _section_layout_candidates(item_count, section_kind, avail_w, include_bar)
+                return max(candidates, key=lambda d: (d["score"], -d["cols"], -d["rows"]))
 
             def _section_layout_candidates(
                 item_count: int,
@@ -2608,15 +2658,29 @@ def render_full_pallet_pdf(
             if debug_overlay:
                 _draw_debug_box(c, cx0, bucket_b_bottom, content_w, bucket_b_top - bucket_b_bottom, "HOLDERS")
 
-            main_items = _collect_section_items(pdata, above_bonus_rows, "main", unresolved_main)
-            bonus_items = _collect_section_items(pdata, below_bonus_rows, "bonus", unresolved_bonus)
+            products_avail_h = max(24.0, products_top - products_bottom)
 
-            main_plan, bonus_plan = _choose_product_layouts(
-                len(main_items),
-                len(bonus_items),
-                content_w,
-                products_avail_h,
+            main_items, main_matched, main_unmatched = _collect_section_items(
+                pdata,
+                above_bonus_rows,
+                "main",
+                unresolved_main,
+                global_rows,
+                global_cols,
+                product_map,
             )
+            bonus_items, bonus_matched, bonus_unmatched = _collect_section_items(
+                pdata,
+                below_bonus_rows,
+                "bonus",
+                unresolved_bonus,
+                global_rows,
+                global_cols,
+                product_map,
+            )
+
+            main_plan = _choose_product_layout(len(main_items), "main", content_w, include_bar=False)
+            bonus_plan = _choose_product_layout(len(bonus_items), "bonus", content_w, include_bar=bool(bonus_items))
 
             y_cursor = products_top
 
@@ -2689,7 +2753,9 @@ def render_full_pallet_pdf(
 
             right_limit = cx1
             exceeded = rightmost_used > right_limit + 0.001
-            adjusted_to_fit = adjusted_to_fit or exceeded
+            vertical_bottom_used = bonus_section_bottom if bonus_items else main_section_bottom
+            vertical_overflow = vertical_bottom_used < products_bottom - 0.001
+            adjusted_to_fit = adjusted_to_fit or exceeded or vertical_overflow
 
             main_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(above_bonus_rows)})
             bonus_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(below_bonus_rows)})
@@ -2700,7 +2766,7 @@ def render_full_pallet_pdf(
                 st.write(
                     {
                         "side": pdata.side_letter,
-                        "page_size": f"{PAGE_W}x{PAGE_H}",
+                        "page_size": f"{PAGE_W}x{dynamic_page_h}",
                         "margins": {"left": cx0, "right": cx1, "top": cy1, "bottom": cy0},
                         "bucket_regions": {
                             "ppt": [round(bucket_a_top, 1), round(bucket_a_bottom, 1)],
@@ -2721,6 +2787,7 @@ def render_full_pallet_pdf(
                             "rightmost_x": round(rightmost_used, 2),
                             "right_limit": round(right_limit, 2),
                             "exceeded": exceeded,
+                            "vertical_overflow": vertical_overflow,
                             "adjusted_to_fit": adjusted_to_fit,
                         },
                         "ppt_counts": {
