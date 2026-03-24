@@ -748,7 +748,7 @@ def _image_for_col_span(
 
 def _first_nonempty_in_span(ws, row_idx: int, start_col: int, end_col: int) -> Optional[str]:
     for c in range(start_col, end_col + 1):
-        val = ws.cell(row=row_idx, column=c + 1).value
+        val = ws.cell(row=row_idx + 1, column=c + 1).value
         if val is None:
             continue
         text = str(val).strip()
@@ -759,7 +759,7 @@ def _first_nonempty_in_span(ws, row_idx: int, start_col: int, end_col: int) -> O
 
 def _first_int_in_span(ws, row_idx: int, start_col: int, end_col: int) -> Optional[int]:
     for c in range(start_col, end_col + 1):
-        val = ws.cell(row=row_idx, column=c + 1).value
+        val = ws.cell(row=row_idx + 1, column=c + 1).value
         if val is None:
             continue
         text = str(val).strip()
