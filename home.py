@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-
+from openpyxl import load_workbook
 import fitz  # PyMuPDF
 import numpy as np
 import pandas as pd
@@ -109,6 +109,8 @@ class GiftHolder:
     item_no: str
     name: str
     qty: Optional[int]
+    image_bytes: Optional[bytes] = None
+    image_ext: Optional[str] = None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -649,6 +651,66 @@ def validate_ppt_side_cards(ppt_cards: Dict[str, PptSideCards]) -> List[str]:
     return issues
 
 
+def _img_anchor_col(img) -> Optional[int]:
+    try:
+        anchor = getattr(img, "anchor", None)
+        if anchor is None:
+            return None
+        _from = getattr(anchor, "_from", None)
+        if _from is not None:
+            return int(_from.col)
+        frm = getattr(anchor, "from_", None)
+        if frm is not None:
+            return int(frm.col)
+    except Exception:
+        return None
+    return None
+
+
+def _img_bytes_and_ext(img) -> Tuple[Optional[bytes], Optional[str]]:
+    try:
+        raw = None
+        if hasattr(img, "_data"):
+            raw = img._data()
+        elif hasattr(img, "ref"):
+            ref = img.ref
+            if isinstance(ref, bytes):
+                raw = ref
+            elif hasattr(ref, "read"):
+                raw = ref.read()
+        if not raw:
+            return None, None
+
+        fmt = str(getattr(img, "format", "") or "").strip().lower()
+        ext = fmt if fmt in {"png", "jpg", "jpeg", "gif", "bmp"} else "png"
+
+        try:
+            im = Image.open(io.BytesIO(raw)).convert("RGBA")
+            out = io.BytesIO()
+            im.save(out, format="PNG")
+            return out.getvalue(), "png"
+        except Exception:
+            return raw, ext
+    except Exception:
+        return None, None
+
+
+def _extract_ws_images_by_col(ws) -> Dict[int, Tuple[bytes, str]]:
+    """
+    Map 0-based Excel column index -> first embedded image found in that column.
+    """
+    out: Dict[int, Tuple[bytes, str]] = {}
+    for img in getattr(ws, "_images", []) or []:
+        col = _img_anchor_col(img)
+        if col is None:
+            continue
+        img_bytes, img_ext = _img_bytes_and_ext(img)
+        if not img_bytes:
+            continue
+        out.setdefault(col, (img_bytes, img_ext or "png"))
+    return out
+
+
 @st.cache_data(show_spinner=False)
 def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
     """Parse POG workbook holder section and return ordered per-side holders."""
@@ -699,6 +761,23 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
     )
     if full_pallet_sheet is None:
         raise ValueError("FULL PALLET sheet/table missing in workbook.")
+
+    try:
+        wb = load_workbook(io.BytesIO(gift_bytes), data_only=True)
+    except Exception as e:
+        raise ValueError(f"Unable to open Gift Card Holders workbook images: {e}")
+
+    full_pallet_ws = None
+    for ws in wb.worksheets:
+        title_u = str(ws.title or "").upper()
+        if "FULL" in title_u and "PALLET" in title_u:
+            full_pallet_ws = ws
+            break
+
+    if full_pallet_ws is None:
+        raise ValueError("Could not find FULL PALLET sheet in workbook.")
+
+    images_by_col = _extract_ws_images_by_col(full_pallet_ws)
 
     desc_map: Dict[str, str] = {}
     for _, sheet_df in xls.items():
@@ -779,8 +858,16 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
             )
             name = desc_map.get(item_no) or raw_desc or "(missing description)"
             side = side_for_col(cidx)
+            img_bytes, img_ext = images_by_col.get(cidx, (None, None))
             holders.setdefault(side, []).append(
-                GiftHolder(side=side, item_no=item_no, name=name, qty=qty)
+                GiftHolder(
+                    side=side,
+                    item_no=item_no,
+                    name=name,
+                    qty=qty,
+                    image_bytes=img_bytes,
+                    image_ext=img_ext,
+                )
             )
 
     if any(holders.values()):
@@ -789,7 +876,15 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
             base_list = holders["A"]
             for s in "BCD":
                 holders[s] = [
-                    GiftHolder(side=s, item_no=h.item_no, name=h.name, qty=h.qty) for h in base_list
+                    GiftHolder(
+                        side=s,
+                        item_no=h.item_no,
+                        name=h.name,
+                        qty=h.qty,
+                        image_bytes=h.image_bytes,
+                        image_ext=h.image_ext,
+                    )
+                    for h in base_list
                 ]
         return holders
 
@@ -821,7 +916,16 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
         qty = _coerce_int(row.get(qty_col))
         name = desc_map.get(item_no) or "(missing description)"
         side = current_side if current_side in "ABCD" else "A"
-        holders.setdefault(side, []).append(GiftHolder(side=side, item_no=item_no, name=name, qty=qty))
+        holders.setdefault(side, []).append(
+            GiftHolder(
+                side=side,
+                item_no=item_no,
+                name=name,
+                qty=qty,
+                image_bytes=None,
+                image_ext=None,
+            )
+        )
 
     if not any(holders.values()):
         raise ValueError("No holder Item # rows found in FULL PALLET table.")
@@ -830,7 +934,17 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
     if non_empty == ["A"]:
         base_list = holders["A"]
         for s in "BCD":
-            holders[s] = [GiftHolder(side=s, item_no=h.item_no, name=h.name, qty=h.qty) for h in base_list]
+            holders[s] = [
+                GiftHolder(
+                    side=s,
+                    item_no=h.item_no,
+                    name=h.name,
+                    qty=h.qty,
+                    image_bytes=h.image_bytes,
+                    image_ext=h.image_ext,
+                )
+                for h in base_list
+            ]
     return holders
 
 
@@ -1963,8 +2077,15 @@ def render_full_pallet_pdf(
                     c.rect(x, y, holder_card_w, holder_card_h, stroke=1, fill=1)
                     if holder:
                         _draw_card(
-                            c, x, y, holder_card_w, holder_card_h,
-                            None, holder.item_no, holder.name, holder.qty,
+                            c,
+                            x,
+                            y,
+                            holder_card_w,
+                            holder_card_h,
+                            image_from_bytes(holder.image_bytes),
+                            holder.item_no,
+                            holder.name,
+                            holder.qty,
                         )
 
             if debug_overlay:
