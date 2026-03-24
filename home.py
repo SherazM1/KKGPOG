@@ -92,8 +92,6 @@ class FullPalletPage:
 class PptCard:
     card_id: str
     title: str
-    image_bytes: Optional[bytes] = None
-    image_ext: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -109,8 +107,6 @@ class GiftHolder:
     item_no: str
     name: str
     qty: Optional[int]
-    image_bytes: Optional[bytes] = None
-    image_ext: Optional[str] = None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -404,621 +400,202 @@ def _coerce_item_no(v: object) -> Optional[str]:
 
 @st.cache_data(show_spinner=False)
 def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
+    """Parse PPTX per-side slides and return PptSideCards with images.
+
+    Structure of each SIDE slide (slides 2-5 = A-D):
+      - Top-level GROUP shapes (one per card image, width < 10in) sitting in the top ~1in band
+      - TEXT_BOX shapes with "ID #nn" labels positioned just below each group
+      - One loose PICTURE shape may appear on slides where one card isn't inside a group
+
+    Each card GROUP contains:
+      - The actual card image (variable blob size)
+      - The Walmart watermark/logo (constant 71369-byte blob) — skip this
+
+    Algorithm:
+      1. Collect all image containers (groups + loose pictures), extract card blob
+      2. Collect all TEXT_BOX labels with ID#
+      3. Match each label to the nearest image container above it (by cx proximity)
+      4. Split into top8 (labels at y < 40% slide height) and side6 (y >= 40%)
+      5. Sort top8 left→right by cx; sort side6 by (row-band, cx)
     """
-    Robust PPT top/side card extraction for Full Pallet mode.
-
-    Per SIDE slide, extracts:
-      - ID from "ID #nn"
-      - Name from lines above the ID line in the same textbox
-      - Full card image (composited from all image layers in the matched tile)
-
-    Matching is geometry-driven and deterministic (row-major by tile position).
-    It supports grouped shapes, picture fills, and multi-layer card artwork.
-    If a reliable 1:1 image/text match cannot be found, it raises ValueError
-    instead of silently pairing the wrong card.
-    """
-    import io
-    import hashlib
-    import re
-    import statistics
-    from collections import Counter
-    from io import BytesIO
-    from typing import Any, Dict, List, Optional, Tuple
-
-    from PIL import Image
     from pptx import Presentation  # type: ignore
     from pptx.enum.shapes import MSO_SHAPE_TYPE  # type: ignore
 
-    # --- regex ---
+    WATERMARK_BLOB_SIZE = 71369  # Walmart logo — same bytes across all groups
+
+    prs = Presentation(io.BytesIO(pptx_bytes))
+    slide_h = float(prs.slide_height)
+    slide_w = float(prs.slide_width)
+
     id_re = re.compile(r"\bID\s*#?\s*[:\-]?\s*(\d{1,8})\b", re.IGNORECASE)
     side_re = re.compile(r"\bSIDE\s*([A-D])\b", re.IGNORECASE)
 
-    # --- PPT units ---
-    # 1 inch = 914400 EMU, 1 pt = 12700 EMU
-    EMU_PER_PT = 12700.0
+    def _extract_card_blob(sh) -> Optional[bytes]:
+        """Return the largest non-watermark image blob from a shape or group."""
+        blobs: List[bytes] = []
 
-    prs = Presentation(io.BytesIO(pptx_bytes))
-    slide_w = float(prs.slide_width)
-    slide_h = float(prs.slide_height)
-    slide_area = slide_w * slide_h
-    R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        def _collect(shapes) -> None:
+            for s in shapes:
+                if getattr(s, "shape_type", None) == MSO_SHAPE_TYPE.PICTURE:
+                    b = bytes(s.image.blob)
+                    if len(b) != WATERMARK_BLOB_SIZE:
+                        blobs.append(b)
+                elif getattr(s, "shape_type", None) == MSO_SHAPE_TYPE.GROUP:
+                    _collect(s.shapes)
 
-    # ----------------------------
-    # helpers: geometry
-    # ----------------------------
-    def _bbox(sh) -> Tuple[float, float, float, float]:
-        x = float(getattr(sh, "left", 0) or 0)
-        y = float(getattr(sh, "top", 0) or 0)
-        w = float(getattr(sh, "width", 0) or 0)
-        h = float(getattr(sh, "height", 0) or 0)
-        return x, y, w, h
-
-    def _union_bbox(b1: Tuple[float, float, float, float], b2: Tuple[float, float, float, float]):
-        x1, y1, w1, h1 = b1
-        x2, y2, w2, h2 = b2
-        l = min(x1, x2)
-        t = min(y1, y2)
-        r = max(x1 + w1, x2 + w2)
-        b = max(y1 + h1, y2 + h2)
-        return (l, t, r - l, b - t)
-
-    def _x_overlap_ratio(a0: float, a1: float, b0: float, b1: float) -> float:
-        inter = max(0.0, min(a1, b1) - max(a0, b0))
-        denom = max(1.0, min(a1 - a0, b1 - b0))
-        return inter / denom
-
-    def _iou(b1: Tuple[float, float, float, float], b2: Tuple[float, float, float, float]) -> float:
-        x1, y1, w1, h1 = b1
-        x2, y2, w2, h2 = b2
-        xa = max(x1, x2)
-        ya = max(y1, y2)
-        xb = min(x1 + w1, x2 + w2)
-        yb = min(y1 + h1, y2 + h2)
-        inter = max(0.0, xb - xa) * max(0.0, yb - ya)
-        if inter <= 0:
-            return 0.0
-        a1 = w1 * h1
-        a2 = w2 * h2
-        return inter / max(1.0, (a1 + a2 - inter))
-
-    def _cluster_rows(items: List[dict], tol: float) -> List[List[dict]]:
-        rows: List[dict] = []
-        for it in sorted(items, key=lambda d: d["cy"]):
-            placed = False
-            for row in rows:
-                if abs(it["cy"] - row["cy"]) <= tol:
-                    row["items"].append(it)
-                    row["cy"] = statistics.mean([x["cy"] for x in row["items"]])
-                    placed = True
-                    break
-            if not placed:
-                rows.append({"cy": it["cy"], "items": [it]})
-        rows.sort(key=lambda r: r["cy"])
-        for row in rows:
-            row["items"].sort(key=lambda d: d["cx"])
-        return [r["items"] for r in rows]
-
-    # ----------------------------
-    # helpers: shape traversal
-    # ----------------------------
-    def _iter_shapes_recursive(shapes) -> List[Any]:
-        out: List[Any] = []
-        stack = list(shapes)
-        while stack:
-            sh = stack.pop(0)
-            out.append(sh)
-            if getattr(sh, "shape_type", None) == MSO_SHAPE_TYPE.GROUP:
-                stack = list(sh.shapes) + stack
-        return out
-
-    # ----------------------------
-    # helpers: parse label
-    # ----------------------------
-    def _parse_label(txt: str) -> Optional[Tuple[str, str]]:
-        lines = [ln.strip() for ln in (txt or "").splitlines() if ln.strip()]
-        if not lines:
-            return None
-        id_idx = None
-        card_id = None
-        for i, ln in enumerate(lines):
-            m = id_re.search(ln)
-            if m:
-                id_idx = i
-                card_id = m.group(1).strip()
-                break
-        if id_idx is None or not card_id:
-            return None
-        title = " ".join(lines[:id_idx]).strip()
-        return card_id, title
-
-    # ----------------------------
-    # helpers: image extraction from shapes
-    # ----------------------------
-    def _extract_picture_blob(sh) -> Optional[Tuple[bytes, str]]:
-        # (A) Normal picture shape
         if getattr(sh, "shape_type", None) == MSO_SHAPE_TYPE.PICTURE:
-            img = getattr(sh, "image", None)
-            blob = getattr(img, "blob", None)
-            if blob:
-                ext = str(getattr(img, "ext", "png") or "png")
-                return bytes(blob), ext
+            b = bytes(sh.image.blob)
+            return b if len(b) != WATERMARK_BLOB_SIZE else None
+        elif getattr(sh, "shape_type", None) == MSO_SHAPE_TYPE.GROUP:
+            _collect(sh.shapes)
+        return max(blobs, key=len) if blobs else None
 
-        # (B) Picture fill (blipFill) on non-picture shapes
-        try:
-            # Prefer namespace-aware lookup; fall back to local-name XPath for decks
-            # where namespace prefixes are not resolved by the element wrapper.
-            blips = sh._element.xpath(".//a:blip")
-            if not blips:
-                blips = sh._element.xpath(".//*[local-name()='blip']")
-            if blips:
-                blip = blips[0]
-                rid = (
-                    blip.get(f"{{{R_NS}}}embed")
-                    or blip.get("r:embed")
-                    or blip.get("embed")
-                )
-                if not rid:
-                    for k, v in blip.attrib.items():
-                        if str(k).endswith("}embed") or str(k).endswith(":embed") or str(k) == "embed":
-                            rid = v
-                            break
-                if rid:
-                    part = sh.part.related_parts.get(rid)
-                    if part is not None and hasattr(part, "blob"):
-                        return bytes(part.blob), "png"
-        except Exception:
-            pass
-
-        return None
-
-    # ----------------------------
-    # helpers: cluster image primitives into visual tiles
-    # ----------------------------
-    class DSU:
-        def __init__(self, n: int):
-            self.p = list(range(n))
-            self.r = [0] * n
-
-        def find(self, a: int) -> int:
-            while self.p[a] != a:
-                self.p[a] = self.p[self.p[a]]
-                a = self.p[a]
-            return a
-
-        def union(self, a: int, b: int):
-            ra, rb = self.find(a), self.find(b)
-            if ra == rb:
-                return
-            if self.r[ra] < self.r[rb]:
-                ra, rb = rb, ra
-            self.p[rb] = ra
-            if self.r[ra] == self.r[rb]:
-                self.r[ra] += 1
-
-    def _build_image_tiles(primitives: List[dict]) -> List[dict]:
-        if not primitives:
-            return []
-
-        heights = [p["h"] for p in primitives if p["h"] > 0]
-        med_h = statistics.median(heights) if heights else (slide_h * 0.1)
-
-        dsu = DSU(len(primitives))
-
-        for i in range(len(primitives)):
-            bi = primitives[i]["bbox"]
-            xi, yi, wi, hi = bi
-            for j in range(i + 1, len(primitives)):
-                bj = primitives[j]["bbox"]
-                xj, yj, wj, hj = bj
-
-                iou = _iou(bi, bj)
-                if iou >= 0.05:
-                    dsu.union(i, j)
-                    continue
-
-                x_ov = _x_overlap_ratio(xi, xi + wi, xj, xj + wj)
-                if x_ov >= 0.60:
-                    gap = min(abs((yi + hi) - yj), abs((yj + hj) - yi))
-                    if gap <= 0.25 * med_h:
-                        dsu.union(i, j)
-
-        groups: Dict[int, List[int]] = {}
-        for idx in range(len(primitives)):
-            root = dsu.find(idx)
-            groups.setdefault(root, []).append(idx)
-
-        tiles: List[dict] = []
-        for _, idxs in groups.items():
-            bb = primitives[idxs[0]]["bbox"]
-            for k in idxs[1:]:
-                bb = _union_bbox(bb, primitives[k]["bbox"])
-
-            layers = sorted([primitives[k] for k in idxs], key=lambda p: p["z"])
-            x, y, w, h = bb
-            tiles.append(
-                {
-                    "bbox": bb,
-                    "x0": x,
-                    "x1": x + w,
-                    "top": y,
-                    "bottom": y + h,
-                    "cx": x + w / 2.0,
-                    "cy": y + h / 2.0,
-                    "h": h,
-                    "layers": layers,
-                    "area": w * h,
-                }
-            )
-
-        tiles = [t for t in tiles if 0 < t["area"] <= slide_area * 0.50]
-        tiles = [t for t in tiles if t["area"] >= slide_area * 0.001]
-        tiles.sort(key=lambda t: (t["top"], t["cx"], -t["area"]))
-
-        return tiles
-
-    def _composite_tile_png(tile: dict, scale_px_per_pt: float = 2.2) -> bytes:
-        x, y, w, h = tile["bbox"]
-        w_px = max(1, int(round((w / EMU_PER_PT) * scale_px_per_pt)))
-        h_px = max(1, int(round((h / EMU_PER_PT) * scale_px_per_pt)))
-        canvas = Image.new("RGBA", (w_px, h_px), (255, 255, 255, 0))
-
-        cache: Dict[str, Image.Image] = {}
-        for layer in tile["layers"]:
-            blob = layer["blob"]
-            lx, ly, lw, lh = layer["bbox"]
-            if lw <= 1 or lh <= 1:
-                continue
-
-            key = hashlib.sha1(blob).hexdigest()
-            if key in cache:
-                src = cache[key]
-            else:
-                src = Image.open(BytesIO(blob)).convert("RGBA")
-                cache[key] = src
-
-            rx = ((lx - x) / EMU_PER_PT) * scale_px_per_pt
-            ry = ((ly - y) / EMU_PER_PT) * scale_px_per_pt
-            rw = (lw / EMU_PER_PT) * scale_px_per_pt
-            rh = (lh / EMU_PER_PT) * scale_px_per_pt
-
-            if rw <= 1 or rh <= 1:
-                continue
-
-            resized = src.resize((int(round(rw)), int(round(rh))), Image.LANCZOS)
-            canvas.alpha_composite(resized, dest=(int(round(rx)), int(round(ry))))
-
-        out = BytesIO()
-        canvas.save(out, format="PNG")
-        return out.getvalue()
-
-    def _primitive_tiles(primitives: List[dict]) -> List[dict]:
-        out: List[dict] = []
-        for p in primitives:
-            x, y, w, h = p["bbox"]
-            out.append(
-                {
-                    "bbox": p["bbox"],
-                    "x0": p["x0"],
-                    "x1": p["x1"],
-                    "top": p["top"],
-                    "bottom": p["bottom"],
-                    "cx": p["cx"],
-                    "cy": p["cy"],
-                    "h": p["h"],
-                    "layers": [p],
-                    "area": w * h,
-                }
-            )
-        out.sort(key=lambda t: (t["top"], t["cx"], -t["area"]))
-        return out
-
-    def _normalize_png(img_bytes: bytes, img_ext: str) -> Tuple[bytes, str]:
-        if str(img_ext).lower() == "png":
-            return img_bytes, "png"
-        try:
-            im = Image.open(BytesIO(img_bytes)).convert("RGBA")
-            out = BytesIO()
-            im.save(out, format="PNG")
-            return out.getvalue(), "png"
-        except Exception:
-            return img_bytes, img_ext
-
-    def _tile_image(tile: dict) -> Tuple[bytes, str]:
-        layers = tile.get("layers") or []
-        if len(layers) == 1:
-            blob = bytes(layers[0]["blob"])
-            ext = str(layers[0].get("ext") or "png")
-            return _normalize_png(blob, ext)
-        return _composite_tile_png(tile), "png"
-
-    def _match_labels_to_tiles(
-        labels: List[dict], tiles: List[dict], cfg: Dict[str, float]
-    ) -> Tuple[Optional[List[int]], List[List[Tuple[float, int]]], Optional[float]]:
-        if not labels:
-            return [], [], 0.0
-        if not tiles:
-            return None, [[] for _ in labels], None
-
-        cands: List[List[Tuple[float, int]]] = []
-        score_map: List[Dict[int, float]] = []
-        for lab in labels:
-            lab_w = max(1.0, float(lab["x1"] - lab["x0"]))
-            lab_h = max(1.0, float(lab["bottom"] - lab["top"]))
-            max_dx = max(lab_w * float(cfg["cx_mult"]), slide_w * float(cfg["dx_frac"]))
-            row_radius = max(lab_h * 1.5, slide_h * float(cfg["row_frac"]))
-
-            cur: List[Tuple[float, int]] = []
-            cur_score: Dict[int, float] = {}
-            for tidx, t in enumerate(tiles):
-                x_ov = _x_overlap_ratio(lab["x0"], lab["x1"], t["x0"], t["x1"])
-                dx = abs(lab["cx"] - t["cx"])
-                if x_ov < float(cfg["xmin"]) and dx > max_dx:
-                    continue
-                if t["top"] > lab["top"] + row_radius:
-                    continue
-                if bool(cfg["require_above"]) and t["bottom"] > lab["top"] + slide_h * float(cfg["tol_frac"]):
-                    continue
-
-                dy_up = max(0.0, lab["top"] - t["bottom"])
-                dy_down = max(0.0, t["bottom"] - lab["top"])
-                score = (
-                    dy_up
-                    + float(cfg["down_w"]) * dy_down
-                    + float(cfg["dx_w"]) * dx
-                    + float(cfg["size_w"]) * abs(t["h"] - lab_h)
-                    - float(cfg["xov_bonus"]) * x_ov * slide_w
-                )
-                cur.append((score, tidx))
-                cur_score[tidx] = score
-
-            cur.sort(key=lambda x: (x[0], x[1]))
-            cands.append(cur)
-            score_map.append(cur_score)
-
-        if any(len(c) == 0 for c in cands):
-            return None, cands, None
-
-        match_tile_to_lab = [-1] * len(tiles)
-
-        def _dfs(lab_idx: int, seen: List[bool]) -> bool:
-            for _, tile_idx in cands[lab_idx]:
-                if seen[tile_idx]:
-                    continue
-                seen[tile_idx] = True
-                prev = match_tile_to_lab[tile_idx]
-                if prev == -1 or _dfs(prev, seen):
-                    match_tile_to_lab[tile_idx] = lab_idx
-                    return True
-            return False
-
-        order = sorted(range(len(labels)), key=lambda i: (len(cands[i]), labels[i]["top"], labels[i]["cx"]))
-        for lab_idx in order:
-            if not _dfs(lab_idx, [False] * len(tiles)):
-                return None, cands, None
-
-        lab_to_tile = [-1] * len(labels)
-        for tile_idx, lab_idx in enumerate(match_tile_to_lab):
-            if lab_idx != -1:
-                lab_to_tile[lab_idx] = tile_idx
-        if any(i < 0 for i in lab_to_tile):
-            return None, cands, None
-
-        total_score = 0.0
-        for i, tile_idx in enumerate(lab_to_tile):
-            total_score += score_map[i].get(tile_idx, 1e12)
-        return lab_to_tile, cands, total_score
-
-    # ----------------------------
-    # main loop: per slide
-    # ----------------------------
     best_by_side: Dict[str, Tuple[int, List[PptCard], List[PptCard]]] = {}
 
-    for sidx, slide in enumerate(prs.slides):
-        # --- side detection ---
+    for slide in prs.slides:
+        # ── Detect side letter ──────────────────────────────────────────────
         side_letter: Optional[str] = None
-        for sh in _iter_shapes_recursive(slide.shapes):
-            if getattr(sh, "has_text_frame", False):
-                txt = (getattr(sh, "text", "") or "").strip()
-                m = side_re.search(txt)
-                if m:
-                    side_letter = m.group(1).upper()
-                    break
+        for sh in slide.shapes:
+            m = side_re.search(str(getattr(sh, "text", "") or ""))
+            if m:
+                side_letter = m.group(1).upper()
+                break
         if side_letter is None:
-            side_letter = chr(ord("A") + min(sidx, 3))
+            continue  # skip title / intro / half-pallet slides
 
-        # --- labels: ID-anchored text boxes ---
+        # ── Collect image containers ────────────────────────────────────────
+        img_containers: List[dict] = []
+        for sh in slide.shapes:
+            stype = getattr(sh, "shape_type", None)
+            l = float(getattr(sh, "left", 0) or 0)
+            t = float(getattr(sh, "top", 0) or 0)
+            w = float(getattr(sh, "width", 0) or 0)
+            h = float(getattr(sh, "height", 0) or 0)
+
+            if stype == MSO_SHAPE_TYPE.GROUP:
+                if w > slide_w * 0.80:
+                    continue  # skip full-slide background frame
+                blob = _extract_card_blob(sh)
+                if not blob:
+                    continue
+            elif stype == MSO_SHAPE_TYPE.PICTURE:
+                blob = bytes(sh.image.blob)
+                if len(blob) == WATERMARK_BLOB_SIZE:
+                    continue
+            else:
+                continue
+
+            img_containers.append({
+                "cx": l + w / 2,
+                "cy": t + h / 2,
+                "bottom": t + h,
+                "blob": blob,
+            })
+
+        # ── Collect labels ──────────────────────────────────────────────────
         labels: List[dict] = []
-        label_keys: set = set()
-        for sh in _iter_shapes_recursive(slide.shapes):
-            if not getattr(sh, "has_text_frame", False):
+        for sh in slide.shapes:
+            txt = str(getattr(sh, "text", "") or "").strip()
+            m = id_re.search(txt)
+            if not m:
                 continue
-            txt = (getattr(sh, "text", "") or "").strip()
-            parsed = _parse_label(txt)
-            if not parsed:
-                continue
-            card_id, title = parsed
-            x, y, w, h = _bbox(sh)
-            key = (card_id, round(x), round(y), round(w), round(h))
-            if key in label_keys:
-                continue
-            label_keys.add(key)
-            labels.append(
-                {
-                    "card_id": str(card_id),
-                    "title": str(title),
-                    "top": y,
-                    "bottom": y + h,
-                    "x0": x,
-                    "x1": x + w,
-                    "cx": x + w / 2.0,
-                }
-            )
+            card_id = m.group(1)
+            lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+            id_idx = next((i for i, ln in enumerate(lines) if id_re.search(ln)), 0)
+            title = " ".join(lines[:id_idx]).strip()
+            l = float(getattr(sh, "left", 0) or 0)
+            t = float(getattr(sh, "top", 0) or 0)
+            w = float(getattr(sh, "width", 0) or 0)
+            h = float(getattr(sh, "height", 0) or 0)
+            labels.append({
+                "card_id": card_id,
+                "title": title,
+                "cx": l + w / 2,
+                "top": t,
+                "cy": t + h / 2,
+            })
 
         if not labels:
-            # not a SIDE slide with cards
             continue
 
-        id_counts = Counter(l["card_id"] for l in labels)
-        dup_ids = sorted([card_id for card_id, n in id_counts.items() if n > 1])
-        if dup_ids:
-            raise ValueError(
-                f"PPT side {side_letter}: duplicate ID labels detected ({', '.join(dup_ids[:8])})"
-            )
+        # ── Match each label to the nearest image above it ──────────────────
+        # Process in reading order (top→bottom, left→right) so greedy works well.
+        used: set = set()
+        label_to_img: Dict[str, Optional[dict]] = {}
 
-        # --- image primitives (pictures and picture fills) ---
-        primitives: List[dict] = []
-        prim_keys: set = set()
-        z = 0
-        recursive_shapes = _iter_shapes_recursive(slide.shapes)
-        for sh in recursive_shapes:
-            # Group containers are not directly renderable image tiles and can
-            # duplicate nested picture references.
-            if getattr(sh, "shape_type", None) == MSO_SHAPE_TYPE.GROUP:
-                continue
-            res = _extract_picture_blob(sh)
-            if not res:
-                continue
-            blob, ext = res
-            x, y, w, h = _bbox(sh)
-            area = w * h
-            if area <= 0:
-                continue
-            # drop huge backgrounds + tiny icons early
-            if area > slide_area * 0.55 or area < slide_area * 0.0004:
-                continue
-            blob_sig = hashlib.sha1(blob).hexdigest()[:16]
-            pkey = (round(x), round(y), round(w), round(h), blob_sig)
-            if pkey in prim_keys:
-                continue
-            prim_keys.add(pkey)
+        for lab in sorted(labels, key=lambda d: (round(d["top"] / (slide_h * 0.05)), d["cx"])):
+            best_i: Optional[int] = None
+            best_score = float("inf")
+            for i, img in enumerate(img_containers):
+                if i in used:
+                    continue
+                # Image must be above (or at most 0.5in below) the label top
+                if img["bottom"] > lab["top"] + slide_h * 0.07:
+                    continue
+                dx = abs(lab["cx"] - img["cx"])
+                dy = max(0.0, lab["top"] - img["bottom"])
+                score = dx + 0.3 * dy
+                if score < best_score:
+                    best_score = score
+                    best_i = i
+            if best_i is not None:
+                used.add(best_i)
+                label_to_img[lab["card_id"]] = img_containers[best_i]
+            else:
+                label_to_img[lab["card_id"]] = None
 
-            primitives.append(
-                {
-                    "blob": blob,
-                    "ext": ext,
-                    "bbox": (x, y, w, h),
-                    "x0": x,
-                    "x1": x + w,
-                    "top": y,
-                    "bottom": y + h,
-                    "cx": x + w / 2.0,
-                    "cy": y + h / 2.0,
-                    "h": h,
-                    "z": z,
-                }
-            )
-            z += 1
+        # ── Split into top8 and side6 by y-position ─────────────────────────
+        # Labels for the main top row appear at ~30-36% of slide height.
+        # Labels for the side panel appear at ~57-93% of slide height.
+        TOP_THRESH = slide_h * 0.42
+        top_labels = sorted(
+            [lb for lb in labels if lb["top"] < TOP_THRESH], key=lambda d: d["cx"]
+        )
+        side_labels = sorted(
+            [lb for lb in labels if lb["top"] >= TOP_THRESH],
+            key=lambda d: (round(d["top"] / (slide_h * 0.12)), d["cx"]),
+        )
 
-        if not primitives:
-            raise ValueError(
-                f"PPT side {side_letter}: found {len(labels)} ID labels but 0 image primitives "
-                f"(scanned {len(recursive_shapes)} shapes recursively)"
-            )
-
-        # --- deterministic label -> tile matching ---
-        # Deterministic label order (top -> bottom, then left -> right)
-        labels.sort(key=lambda d: (d["top"], d["cx"]))
-
-        primitive_tiles = _primitive_tiles(primitives)
-        clustered_tiles = _build_image_tiles(primitives)
-
-        # Prefer clustered tiles because they reconstruct full-card artwork from layers.
-        phases = [
-            ("clustered_strict", clustered_tiles, {
-                "xmin": 0.20, "dx_frac": 0.07, "cx_mult": 1.4, "row_frac": 0.10,
-                "tol_frac": 0.08, "require_above": 1.0, "dx_w": 0.32,
-                "down_w": 7.5, "size_w": 0.02, "xov_bonus": 0.06,
-            }),
-            ("clustered_relaxed", clustered_tiles, {
-                "xmin": 0.10, "dx_frac": 0.11, "cx_mult": 1.9, "row_frac": 0.15,
-                "tol_frac": 0.14, "require_above": 1.0, "dx_w": 0.30,
-                "down_w": 7.0, "size_w": 0.015, "xov_bonus": 0.05,
-            }),
-            ("primitive_strict", primitive_tiles, {
-                "xmin": 0.24, "dx_frac": 0.07, "cx_mult": 1.3, "row_frac": 0.10,
-                "tol_frac": 0.08, "require_above": 1.0, "dx_w": 0.34,
-                "down_w": 8.0, "size_w": 0.02, "xov_bonus": 0.06,
-            }),
-            ("primitive_relaxed", primitive_tiles, {
-                "xmin": 0.10, "dx_frac": 0.12, "cx_mult": 2.0, "row_frac": 0.16,
-                "tol_frac": 0.14, "require_above": 1.0, "dx_w": 0.30,
-                "down_w": 7.0, "size_w": 0.015, "xov_bonus": 0.05,
-            }),
-        ]
-
-        chosen_tiles: Optional[List[dict]] = None
-        assignments: Optional[List[int]] = None
-        best_score: Optional[float] = None
-        last_cands: Optional[List[List[Tuple[float, int]]]] = None
-        last_phase_name = ""
-        for phase_name, tiles, cfg in phases:
-            if not tiles:
-                continue
-            last_phase_name = phase_name
-            assn, cands, total_score = _match_labels_to_tiles(labels, tiles, cfg)
-            last_cands = cands
-            if assn is None:
-                continue
-            if assignments is None or (total_score is not None and (best_score is None or total_score < best_score)):
-                assignments = assn
-                chosen_tiles = tiles
-                best_score = total_score
-            # Deterministic preference: first successful strict phase is good enough.
-            if phase_name in {"clustered_strict", "primitive_strict"}:
-                break
-
-        if assignments is None or chosen_tiles is None:
-            bad_idx = 0
-            if last_cands:
-                for i, cands in enumerate(last_cands):
-                    if not cands:
-                        bad_idx = i
-                        break
-            bad = labels[bad_idx]
-            cand_count = len(last_cands[bad_idx]) if last_cands else 0
-            raise ValueError(
-                f"PPT side {side_letter}: could not match label ID {bad['card_id']} to any image tile "
-                f"(phase={last_phase_name or 'none'}, candidates={cand_count}, "
-                f"labels={len(labels)}, tiles={len(clustered_tiles)}, primitives={len(primitives)})"
-            )
-
-        matched: List[dict] = []
-        for lab_idx, lab in enumerate(labels):
-            tile = chosen_tiles[assignments[lab_idx]]
-            img_bytes, img_ext = _tile_image(tile)
-
-            card = PptCard(
+        def _make_card(lab: dict) -> PptCard:
+            img_entry = label_to_img.get(lab["card_id"])
+            img_bytes: Optional[bytes] = None
+            img_ext: Optional[str] = None
+            if img_entry:
+                raw = img_entry["blob"]
+                # Normalise to PNG
+                try:
+                    from io import BytesIO as _BIO
+                    im = Image.open(_BIO(raw)).convert("RGBA")
+                    out = _BIO()
+                    im.save(out, format="PNG")
+                    img_bytes = out.getvalue()
+                    img_ext = "png"
+                except Exception:
+                    img_bytes = raw
+                    img_ext = "png"
+            return PptCard(
                 card_id=lab["card_id"],
                 title=lab["title"],
                 image_bytes=img_bytes,
                 image_ext=img_ext,
             )
-            matched.append({"card": card, "cx": tile["cx"], "cy": tile["cy"], "h": tile["h"]})
 
-        # --- order in reading order ---
-        med_h = statistics.median([m["h"] for m in matched]) if matched else (slide_h * 0.1)
-        rows = _cluster_rows(matched, tol=0.32 * med_h)
-        top_cards: List[PptCard] = [it["card"] for it in rows[0]] if rows else []
-        side_cards: List[PptCard] = [it["card"] for row in rows[1:] for it in row] if len(rows) > 1 else []
+        top8 = [_make_card(lb) for lb in top_labels[:8]]
+        side6 = [_make_card(lb) for lb in side_labels[:6]]
 
-        # Fallback for pathological row clustering: preserve deterministic order.
-        if not side_cards and len(top_cards) > 8:
-            side_cards = top_cards[8:]
-            top_cards = top_cards[:8]
-
-        total = len(top_cards) + len(side_cards)
+        total = len(top8) + len(side6)
         prev = best_by_side.get(side_letter)
         if prev is None or total > prev[0]:
-            best_by_side[side_letter] = (total, top_cards, side_cards)
+            best_by_side[side_letter] = (total, top8, side6)
 
     parsed: Dict[str, PptSideCards] = {}
     for side in "ABCD":
         entry = best_by_side.get(side)
         if entry:
-            _, top_cards, side_cards = entry
+            _, top8, side6 = entry
         else:
-            top_cards, side_cards = [], []
-        parsed[side] = PptSideCards(side=side, top8=top_cards, side6=side_cards)
+            top8, side6 = [], []
+        parsed[side] = PptSideCards(side=side, top8=top8, side6=side6)
 
     return parsed
 
@@ -1027,238 +604,195 @@ def validate_ppt_side_cards(ppt_cards: Dict[str, PptSideCards]) -> List[str]:
     issues: List[str] = []
     for side in "ABCD":
         side_cards = ppt_cards.get(side, PptSideCards(side=side, top8=[], side6=[]))
-        cards = side_cards.top8 + side_cards.side6
-        if not cards:
+        if len(side_cards.top8) != 8 or len(side_cards.side6) != 6:
             issues.append(
-                f"SIDE {side}: no PPT cards extracted."
+                f"SIDE {side}: found top8={len(side_cards.top8)} and side6={len(side_cards.side6)} (expected 8 and 6)."
             )
-            continue
-        ids = [c.card_id for c in cards]
-        if len(ids) != len(set(ids)):
-            issues.append(f"SIDE {side}: duplicate PPT card IDs detected.")
-        if any(not c.image_bytes for c in cards):
-            issues.append(f"SIDE {side}: one or more cards are missing image bytes.")
     return issues
 
 
 @st.cache_data(show_spinner=False)
 def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
-    """Parse FULL PALLET holder band and return ordered per-side holders (A/B/C/D).
-
-    Full Pallet / Multi-Zone only.
-    Sides are assigned by block order left→right, where blocks are separated by
-    "MARKETING MESSAGE PANEL" divider columns.
-    """
+    """Parse POG workbook holder section and return ordered per-side holders."""
 
     try:
-        from openpyxl import load_workbook  # type: ignore
-        from openpyxl.utils.cell import coordinate_from_string, column_index_from_string  # type: ignore
+        xls = pd.read_excel(io.BytesIO(gift_bytes), sheet_name=None, header=None)
     except Exception as e:
-        raise ImportError("openpyxl is required for holder extraction") from e
+        raise ValueError(f"Unable to read Gift Card Holders workbook: {e}")
 
-    wb = load_workbook(io.BytesIO(gift_bytes), data_only=True)
-    sheet_name = next(
-        (n for n in wb.sheetnames if "FULL" in n.upper() and "PALLET" in n.upper()),
+    def find_header_row(df: pd.DataFrame, tokens: List[str], max_rows: int = 120) -> int:
+        for i in range(min(len(df), max_rows)):
+            row = df.iloc[i].astype(str).fillna("").str.upper().tolist()
+            if all(any(tok in c for c in row) for tok in tokens):
+                return i
+        return -1
+
+    def normalize_headers(raw_headers: List[object]) -> List[str]:
+        headers: List[str] = []
+        seen: Dict[str, int] = {}
+        for v in raw_headers:
+            base = _norm_header(v)
+            n = seen.get(base, 0) + 1
+            seen[base] = n
+            headers.append(base if n == 1 else f"{base}_{n}")
+        return headers
+
+    def pick_col(headers: List[str], tokens: List[str]) -> Optional[str]:
+        up = [h.upper() for h in headers]
+        for tok in tokens:
+            for i, h in enumerate(up):
+                if tok in h:
+                    return headers[i]
+        return None
+
+    def parse_side(value: object, current_side: str) -> str:
+        text = str(value or "").upper()
+        m = re.search(r"SIDE\s*([A-D])", text)
+        if m:
+            return m.group(1)
+        m = re.fullmatch(r"\s*([A-D])\s*", text)
+        if m:
+            return m.group(1)
+        return current_side
+
+    full_pallet_sheet = next(
+        (name for name in xls.keys() if "FULL" in name.upper() and "PALLET" in name.upper()),
         None,
     )
-    if sheet_name is None:
+    if full_pallet_sheet is None:
         raise ValueError("FULL PALLET sheet/table missing in workbook.")
 
-    ws = wb[sheet_name]
-
-    def cell_text(v: object) -> str:
-        return str(v or "").strip()
-
-    def is_mmp(v: object) -> bool:
-        t = cell_text(v).upper()
-        return "MARKETING" in t and "MESSAGE" in t and "PANEL" in t
-
-    def is_item_no(v: object) -> Optional[str]:
-        return _coerce_item_no(v)
-
-    max_scan_rows = min(ws.max_row, 220)
-    max_cols = ws.max_column
-
-    # Find the item#, qty, description rows (robust; no hardcoded row numbers).
-    best_item_row = -1
-    best_item_hits = 0
-    for r in range(1, max_scan_rows + 1):
-        hits = 0
-        for c in range(1, max_cols + 1):
-            if is_item_no(ws.cell(r, c).value):
-                hits += 1
-        if hits > best_item_hits and hits >= 4:
-            best_item_hits = hits
-            best_item_row = r
-
-    if best_item_row < 0:
-        raise ValueError("Unable to locate ITEM # row in FULL PALLET sheet.")
-
-    item_row = best_item_row
-
-    holder_cols = [c for c in range(1, max_cols + 1) if is_item_no(ws.cell(item_row, c).value)]
-    if not holder_cols:
-        return {s: [] for s in "ABCD"}
-
-    # Divider columns (MARKETING MESSAGE PANEL) – scan header band above item row.
-    divider_cols: List[int] = []
-    for r in range(1, min(item_row, 90) + 1):
-        for c in range(1, max_cols + 1):
-            if is_mmp(ws.cell(r, c).value):
-                divider_cols.append(c)
-    divider_cols = sorted(set(divider_cols))
-
-    # Qty row – prefer explicit 'QTY' label, else choose row with many small ints aligned to holder cols.
-    qty_row = -1
-    for r in range(max(1, item_row - 12), item_row):
-        row_vals = [cell_text(ws.cell(r, c).value).upper() for c in range(1, max_cols + 1)]
-        if any(v == "QTY" or v.startswith("QTY") for v in row_vals):
-            qty_row = r
-            break
-    if qty_row < 0:
-        best_r, best_hits = -1, 0
-        for r in range(max(1, item_row - 12), item_row):
-            hits = 0
-            for c in holder_cols:
-                v = _coerce_int(ws.cell(r, c).value)
-                if v is not None and 0 <= v <= 200:
-                    hits += 1
-            if hits > best_hits:
-                best_hits = hits
-                best_r = r
-        qty_row = best_r
-
-    # Description row – prefer explicit label, else choose first row below item row with many text cells.
-    desc_row = -1
-    for r in range(item_row, min(ws.max_row, item_row + 18) + 1):
-        row_vals = [cell_text(ws.cell(r, c).value).upper() for c in range(1, max_cols + 1)]
-        if any("DESCRIPTION" in v for v in row_vals):
-            desc_row = r
-            break
-    if desc_row < 0:
-        for r in range(item_row + 1, min(ws.max_row, item_row + 18) + 1):
-            hits = 0
-            for c in holder_cols:
-                t = cell_text(ws.cell(r, c).value)
-                if t and any(ch.isalpha() for ch in t):
-                    hits += 1
-            if hits >= 3:
-                desc_row = r
-                break
-
-    # Map embedded images by anchored column.
-    col_to_img: Dict[int, Tuple[bytes, str]] = {}
-    for img in getattr(ws, "_images", []) or []:
-        try:
-            col: Optional[int] = None
-            anch = getattr(img, "anchor", None)
-
-            if hasattr(anch, "_from") and hasattr(anch._from, "col"):
-                col = int(anch._from.col) + 1
-            elif isinstance(anch, str):
-                col_letters, _ = coordinate_from_string(anch)
-                col = column_index_from_string(col_letters)
-
-            if col is None:
-                continue
-
-            data = img._data()
-            if not data:
-                continue
-            ext = "png"
-            try:
-                ext = str(getattr(getattr(img, "_data", None), "ext", "png"))
-            except Exception:
-                pass
-
-            prev = col_to_img.get(col)
-            if prev is None or len(data) > len(prev[0]):
-                col_to_img[col] = (bytes(data), ext)
-        except Exception:
+    desc_map: Dict[str, str] = {}
+    for _, sheet_df in xls.items():
+        hdr = find_header_row(sheet_df, ["ITEM", "DESCRIPTION"])
+        if hdr < 0:
             continue
-
-    # Assign holder columns into blocks split by divider columns.
-    col_to_block: Dict[int, int] = {}
-    block = 0
-    div_i = 0
-    holder_cols_sorted = sorted(holder_cols)
-    prev_col = holder_cols_sorted[0]
-    col_to_block[prev_col] = block
-    for col in holder_cols_sorted[1:]:
-        while div_i < len(divider_cols) and divider_cols[div_i] <= prev_col:
-            div_i += 1
-        while div_i < len(divider_cols) and divider_cols[div_i] < col:
-            block += 1
-            div_i += 1
-        col_to_block[col] = block
-        prev_col = col
-
-    blocks: Dict[int, List[int]] = {}
-    for col in holder_cols_sorted:
-        blocks.setdefault(col_to_block[col], []).append(col)
-
-    side_letters = "ABCD"
-    holders: Dict[str, List[GiftHolder]] = {s: [] for s in side_letters}
-
-    overrides: Dict[str, str] = {"109107": "A"}
-
-    for bidx in sorted(blocks.keys()):
-        if bidx >= len(side_letters):
+        cols = normalize_headers(sheet_df.iloc[hdr].tolist())
+        data = sheet_df.iloc[hdr + 1 :].copy()
+        data.columns = cols
+        item_lookup_col = pick_col(cols, ["ITEM", "ITEM_#", "SKU"])
+        desc_lookup_col = pick_col(cols, ["DESCRIPTION", "DESC", "NAME"])
+        if not item_lookup_col or not desc_lookup_col:
             continue
-        side = side_letters[bidx]
-        for col in blocks[bidx]:
-            item_no = is_item_no(ws.cell(item_row, col).value)
+        for _, row in data.iterrows():
+            item_no = _coerce_item_no(row.get(item_lookup_col))
             if not item_no:
                 continue
+            desc = str(row.get(desc_lookup_col, "") or "").strip()
+            if desc:
+                desc_map[item_no] = desc
 
-            side_eff = overrides.get(item_no, side)
+    full_df_raw = xls[full_pallet_sheet].copy()
 
-            qty = _coerce_int(ws.cell(qty_row, col).value) if qty_row > 0 else None
-            name = cell_text(ws.cell(desc_row, col).value) if desc_row > 0 else ""
-            if not name:
-                name = "(missing description)"
+    item_row = -1
+    qty_row = -1
+    desc_row = -1
+    for i in range(len(full_df_raw)):
+        row_vals = [str(v or "").strip().upper() for v in full_df_raw.iloc[i].tolist()]
+        if item_row < 0 and any("ITEM #" in v or v == "ITEM" for v in row_vals):
+            numeric_items = sum(1 for v in row_vals if _coerce_item_no(v))
+            if numeric_items >= 4:
+                item_row = i
+        if item_row >= 0 and i <= item_row and qty_row < 0:
+            if any(v == "QTY" or v.startswith("QTY") for v in row_vals):
+                qty_row = i
+        if item_row >= 0 and i >= item_row and desc_row < 0:
+            if any("DESCRIPTION" in v for v in row_vals):
+                desc_row = i
+        if item_row >= 0 and qty_row >= 0 and desc_row >= 0:
+            break
 
-            img_bytes = None
-            img_ext = None
-            if col in col_to_img:
-                img_bytes, img_ext = col_to_img[col]
+    holders: Dict[str, List[GiftHolder]] = {s: [] for s in "ABCD"}
+    if item_row >= 0 and qty_row >= 0:
+        side_markers: List[Tuple[int, str]] = []
+        for r in range(max(0, item_row - 5), item_row + 1):
+            vals = [str(v or "").strip().upper() for v in full_df_raw.iloc[r].tolist()]
+            for cidx, txt in enumerate(vals):
+                m = re.search(r"SIDE\s*([A-D])", txt)
+                if m:
+                    side_markers.append((cidx, m.group(1)))
+        side_markers = sorted(side_markers, key=lambda t: t[0])
 
-            holders[side_eff].append(
-                GiftHolder(
-                    side=side_eff,
-                    item_no=item_no,
-                    name=name,
-                    qty=qty,
-                    image_bytes=img_bytes,
-                    image_ext=img_ext,
-                )
+        def side_for_col(cidx: int) -> str:
+            if not side_markers:
+                return "A"
+            chosen = side_markers[0][1]
+            for sc, ss in side_markers:
+                if cidx >= sc:
+                    chosen = ss
+                else:
+                    break
+            return chosen
+
+        seen_items: set = set()
+        ncols = full_df_raw.shape[1]
+        for cidx in range(ncols):
+            item_no = _coerce_item_no(full_df_raw.iat[item_row, cidx])
+            if not item_no:
+                continue
+            if (item_no, cidx) in seen_items:
+                continue
+            seen_items.add((item_no, cidx))
+            qty = _coerce_int(full_df_raw.iat[qty_row, cidx]) if qty_row >= 0 else None
+            raw_desc = (
+                str(full_df_raw.iat[desc_row, cidx]).strip()
+                if desc_row >= 0 and desc_row < len(full_df_raw)
+                else ""
+            )
+            name = desc_map.get(item_no) or raw_desc or "(missing description)"
+            side = side_for_col(cidx)
+            holders.setdefault(side, []).append(
+                GiftHolder(side=side, item_no=item_no, name=name, qty=qty)
             )
 
-    # If an override item lives in a later block (e.g., 109107), pull it into its override side.
-    # (Keeps the behaviour deterministic even when the sheet layout is slightly off.)
-    for col in holder_cols_sorted:
-        item_no = is_item_no(ws.cell(item_row, col).value)
-        if not item_no or item_no not in overrides:
-            continue
-        target_side = overrides[item_no]
-        already = {h.item_no for h in holders.get(target_side, [])}
-        if item_no in already:
-            continue
-        qty = _coerce_int(ws.cell(qty_row, col).value) if qty_row > 0 else None
-        name = cell_text(ws.cell(desc_row, col).value) if desc_row > 0 else ""
-        img_bytes = col_to_img.get(col, (None, None))[0]
-        img_ext = col_to_img.get(col, (None, None))[1]
-        holders[target_side].append(
-            GiftHolder(
-                side=target_side,
-                item_no=item_no,
-                name=name or "(missing description)",
-                qty=qty,
-                image_bytes=img_bytes,
-                image_ext=img_ext,
-            )
-        )
+    if any(holders.values()):
+        non_empty = [s for s in "ABCD" if holders.get(s)]
+        if non_empty == ["A"]:
+            base_list = holders["A"]
+            for s in "BCD":
+                holders[s] = [
+                    GiftHolder(side=s, item_no=h.item_no, name=h.name, qty=h.qty) for h in base_list
+                ]
+        return holders
 
+    header_row = find_header_row(full_df_raw, ["ITEM", "QTY"])
+    if header_row < 0:
+        raise ValueError("FULL PALLET holder table missing ITEM/QTY columns.")
+
+    headers = normalize_headers(full_df_raw.iloc[header_row].tolist())
+    full_df = full_df_raw.iloc[header_row + 1 :].copy()
+    full_df.columns = headers
+
+    item_col = pick_col(headers, ["ITEM", "ITEM_#", "SKU"])
+    qty_col = pick_col(headers, ["QTY", "QUANTITY"])
+    side_col = pick_col(headers, ["SIDE"])
+    if item_col is None or qty_col is None:
+        raise ValueError("FULL PALLET holder table missing ITEM/QTY columns.")
+
+    current_side = "A"
+    for _, row in full_df.iterrows():
+        side_source = row.get(side_col) if side_col else " "
+        current_side = parse_side(side_source, current_side)
+
+        item_no = _coerce_item_no(row.get(item_col))
+        if not item_no:
+            row_text = " ".join(str(v or "") for v in row.tolist())
+            current_side = parse_side(row_text, current_side)
+            continue
+
+        qty = _coerce_int(row.get(qty_col))
+        name = desc_map.get(item_no) or "(missing description)"
+        side = current_side if current_side in "ABCD" else "A"
+        holders.setdefault(side, []).append(GiftHolder(side=side, item_no=item_no, name=name, qty=qty))
+
+    if not any(holders.values()):
+        raise ValueError("No holder Item # rows found in FULL PALLET table.")
+
+    non_empty = [s for s in "ABCD" if holders.get(s)]
+    if non_empty == ["A"]:
+        base_list = holders["A"]
+        for s in "BCD":
+            holders[s] = [GiftHolder(side=s, item_no=h.item_no, name=h.name, qty=h.qty) for h in base_list]
     return holders
 
 
@@ -1467,91 +1001,77 @@ def _group_nearby(words: List[dict], x_tol: float, y_tol: float) -> List[List[di
 
 @st.cache_data(show_spinner=False)
 def extract_full_pallet_pages(labels_pdf_bytes: bytes) -> List[FullPalletPage]:
-    def _detect_side_letter(words: List[dict], pw: float, ph: float, fallback: str) -> str:
-        bottom = [
-            w for w in (words or [])
-            if str(w.get("text", "") or "").strip().upper() in {"A", "B", "C", "D"}
-            and float(w.get("top", 0) or 0) > ph * 0.72
-            and pw * 0.25 < float(w.get("x0", 0) or 0) < pw * 0.75
-        ]
-        if bottom:
-            best = max(
-                bottom,
-                key=lambda w: float(w.get("bottom", 0) or 0) - float(w.get("top", 0) or 0),
-            )
-            return str(best.get("text", "") or "").strip().upper()
-
-        joined = " ".join(str(w.get("text", "") or "") for w in (words or []))
-        m = re.search(r"\bSIDE\s*([A-D])\b", joined, re.IGNORECASE)
-        if m:
-            return m.group(1).upper()
-
-        # IMPORTANT: do NOT use "top-right single letter" fallback; it can match the header "… PKG D"
-        return fallback
-
-    side_map: Dict[str, FullPalletPage] = {}
-
+    pages: List[FullPalletPage] = []
     with pdfplumber.open(io.BytesIO(labels_pdf_bytes)) as pdf:
         for pidx, page in enumerate(pdf.pages):
-            pw, ph = float(page.width), float(page.height)
             words = page.extract_words(use_text_flow=True, keep_blank_chars=False) or []
+            five = [
+                w for w in words if re.fullmatch(r"\d{5}", str(w.get("text", "")))
+            ]
+            if not five:
+                continue
 
-            fallback = chr(ord("A") + min(pidx, 3))
-            side_letter = _detect_side_letter(words, pw, ph, fallback)
+            pw, ph = float(page.width), float(page.height)
 
-            five = [w for w in words if re.fullmatch(r"\d{5}", str(w.get("text", "")))]
+            # ── FIX B: exclude tokens in the gift-card-holder zone ───────────
+            # The top ~31 % of each labels page contains the "WM GIFTCARD IN NEW
+            # PKG" holder labels plus GCI packaging product codes (08470, 08478,
+            # 08481, 08705, 08706, …).  These are physical display fixtures — not
+            # the gift cards that belong in the main / bonus product grid.
+            # Filtering them out prevents them from becoming phantom grid cells.
             holder_zone_bottom = ph * 0.31
             five = [w for w in five if float(w.get("top", 0)) >= holder_zone_bottom]
+            if not five:
+                continue
+
+            xs = [(w["x0"] + w["x1"]) / 2 for w in five]
+            ys = [(w["top"] + w["bottom"]) / 2 for w in five]
+
+            # IMPORTANT: reduce over-splitting of columns
+            x_centers = cluster_positions(xs, tol=max(10, pw * 0.025))
+            y_centers = cluster_positions(ys, tol=max(7, ph * 0.012))
+            if len(x_centers) == 0 or len(y_centers) == 0:
+                continue
+
+            x_bounds = boundaries_from_centers(x_centers)
+            y_bounds = boundaries_from_centers(y_centers)
+            if len(x_bounds) < 2 or len(y_bounds) < 2:
+                continue
+
+            cell_map: Dict[Tuple[int, int], Tuple[float, dict]] = {}
+            for w, xc, yc in zip(five, xs, ys):
+                col = int(np.argmin(np.abs(x_centers - xc)))
+                row = int(np.argmin(np.abs(y_centers - yc)))
+                dist = abs(x_centers[col] - xc) + abs(y_centers[row] - yc)
+                key = (row, col)
+                if key not in cell_map or dist < cell_map[key][0]:
+                    cell_map[key] = (dist, w)
 
             cells: List[CellData] = []
-            xs: List[float] = []
-            ys: List[float] = []
+            for (row, col), (_, token_w) in sorted(cell_map.items()):
+                bbox = (
+                    float(x_bounds[col]),
+                    float(y_bounds[row]),
+                    float(x_bounds[col + 1]),
+                    float(y_bounds[row + 1]),
+                )
+                txt = (page.crop(bbox).extract_text() or "").strip()
+                parsed_name, parsed_last5, qty = parse_label_cell_text(txt)
+                token_last5 = str(token_w.get("text", "")).strip()
+                raw_last5 = token_last5 if re.fullmatch(r"\d{5}", token_last5) else parsed_last5
+                last5 = _to_last5(raw_last5)
 
-            if five:
-                xs = [(w["x0"] + w["x1"]) / 2 for w in five]
-                ys = [(w["top"] + w["bottom"]) / 2 for w in five]
-
-                x_centers = cluster_positions(xs, tol=max(10, pw * 0.025))
-                y_centers = cluster_positions(ys, tol=max(7, ph * 0.012))
-
-                if len(x_centers) and len(y_centers):
-                    x_bounds = boundaries_from_centers(x_centers)
-                    y_bounds = boundaries_from_centers(y_centers)
-
-                    if len(x_bounds) >= 2 and len(y_bounds) >= 2:
-                        cell_map: Dict[Tuple[int, int], Tuple[float, dict]] = {}
-                        for w, xc, yc in zip(five, xs, ys):
-                            col = int(np.argmin(np.abs(x_centers - xc)))
-                            row = int(np.argmin(np.abs(y_centers - yc)))
-                            dist = abs(x_centers[col] - xc) + abs(y_centers[row] - yc)
-                            key = (row, col)
-                            if key not in cell_map or dist < cell_map[key][0]:
-                                cell_map[key] = (dist, w)
-
-                        for (row, col), (_, token_w) in sorted(cell_map.items()):
-                            bbox = (
-                                float(x_bounds[col]),
-                                float(y_bounds[row]),
-                                float(x_bounds[col + 1]),
-                                float(y_bounds[row + 1]),
-                            )
-                            txt = (page.crop(bbox).extract_text() or "").strip()
-                            parsed_name, parsed_last5, qty = parse_label_cell_text(txt)
-                            token_last5 = str(token_w.get("text", "")).strip()
-                            raw_last5 = token_last5 if re.fullmatch(r"\d{5}", token_last5) else parsed_last5
-                            last5 = _to_last5(raw_last5)
-
-                            cells.append(
-                                CellData(
-                                    row=row,
-                                    col=col,
-                                    bbox=bbox,
-                                    name=parsed_name,
-                                    last5=last5 or "",
-                                    qty=qty,
-                                    upc12=None,
-                                )
-                            )
+                cells.append(
+                    CellData(
+                        row=row,
+                        col=col,
+                        bbox=bbox,
+                        name=parsed_name,
+                        last5=last5 or "",
+                        qty=qty,
+                        upc12=None,
+                    )
+                )
 
             annotations: List[AnnotationBox] = []
             wt = lambda w: str(w.get("text", "")).strip().upper()
@@ -1577,6 +1097,7 @@ def extract_full_pallet_pages(labels_pdf_bytes: bytes) -> List[FullPalletPage]:
                         bbox=(cx0_content, by0 - 22, cx1_content, by0 - 1),
                     )
                 )
+
                 sub_groups = _group_nearby(
                     [w for w in wm_grp if wt(w) in {"WM", "GIFTCAR", "GIFTCARD", "D", "IN", "NEW", "PKG"}],
                     x_tol=14,
@@ -1626,22 +1147,30 @@ def extract_full_pallet_pages(labels_pdf_bytes: bytes) -> List[FullPalletPage]:
                         )
                     )
 
-            fp = FullPalletPage(
-                page_index=pidx,
-                side_letter=side_letter,
-                cells=cells,
-                annotations=annotations,
+            pages.append(
+                FullPalletPage(
+                    page_index=pidx,
+                    side_letter=chr(ord("A") + min(pidx, 3)),
+                    cells=cells,
+                    annotations=annotations,
+                )
             )
+    return pages
 
-            prev = side_map.get(side_letter)
-            if prev is None or len(fp.cells) > len(prev.cells):
-                side_map[side_letter] = fp
-
-    return [side_map[s] for s in "ABCD" if s in side_map]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Card-image cropping helper
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+def image_from_bytes(img_bytes: Optional[bytes]) -> Optional[Image.Image]:
+    """Convert image bytes to PIL Image, or return None if bytes are None/empty."""
+    if not img_bytes:
+        return None
+    try:
+        return Image.open(io.BytesIO(img_bytes)).convert("RGBA")
+    except Exception:
+        return None
 
 
 def crop_image_cell(
@@ -1657,15 +1186,6 @@ def crop_image_cell(
     rect = fitz.Rect(x0 + w * inset, top + h * inset, x1 - w * inset, bottom - h * inset)
     pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=rect, alpha=False)
     return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-
-
-def image_from_bytes(img_bytes: Optional[bytes]) -> Optional[Image.Image]:
-    if not img_bytes:
-        return None
-    try:
-        return Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    except Exception:
-        return None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2321,20 +1841,18 @@ def render_full_pallet_pdf(
             # Bucket A: PPT Top Cards
             a_gap_y = 8.0
             top_card_h = max(30.0, min(86.0, bucket_a_h * 0.34))
-            top_cards = list(side_ppt.top8)
-            side_cards = list(side_ppt.side6)
-
-            top_slots = max(1, len(top_cards))
+            # Desired card width spans full content width (8 equal slots with gaps).
+            _desired_top_card_w = max(72.0, (content_w - 7 * 6.0) / 8)
             top_xs, top_card_w, _, top_right, top_overflow = _fit_x_layout(
-                cx0, cx1, top_slots, [1] * max(0, top_slots - 1), 72.0, 6.0
+                cx0, cx1, 8, [1] * 7, _desired_top_card_w, 6.0
             )
             adjusted_to_fit = adjusted_to_fit or top_overflow
             rightmost_used = max(rightmost_used, top_right)
 
             top_row_y = bucket_a_top - top_card_h
-            for i in range(top_slots):
+            for i in range(8):
                 x = top_xs[i]
-                card = top_cards[i] if i < len(top_cards) else None
+                card = side_ppt.top8[i] if i < len(side_ppt.top8) else None
                 c.setFillColorRGB(1, 1, 1)
                 c.setStrokeColorRGB(*FILLED_STROKE if card else EMPTY_STROKE)
                 c.setLineWidth(0.75 if card else 0.45)
@@ -2342,39 +1860,37 @@ def render_full_pallet_pdf(
                 if card:
                     _draw_card(
                         c, x, top_row_y, top_card_w, top_card_h,
-                        image_from_bytes(card.image_bytes), f"ID# {card.card_id}", card.title, ppt_cpp_global,
+                        None, f"ID# {card.card_id}", card.title, ppt_cpp_global,
                     )
 
-            side_cols = 3 if len(side_cards) >= 3 else max(1, len(side_cards))
-            side_rows = max(1, int(math.ceil(max(1, len(side_cards)) / side_cols)))
-            side_gap_x = 6.0
-            side_block_w = side_cols * top_card_w + max(0, side_cols - 1) * side_gap_x
+            # Side panel: 3 columns × 2 rows, right-aligned.
+            # Correct formula: block must be wide enough for 3 cards + 2 gaps.
+            _side_gap = 6.0
+            _side_cols = 3
+            side_block_w = _side_cols * top_card_w + (_side_cols - 1) * _side_gap
             sx0 = max(cx0, cx1 - side_block_w)
+            side_xs = [sx0 + i * (top_card_w + _side_gap) for i in range(_side_cols)]
             side_top = top_row_y - SECTION_BAR_GAP
             side_available_h = max(36.0, side_top - bucket_a_bottom)
-            side_xs = [sx0 + i * (top_card_w + side_gap_x) for i in range(side_cols)]
-            side_card_h = max(
-                20.0,
-                min(top_card_h, (side_available_h - max(0, side_rows - 1) * a_gap_y) / side_rows),
-            )
-
-            total_side_slots = side_rows * side_cols
-            for idx in range(total_side_slots):
-                row = idx // side_cols
-                col = idx % side_cols
+            side_card_h = max(20.0, min(top_card_h, (side_available_h - a_gap_y) / 2))
+            # 3 cols × 2 rows, row-major: indices 0-5
+            for row in range(2):
                 y = side_top - (row + 1) * side_card_h - row * a_gap_y
-                x = side_xs[col]
-                card = side_cards[idx] if idx < len(side_cards) else None
-                c.setFillColorRGB(1, 1, 1)
-                c.setStrokeColorRGB(*FILLED_STROKE if card else EMPTY_STROKE)
-                c.setLineWidth(0.75 if card else 0.45)
-                c.rect(x, y, top_card_w, side_card_h, stroke=1, fill=1)
-                if card:
-                    _draw_card(
-                        c, x, y, top_card_w, side_card_h,
-                        image_from_bytes(card.image_bytes), f"ID# {card.card_id}", card.title, ppt_cpp_global,
-                    )
-                rightmost_used = max(rightmost_used, x + top_card_w)
+                for col in range(_side_cols):
+                    idx = row * _side_cols + col
+                    x = side_xs[col]
+                    card = side_ppt.side6[idx] if idx < len(side_ppt.side6) else None
+                    c.setFillColorRGB(1, 1, 1)
+                    c.setStrokeColorRGB(*FILLED_STROKE if card else EMPTY_STROKE)
+                    c.setLineWidth(0.75 if card else 0.45)
+                    c.rect(x, y, top_card_w, side_card_h, stroke=1, fill=1)
+                    if card:
+                        _draw_card(
+                            c, x, y, top_card_w, side_card_h,
+                            image_from_bytes(card.image_bytes),
+                            f"ID# {card.card_id}", card.title, ppt_cpp_global,
+                        )
+                    rightmost_used = max(rightmost_used, x + top_card_w)
 
             if debug_overlay:
                 _draw_debug_box(c, cx0, bucket_a_bottom, content_w, bucket_a_top - bucket_a_bottom, "PPT")
@@ -2409,7 +1925,7 @@ def render_full_pallet_pdf(
                     if holder:
                         _draw_card(
                             c, x, y, holder_card_w, holder_card_h,
-                            image_from_bytes(holder.image_bytes), holder.item_no, holder.name, holder.qty,
+                            None, holder.item_no, holder.name, holder.qty,
                         )
 
             if debug_overlay:
