@@ -514,14 +514,9 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
                 continue
 
             img_containers.append({
-                "left": l,
-                "top": t,
-                "width": w,
-                "height": h,
-                "right": l + w,
-                "bottom": t + h,
                 "cx": l + w / 2,
                 "cy": t + h / 2,
+                "bottom": t + h,
                 "candidates": candidates,
             })
 
@@ -588,73 +583,23 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             [lb for lb in labels if lb["top"] >= TOP_THRESH],
             key=lambda d: (round(d["top"] / (slide_h * 0.12)), d["cx"]),
         )
-    
-
-        def _choose_container_blob(container: dict) -> Optional[bytes]:
-            candidates = container.get("candidates") or []
-            if not candidates:
-                return None
-
-            c_left = float(container["left"])
-            c_top = float(container["top"])
-            c_width = float(container["width"])
-            c_height = float(container["height"])
-            c_cx = float(container["cx"])
-            c_cy = float(container["cy"])
-            c_area = max(c_width * c_height, 1.0)
-
-            filtered = []
-            for cand in candidates:
-                area = float(cand.get("area", 0) or 0)
-                if area <= 0:
-                    continue
-
-                cx = float(cand.get("cx", c_cx))
-                cy = float(cand.get("cy", c_cy))
-                byte_size = int(cand.get("byte_size", 0) or 0)
-
-                area_ratio = area / c_area
-                dx = abs(cx - c_cx) / max(c_width, 1.0)
-                dy = abs(cy - c_cy) / max(c_height, 1.0)
-
-                filtered.append({
-                    "blob": cand["blob"],
-                    "area": area,
-                    "byte_size": byte_size,
-                    "area_ratio": area_ratio,
-                    "dx": dx,
-                    "dy": dy,
-                })
-
-            if not filtered:
-                return None
-
-            preferred = [
-                x for x in filtered
-                if 0.18 <= x["area_ratio"] <= 1.20 and x["dx"] <= 0.22 and x["dy"] <= 0.22
-            ]
-            pool = preferred or filtered
-
-            best = max(
-                pool,
-                key=lambda x: (
-                    -abs(x["area_ratio"] - 0.45),
-                    -x["area"],
-                    -x["byte_size"],
-                    -x["dx"],
-                    -x["dy"],
-                ),
-            )
-            return best["blob"]
-    
 
         def _make_card(lab: dict) -> PptCard:
-            container = label_to_img.get(lab["card_id"])
+            img_entry = label_to_img.get(lab["card_id"])
             img_bytes: Optional[bytes] = None
             img_ext: Optional[str] = None
-            if container:
-                raw = _choose_container_blob(container)
-                if raw:
+            if img_entry:
+                candidates = img_entry.get("candidates", [])
+                chosen: Optional[dict] = None
+
+                if candidates:
+                    chosen = min(
+                        candidates,
+                        key=lambda c: (abs(c["cx"] - lab["cx"]), abs(c["cy"] - lab["cy"]), -c["area"], -c["byte_size"]),
+                    )
+                # Normalise to PNG
+                if chosen:
+                    raw = chosen["blob"]
                     try:
                         from io import BytesIO as _BIO
                         im = Image.open(_BIO(raw)).convert("RGBA")
