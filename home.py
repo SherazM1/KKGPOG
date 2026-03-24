@@ -40,6 +40,8 @@ NAVY_RGB = (0.10, 0.16, 0.33)
 DISPLAY_STANDARD = "Standard Flat Display"
 DISPLAY_FULL_PALLET = "Full Pallet / Multi-Zone Display"
 
+IMAGE_ANCHOR_ROW_0BASED = 5
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Data classes
 # ──────────────────────────────────────────────────────────────────────────────
@@ -783,7 +785,7 @@ def _extract_top_holder_slots(
     Extract holder slots from the top FULL PALLET block:
     POCKET/PEG headers -> image -> qty/item/description below.
     """
-    header_row = item_row - 3
+    header_row = IMAGE_ANCHOR_ROW_0BASED
     if header_row < 1:
         return []
 
