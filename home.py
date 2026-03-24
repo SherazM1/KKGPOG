@@ -726,6 +726,119 @@ def _nearest_image_for_col(
     return best[1] if best else (None, None)
 
 
+def _image_for_col_span(
+    images_by_col: Dict[int, Tuple[bytes, str]],
+    start_col: int,
+    end_col: int,
+) -> Tuple[Optional[bytes], Optional[str]]:
+    in_span = [
+        (col, payload)
+        for col, payload in images_by_col.items()
+        if start_col <= int(col) <= end_col
+    ]
+    if in_span:
+        # Prefer the left-most image in the slot span; there should normally be one.
+        in_span.sort(key=lambda x: x[0])
+        return in_span[0][1]
+    center_col = (start_col + end_col) // 2
+    return _nearest_image_for_col(images_by_col, center_col, max_distance=2)
+
+
+def _first_nonempty_in_span(ws, row_idx: int, start_col: int, end_col: int) -> Optional[str]:
+    for c in range(start_col, end_col + 1):
+        val = ws.cell(row=row_idx, column=c + 1).value
+        if val is None:
+            continue
+        text = str(val).strip()
+        if text:
+            return text
+    return None
+
+
+def _first_int_in_span(ws, row_idx: int, start_col: int, end_col: int) -> Optional[int]:
+    for c in range(start_col, end_col + 1):
+        val = ws.cell(row=row_idx, column=c + 1).value
+        if val is None:
+            continue
+        text = str(val).strip()
+        if not text:
+            continue
+        digits = re.sub(r"[^\d]", "", text)
+        if digits:
+            try:
+                return int(digits)
+            except Exception:
+                pass
+    return None
+
+
+def _extract_top_holder_slots(
+    ws,
+    images_by_col: Dict[int, Tuple[bytes, str]],
+    qty_row: int,
+    item_row: int,
+    desc_row: int,
+) -> List[dict]:
+    """
+    Extract holder slots from the top FULL PALLET block:
+    POCKET/PEG headers -> image -> qty/item/description below.
+    """
+    header_row = item_row - 3
+    if header_row < 1:
+        return []
+
+    max_col = ws.max_column
+    slot_starts: List[Tuple[int, str]] = []
+
+    for cidx in range(max_col):
+        raw = ws.cell(row=header_row, column=cidx + 1).value
+        text = str(raw).strip() if raw is not None else ""
+        text_u = text.upper()
+        if text_u.startswith("POCKET ") or text_u.startswith("PEG "):
+            slot_starts.append((cidx, text))
+        elif "MARKETING MESSAGE PANEL" in text_u:
+            slot_starts.append((cidx, "__BREAK__"))
+
+    if not slot_starts:
+        return []
+
+    slots: List[dict] = []
+    real_headers = [(c, h) for c, h in slot_starts if h != "__BREAK__"]
+
+    for i, (start_col, header_text) in enumerate(real_headers):
+        next_boundaries = [
+            c for c, _ in slot_starts
+            if c > start_col
+        ]
+        end_col = (min(next_boundaries) - 1) if next_boundaries else (max_col - 1)
+        if end_col < start_col:
+            end_col = start_col
+
+        item_no = _first_nonempty_in_span(ws, item_row, start_col, end_col)
+        if not item_no:
+            continue
+
+        qty = _first_int_in_span(ws, qty_row, start_col, end_col)
+        name = _first_nonempty_in_span(ws, desc_row, start_col, end_col) or ""
+
+        img_bytes, img_ext = _image_for_col_span(images_by_col, start_col, end_col)
+
+        slots.append(
+            {
+                "header": header_text,
+                "start_col": start_col,
+                "end_col": end_col,
+                "item_no": re.sub(r"[^\d]", "", str(item_no)),
+                "qty": qty,
+                "name": name,
+                "image_bytes": img_bytes,
+                "image_ext": img_ext,
+            }
+        )
+
+    return slots
+
+
 @st.cache_data(show_spinner=False)
 def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
     """Parse POG workbook holder section and return ordered per-side holders."""
@@ -834,6 +947,14 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
         if item_row >= 0 and qty_row >= 0 and desc_row >= 0:
             break
 
+    top_slots = _extract_top_holder_slots(
+        full_pallet_ws,
+        images_by_col=images_by_col,
+        qty_row=qty_row,
+        item_row=item_row,
+        desc_row=desc_row,
+    )
+
     holders: Dict[str, List[GiftHolder]] = {s: [] for s in "ABCD"}
     if item_row >= 0 and qty_row >= 0:
         side_markers: List[Tuple[int, str]] = []
@@ -856,34 +977,27 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
                     break
             return chosen
 
-        seen_items: set = set()
-        ncols = full_df_raw.shape[1]
-        for cidx in range(ncols):
-            item_no = _coerce_item_no(full_df_raw.iat[item_row, cidx])
-            if not item_no:
-                continue
-            if (item_no, cidx) in seen_items:
-                continue
-            seen_items.add((item_no, cidx))
-            qty = _coerce_int(full_df_raw.iat[qty_row, cidx]) if qty_row >= 0 else None
-            raw_desc = (
-                str(full_df_raw.iat[desc_row, cidx]).strip()
-                if desc_row >= 0 and desc_row < len(full_df_raw)
-                else ""
-            )
-            name = desc_map.get(item_no) or raw_desc or "(missing description)"
-            side = side_for_col(cidx)
-            img_bytes, img_ext = _nearest_image_for_col(images_by_col, cidx, max_distance=3)
-            holders.setdefault(side, []).append(
-                GiftHolder(
-                    side=side,
-                    item_no=item_no,
-                    name=name,
-                    qty=qty,
-                    image_bytes=img_bytes,
-                    image_ext=img_ext,
+        if top_slots:
+            for slot in top_slots:
+                cidx = int(slot["start_col"])
+                side = side_for_col(cidx)
+                item_no = str(slot["item_no"]).strip()
+                if not item_no:
+                    continue
+                name = str(slot["name"] or "").strip()
+                qty = slot["qty"]
+                img_bytes = slot["image_bytes"]
+                img_ext = slot["image_ext"]
+                holders.setdefault(side, []).append(
+                    GiftHolder(
+                        side=side,
+                        item_no=item_no,
+                        name=name,
+                        qty=qty,
+                        image_bytes=img_bytes,
+                        image_ext=img_ext,
+                    )
                 )
-            )
 
     if any(holders.values()):
         non_empty = [s for s in "ABCD" if holders.get(s)]
