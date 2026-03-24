@@ -2222,14 +2222,37 @@ def render_full_pallet_pdf(
             if debug_overlay:
                 _draw_debug_box(c, cx0, bucket_b_bottom, content_w, bucket_b_top - bucket_b_bottom, "HOLDERS")
 
+            def _section_grid_policy(section_kind: str, n_rows: int, n_cols: int) -> Dict[str, float]:
+                if section_kind == "main":
+                    return {
+                        "desired_card_w": 82.0,
+                        "base_row_gutter": 10.0,
+                        "min_card_h": 40.0,
+                        "max_card_h": 96.0,
+                        "crop_zoom": 2.8,
+                        "crop_inset": 0.022,
+                    }
+
+                # bonus
+                return {
+                    "desired_card_w": 62.0,
+                    "base_row_gutter": 6.0,
+                    "min_card_h": 24.0,
+                    "max_card_h": 64.0,
+                    "crop_zoom": 2.4,
+                    "crop_inset": 0.018,
+                }
+
             def draw_product_grid(
                 sec_rows: List[int],
                 sec_top: float,
                 sec_bottom: float,
                 label: Optional[str],
                 unresolved_bucket: List[str],
+                section_kind: str,
             ) -> Tuple[int, int, bool]:
                 nonlocal rightmost_used, adjusted_to_fit, matched_cells, unmatched_cells
+
                 y_cursor = sec_top
                 if label is not None:
                     bar_y = y_cursor - SECTION_BAR_H
@@ -2245,11 +2268,22 @@ def render_full_pallet_pdf(
                 )
                 sec_col_rank = {c_: i for i, c_ in enumerate(sec_cols)}
                 n_rows = len(sec_rows_sorted)
-                row_gutter = 6.0
+                n_cols = len(sec_cols)
+
+                policy = _section_grid_policy(section_kind, n_rows, n_cols)
+                row_gutter = policy["base_row_gutter"]
                 available_h = max(24.0, y_cursor - sec_bottom)
-                card_h = max(12.0, (available_h - max(0, n_rows - 1) * row_gutter) / n_rows)
+
+                raw_card_h = (available_h - max(0, n_rows - 1) * row_gutter) / max(1, n_rows)
+                card_h = max(policy["min_card_h"], min(policy["max_card_h"], raw_card_h))
+
                 xs, sec_card_w, _, right, overflow = _fit_x_layout(
-                    cx0, cx1, len(sec_cols), sec_gap_units, 74.0, 6.0
+                    cx0,
+                    cx1,
+                    n_cols,
+                    sec_gap_units,
+                    policy["desired_card_w"],
+                    6.0,
                 )
                 adjusted_to_fit = adjusted_to_fit or overflow
                 rightmost_used = max(rightmost_used, right)
@@ -2264,7 +2298,7 @@ def render_full_pallet_pdf(
                 grid_top = y_cursor
                 for ri in range(n_rows):
                     y = grid_top - (ri + 1) * card_h - ri * row_gutter
-                    for ci in range(len(sec_cols)):
+                    for ci in range(n_cols):
                         x = xs[ci]
                         cell = occ.get((ri, ci))
                         if cell is None:
@@ -2282,15 +2316,21 @@ def render_full_pallet_pdf(
                         disp_name = (
                             match.display_name if match and match.display_name else cell.name
                         ).strip()
+
                         if upc12:
                             upc_str = upc12
                         else:
                             upc_str = f"LAST5 {last5_key}"
                             disp_name = f"UNRESOLVED {last5_key}"
                             unresolved_bucket.append(last5_key)
+
                         try:
                             img = crop_image_cell(
-                                images_doc, pdata.page_index, cell.bbox, zoom=2.6, inset=0.045
+                                images_doc,
+                                pdata.page_index,
+                                cell.bbox,
+                                zoom=policy["crop_zoom"],
+                                inset=policy["crop_inset"],
                             )
                         except Exception:
                             img = None
@@ -2308,17 +2348,18 @@ def render_full_pallet_pdf(
 
                 if debug_overlay:
                     _draw_debug_box(
-                        c, cx0, sec_bottom, content_w, sec_top - sec_bottom, label or "MAIN",
+                        c, cx0, sec_bottom, content_w, sec_top - sec_bottom, label or section_kind.upper(),
                     )
-                return len(sec_cols), n_rows, overflow
+
+                return n_cols, n_rows, overflow
 
             # Bucket C: main product grid (rows above BONUS bar in labels PDF)
             main_cols, main_rows_count, main_over = draw_product_grid(
-                above_bonus_rows, bucket_c_top, bucket_c_bottom, None, unresolved_main
+                above_bonus_rows, bucket_c_top, bucket_c_bottom, None, unresolved_main, "main"
             )
             # Bucket D: bonus product grid (rows below BONUS bar in labels PDF)
             bonus_cols, bonus_rows_count, bonus_over = draw_product_grid(
-                below_bonus_rows, bucket_d_top, bucket_d_bottom, "BONUS", unresolved_bonus
+                below_bonus_rows, bucket_d_top, bucket_d_bottom, "BONUS", unresolved_bonus, "bonus"
             )
             adjusted_to_fit = adjusted_to_fit or main_over or bonus_over
 
