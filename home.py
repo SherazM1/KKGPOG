@@ -92,6 +92,8 @@ class FullPalletPage:
 class PptCard:
     card_id: str
     title: str
+    image_bytes: Optional[bytes] = None
+    image_ext: Optional[str] = None
 
 
 @dataclass(frozen=True)
