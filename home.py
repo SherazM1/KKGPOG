@@ -2063,6 +2063,408 @@ def render_full_pallet_pdf(
 
         c = canvas.Canvas(buf, pagesize=(PAGE_W, BASE_PAGE_H))
 
+        def _wrap_text_lines(
+            text: str,
+            font: str,
+            size: float,
+            max_w: float,
+            max_lines: int,
+        ) -> List[str]:
+            words = [w for w in (text or "").strip().split() if w]
+            if not words:
+                return []
+
+            lines_out: List[str] = []
+            cur = words[0]
+
+            for word in words[1:]:
+                trial = f"{cur} {word}"
+                if pdfmetrics.stringWidth(trial, font, size) <= max_w:
+                    cur = trial
+                else:
+                    lines_out.append(cur)
+                    cur = word
+                    if len(lines_out) == max_lines - 1:
+                        break
+
+            if len(lines_out) < max_lines:
+                remaining_words = words[len(" ".join(lines_out).split()) :]
+                remaining = " ".join(remaining_words).strip()
+                if remaining:
+                    remaining = _ellipsis(remaining, font, size, max_w)
+                    lines_out.append(remaining)
+
+            return lines_out[:max_lines]
+
+        def _draw_non_ppt_card(
+            c: canvas.Canvas,
+            x: float,
+            y: float,
+            w: float,
+            h: float,
+            img: Optional[Image.Image],
+            upc12: str,
+            name: str,
+            cpp: Optional[int],
+        ) -> None:
+            pad = max(4.0, min(8.0, w * 0.05))
+            ix = x + pad
+            iy = y + pad
+            iw = max(8.0, w - 2 * pad)
+            ih = max(8.0, h - 2 * pad)
+
+            footer_h = max(14.0, min(18.0, ih * 0.16))
+            title_h = max(18.0, min(24.0, ih * 0.20))
+            image_h = max(12.0, ih - footer_h - title_h - 4.0)
+
+            image_y = iy + footer_h
+            title_y = image_y + image_h + 4.0
+
+            if img is not None and iw > 8 and image_h > 8:
+                sw, sh = img.size
+                r = min(iw / max(1, sw), image_h / max(1, sh))
+                dw, dh = sw * r, sh * r
+                c.drawImage(
+                    ImageReader(img),
+                    ix + (iw - dw) / 2,
+                    image_y + (image_h - dh) / 2,
+                    dw,
+                    dh,
+                    preserveAspectRatio=True,
+                    mask="auto",
+                )
+
+            title_font = 7.5 if w < 96 else 8.0
+            title_text = _fit_name_preserve_qualifiers((name or "").upper(), BODY_FONT, title_font, iw)
+            title_lines = _wrap_text_lines(title_text, BODY_FONT, title_font, iw, 2)
+
+            c.setFillColorRGB(0.10, 0.10, 0.10)
+            c.setFont(BODY_FONT, title_font)
+            if len(title_lines) == 1:
+                tw = pdfmetrics.stringWidth(title_lines[0], BODY_FONT, title_font)
+                c.drawString(ix + (iw - tw) / 2, title_y + (title_h - title_font) / 2 - 1, title_lines[0])
+            else:
+                line_gap = 1.5
+                total_text_h = title_font * 2 + line_gap
+                y1 = title_y + (title_h - total_text_h) / 2 + title_font + line_gap
+                y2 = y1 - title_font - line_gap
+                for yy, line in [(y1, title_lines[0]), (y2, title_lines[1])]:
+                    tw = pdfmetrics.stringWidth(line, BODY_FONT, title_font)
+                    c.drawString(ix + (iw - tw) / 2, yy, line)
+
+            footer_y = iy
+            upc_text = (upc12 or "").strip()
+            cpp_text = f"CPP: {cpp}" if cpp is not None else "CPP:"
+
+            upc_fs = 7.6 if w >= 96 else 7.1
+            cpp_fs = 7.4 if w >= 96 else 7.0
+
+            upc_text = _ellipsis(upc_text, BODY_BOLD_FONT, upc_fs, iw)
+            cpp_text = _ellipsis(cpp_text, BODY_BOLD_FONT, cpp_fs, iw)
+
+            c.setFillColorRGB(0.05, 0.05, 0.05)
+            c.setFont(BODY_BOLD_FONT, upc_fs)
+            upc_tw = pdfmetrics.stringWidth(upc_text, BODY_BOLD_FONT, upc_fs)
+            c.drawString(ix + (iw - upc_tw) / 2, footer_y + footer_h * 0.56, upc_text)
+
+            c.setFillColorRGB(0.15, 0.15, 0.15)
+            c.setFont(BODY_BOLD_FONT, cpp_fs)
+            cpp_tw = pdfmetrics.stringWidth(cpp_text, BODY_BOLD_FONT, cpp_fs)
+            c.drawString(ix + (iw - cpp_tw) / 2, footer_y + 1.5, cpp_text)
+
+        def _flow_policy(section_kind: str) -> Dict[str, float]:
+            if section_kind == "main":
+                return {
+                    "min_cols": 5.0,
+                    "max_cols": 8.0,
+                    "min_card_w": 78.0,
+                    "max_card_w": 112.0,
+                    "card_ratio": 1.02,
+                    "min_card_h": 88.0,
+                    "max_card_h": 122.0,
+                    "col_gap": 10.0,
+                    "row_gap": 10.0,
+                    "crop_zoom": 2.9,
+                    "crop_inset": 0.020,
+                }
+
+            return {
+                "min_cols": 3.0,
+                "max_cols": 5.0,
+                "min_card_w": 88.0,
+                "max_card_w": 124.0,
+                "card_ratio": 1.06,
+                "min_card_h": 94.0,
+                "max_card_h": 132.0,
+                "col_gap": 12.0,
+                "row_gap": 12.0,
+                "crop_zoom": 2.6,
+                "crop_inset": 0.018,
+            }
+
+        def _collect_section_items(
+            p: FullPalletPage,
+            sec_rows: List[int],
+            section_kind: str,
+            unresolved_bucket: List[str],
+            global_rows: List[int],
+            global_cols: List[int],
+            product_map: Dict[Tuple[int, int], Tuple[Optional[MatrixRow], CellData]],
+        ) -> Tuple[List[dict], int, int]:
+
+            if not sec_rows:
+                return []
+
+            row_set = set(sec_rows)
+            row_rank = {r: i for i, r in enumerate(global_rows)}
+            col_rank = {c_: i for i, c_ in enumerate(global_cols)}
+            policy = _flow_policy(section_kind)
+
+            sec_cells = [cell for cell in p.cells if cell.row in row_set]
+            sec_cells.sort(
+                key=lambda cell: (
+                    row_rank.get(cell.row, 10**6 + cell.row),
+                    col_rank.get(cell.col, 10**6 + cell.col),
+                    cell.row,
+                    cell.col,
+                )
+            )
+
+            items: List[dict] = []
+            matched = 0
+            unmatched = 0
+
+            for cell in sec_cells:
+                key = (cell.row, cell.col)
+                match, _cell = product_map.get(key, (None, cell))
+                last5_key = _to_last5(cell.last5)
+                upc12 = match.upc12 if match else None
+                cpp = match.cpp_qty if match else None
+                disp_name = (match.display_name if match and match.display_name else cell.name).strip()
+
+                if upc12:
+                    upc_str = upc12
+                else:
+                    upc_str = f"LAST5 {last5_key}"
+                    disp_name = f"UNRESOLVED {last5_key}"
+                    unresolved_bucket.append(last5_key)
+
+                try:
+                    img = crop_image_cell(
+                        images_doc,
+                        p.page_index,
+                        cell.bbox,
+                        zoom=policy["crop_zoom"],
+                        inset=policy["crop_inset"],
+                    )
+                except Exception:
+                    img = None
+
+                if match:
+                    matched += 1
+                else:
+                    unmatched += 1
+
+                items.append(
+                    {
+                        "cell": cell,
+                        "img": img,
+                        "upc": upc_str,
+                        "name": disp_name,
+                        "cpp": cpp,
+                    }
+                )
+
+            return items, matched, unmatched
+
+        def _section_layout_candidates(
+            item_count: int,
+            section_kind: str,
+            avail_w: float,
+            include_bar: bool,
+        ) -> List[dict]:
+            policy = _flow_policy(section_kind)
+
+            if item_count <= 0:
+                return [
+                    {
+                        "cols": 0,
+                        "rows": 0,
+                        "card_w": 0.0,
+                        "card_h": 0.0,
+                        "total_h": 0.0,
+                        "block_w": 0.0,
+                        "score": 0.0,
+                    }
+                ]
+
+            min_cols = int(policy["min_cols"])
+            max_cols = min(int(policy["max_cols"]), item_count)
+
+            if item_count < min_cols:
+                min_cols = item_count
+
+            candidates: List[dict] = []
+            for cols in range(min_cols, max_cols + 1):
+                raw_card_w = (avail_w - (cols - 1) * policy["col_gap"]) / cols
+                if raw_card_w < policy["min_card_w"]:
+                    continue
+
+                card_w = min(policy["max_card_w"], raw_card_w)
+                card_h = min(
+                    policy["max_card_h"],
+                    max(policy["min_card_h"], card_w * policy["card_ratio"]),
+                )
+                rows = int(math.ceil(item_count / cols))
+                block_w = cols * card_w + (cols - 1) * policy["col_gap"]
+                total_h = rows * card_h + max(0, rows - 1) * policy["row_gap"]
+                if include_bar:
+                    total_h += SECTION_BAR_H + SECTION_BAR_GAP
+
+                col_penalty = 2.0 * cols if section_kind == "main" else 4.0 * cols
+                score = (card_w * card_h) - col_penalty
+
+                candidates.append(
+                    {
+                        "cols": cols,
+                        "rows": rows,
+                        "card_w": card_w,
+                        "card_h": card_h,
+                        "total_h": total_h,
+                        "block_w": block_w,
+                        "score": score,
+                    }
+                )
+
+            if not candidates:
+                cols = max(1, min(item_count, max_cols))
+                card_w = max(60.0, (avail_w - max(0, cols - 1) * policy["col_gap"]) / cols)
+                rows = int(math.ceil(item_count / cols))
+                card_h = max(72.0, card_w * 0.92)
+                block_w = cols * card_w + max(0, cols - 1) * policy["col_gap"]
+                total_h = rows * card_h + max(0, rows - 1) * policy["row_gap"]
+                if include_bar:
+                    total_h += SECTION_BAR_H + SECTION_BAR_GAP
+
+                candidates.append(
+                    {
+                        "cols": cols,
+                        "rows": rows,
+                        "card_w": card_w,
+                        "card_h": card_h,
+                        "total_h": total_h,
+                        "block_w": block_w,
+                        "score": card_w * card_h,
+                    }
+                )
+
+            return candidates
+
+        def _choose_product_layout(
+            item_count: int,
+            section_kind: str,
+            avail_w: float,
+            include_bar: bool,
+        ) -> dict:
+            candidates = _section_layout_candidates(item_count, section_kind, avail_w, include_bar)
+            return max(candidates, key=lambda d: (d["score"], -d["cols"], -d["rows"]))
+
+        def _choose_product_layouts(
+            main_count: int,
+            bonus_count: int,
+            avail_w: float,
+            avail_h: float,
+        ) -> Tuple[dict, dict]:
+            main_candidates = _section_layout_candidates(main_count, "main", avail_w, include_bar=False)
+            bonus_candidates = _section_layout_candidates(bonus_count, "bonus", avail_w, include_bar=bonus_count > 0)
+
+            best_fit: Optional[Tuple[dict, dict, float]] = None
+            best_any: Optional[Tuple[dict, dict, float, float]] = None
+
+            for main_plan in main_candidates:
+                for bonus_plan in bonus_candidates:
+                    inter_gap = BUCKET_GAP if main_count > 0 and bonus_count > 0 else 0.0
+                    total_h = main_plan["total_h"] + inter_gap + bonus_plan["total_h"]
+                    overflow = max(0.0, total_h - avail_h)
+                    score = main_plan["score"] + bonus_plan["score"]
+
+                    if overflow <= 0.0:
+                        if best_fit is None or score > best_fit[2]:
+                            best_fit = (main_plan, bonus_plan, score)
+                    else:
+                        if best_any is None or overflow < best_any[2] or (
+                            abs(overflow - best_any[2]) < 0.001 and score > best_any[3]
+                        ):
+                            best_any = (main_plan, bonus_plan, overflow, score)
+
+            if best_fit is not None:
+                return best_fit[0], best_fit[1]
+            if best_any is not None:
+                return best_any[0], best_any[1]
+
+            return main_candidates[0], bonus_candidates[0]
+
+        def _draw_flow_section(
+            items: List[dict],
+            section_kind: str,
+            plan: dict,
+            top_y: float,
+            bottom_limit: float,
+            label: Optional[str],
+        ) -> Tuple[float, float, int, int, bool]:
+            nonlocal rightmost_used, adjusted_to_fit
+
+            if not items:
+                return top_y, top_y, 0, 0, False
+
+            policy = _flow_policy(section_kind)
+            y_cursor = top_y
+
+            if label:
+                bar_y = y_cursor - SECTION_BAR_H
+                _draw_section_bar(c, cx0, bar_y, content_w, SECTION_BAR_H, label)
+                y_cursor = bar_y - SECTION_BAR_GAP
+
+            cols = int(plan["cols"])
+            rows = int(plan["rows"])
+            card_w = float(plan["card_w"])
+            card_h = float(plan["card_h"])
+            col_gap = float(policy["col_gap"])
+            row_gap = float(policy["row_gap"])
+            block_w = float(plan["block_w"])
+            start_x = cx0 + max(0.0, (content_w - block_w) / 2.0)
+
+            bottom_y_used = y_cursor
+            for idx, item in enumerate(items):
+                ri = idx // cols
+                ci = idx % cols
+                x = start_x + ci * (card_w + col_gap)
+                y = y_cursor - (ri + 1) * card_h - ri * row_gap
+
+                c.setFillColorRGB(1, 1, 1)
+                c.setStrokeColorRGB(*FILLED_STROKE)
+                c.setLineWidth(0.75)
+                c.rect(x, y, card_w, card_h, stroke=1, fill=1)
+                _draw_non_ppt_card(
+                    c,
+                    x,
+                    y,
+                    card_w,
+                    card_h,
+                    item["img"],
+                    item["upc"],
+                    item["name"],
+                    item["cpp"],
+                )
+
+                rightmost_used = max(rightmost_used, x + card_w)
+                bottom_y_used = min(bottom_y_used, y)
+
+            overflow = bottom_y_used < bottom_limit - 0.001
+            adjusted_to_fit = adjusted_to_fit or overflow
+
+            return top_y, bottom_y_used, cols, rows, overflow
+
         for pdata in pages:
             cx0, cx1 = MARGIN, PAGE_W - MARGIN
             content_w = cx1 - cx0
@@ -2252,408 +2654,6 @@ def render_full_pallet_pdf(
                             holder.name,
                             holder.qty,
                         )
-
-            def _wrap_text_lines(
-                text: str,
-                font: str,
-                size: float,
-                max_w: float,
-                max_lines: int,
-            ) -> List[str]:
-                words = [w for w in (text or "").strip().split() if w]
-                if not words:
-                    return []
-
-                lines_out: List[str] = []
-                cur = words[0]
-
-                for word in words[1:]:
-                    trial = f"{cur} {word}"
-                    if pdfmetrics.stringWidth(trial, font, size) <= max_w:
-                        cur = trial
-                    else:
-                        lines_out.append(cur)
-                        cur = word
-                        if len(lines_out) == max_lines - 1:
-                            break
-
-                if len(lines_out) < max_lines:
-                    remaining_words = words[len(" ".join(lines_out).split()) :]
-                    remaining = " ".join(remaining_words).strip()
-                    if remaining:
-                        remaining = _ellipsis(remaining, font, size, max_w)
-                        lines_out.append(remaining)
-
-                return lines_out[:max_lines]
-
-            def _draw_non_ppt_card(
-                c: canvas.Canvas,
-                x: float,
-                y: float,
-                w: float,
-                h: float,
-                img: Optional[Image.Image],
-                upc12: str,
-                name: str,
-                cpp: Optional[int],
-            ) -> None:
-                pad = max(4.0, min(8.0, w * 0.05))
-                ix = x + pad
-                iy = y + pad
-                iw = max(8.0, w - 2 * pad)
-                ih = max(8.0, h - 2 * pad)
-
-                footer_h = max(14.0, min(18.0, ih * 0.16))
-                title_h = max(18.0, min(24.0, ih * 0.20))
-                image_h = max(12.0, ih - footer_h - title_h - 4.0)
-
-                image_y = iy + footer_h
-                title_y = image_y + image_h + 4.0
-
-                if img is not None and iw > 8 and image_h > 8:
-                    sw, sh = img.size
-                    r = min(iw / max(1, sw), image_h / max(1, sh))
-                    dw, dh = sw * r, sh * r
-                    c.drawImage(
-                        ImageReader(img),
-                        ix + (iw - dw) / 2,
-                        image_y + (image_h - dh) / 2,
-                        dw,
-                        dh,
-                        preserveAspectRatio=True,
-                        mask="auto",
-                    )
-
-                title_font = 7.5 if w < 96 else 8.0
-                title_text = _fit_name_preserve_qualifiers((name or "").upper(), BODY_FONT, title_font, iw)
-                title_lines = _wrap_text_lines(title_text, BODY_FONT, title_font, iw, 2)
-
-                c.setFillColorRGB(0.10, 0.10, 0.10)
-                c.setFont(BODY_FONT, title_font)
-                if len(title_lines) == 1:
-                    tw = pdfmetrics.stringWidth(title_lines[0], BODY_FONT, title_font)
-                    c.drawString(ix + (iw - tw) / 2, title_y + (title_h - title_font) / 2 - 1, title_lines[0])
-                else:
-                    line_gap = 1.5
-                    total_text_h = title_font * 2 + line_gap
-                    y1 = title_y + (title_h - total_text_h) / 2 + title_font + line_gap
-                    y2 = y1 - title_font - line_gap
-                    for yy, line in [(y1, title_lines[0]), (y2, title_lines[1])]:
-                        tw = pdfmetrics.stringWidth(line, BODY_FONT, title_font)
-                        c.drawString(ix + (iw - tw) / 2, yy, line)
-
-                footer_y = iy
-                upc_text = (upc12 or "").strip()
-                cpp_text = f"CPP: {cpp}" if cpp is not None else "CPP:"
-
-                upc_fs = 7.6 if w >= 96 else 7.1
-                cpp_fs = 7.4 if w >= 96 else 7.0
-
-                upc_text = _ellipsis(upc_text, BODY_BOLD_FONT, upc_fs, iw)
-                cpp_text = _ellipsis(cpp_text, BODY_BOLD_FONT, cpp_fs, iw)
-
-                c.setFillColorRGB(0.05, 0.05, 0.05)
-                c.setFont(BODY_BOLD_FONT, upc_fs)
-                upc_tw = pdfmetrics.stringWidth(upc_text, BODY_BOLD_FONT, upc_fs)
-                c.drawString(ix + (iw - upc_tw) / 2, footer_y + footer_h * 0.56, upc_text)
-
-                c.setFillColorRGB(0.15, 0.15, 0.15)
-                c.setFont(BODY_BOLD_FONT, cpp_fs)
-                cpp_tw = pdfmetrics.stringWidth(cpp_text, BODY_BOLD_FONT, cpp_fs)
-                c.drawString(ix + (iw - cpp_tw) / 2, footer_y + 1.5, cpp_text)
-
-            def _flow_policy(section_kind: str) -> Dict[str, float]:
-                if section_kind == "main":
-                    return {
-                        "min_cols": 5.0,
-                        "max_cols": 8.0,
-                        "min_card_w": 78.0,
-                        "max_card_w": 112.0,
-                        "card_ratio": 1.02,
-                        "min_card_h": 88.0,
-                        "max_card_h": 122.0,
-                        "col_gap": 10.0,
-                        "row_gap": 10.0,
-                        "crop_zoom": 2.9,
-                        "crop_inset": 0.020,
-                    }
-
-                return {
-                    "min_cols": 3.0,
-                    "max_cols": 5.0,
-                    "min_card_w": 88.0,
-                    "max_card_w": 124.0,
-                    "card_ratio": 1.06,
-                    "min_card_h": 94.0,
-                    "max_card_h": 132.0,
-                    "col_gap": 12.0,
-                    "row_gap": 12.0,
-                    "crop_zoom": 2.6,
-                    "crop_inset": 0.018,
-                }
-
-            def _collect_section_items(
-                p: FullPalletPage,
-                sec_rows: List[int],
-                section_kind: str,
-                unresolved_bucket: List[str],
-                global_rows: List[int],
-                global_cols: List[int],
-                product_map: Dict[Tuple[int, int], Tuple[Optional[MatrixRow], CellData]],
-            ) -> Tuple[List[dict], int, int]:
-
-                if not sec_rows:
-                    return []
-
-                row_set = set(sec_rows)
-                row_rank = {r: i for i, r in enumerate(global_rows)}
-                col_rank = {c_: i for i, c_ in enumerate(global_cols)}
-                policy = _flow_policy(section_kind)
-
-                sec_cells = [cell for cell in p.cells if cell.row in row_set]
-                sec_cells.sort(
-                    key=lambda cell: (
-                        row_rank.get(cell.row, 10**6 + cell.row),
-                        col_rank.get(cell.col, 10**6 + cell.col),
-                        cell.row,
-                        cell.col,
-                    )
-                )
-
-                items: List[dict] = []
-                matched = 0
-                unmatched = 0
-
-                for cell in sec_cells:
-                    key = (cell.row, cell.col)
-                    match, _cell = product_map.get(key, (None, cell))
-                    last5_key = _to_last5(cell.last5)
-                    upc12 = match.upc12 if match else None
-                    cpp = match.cpp_qty if match else None
-                    disp_name = (match.display_name if match and match.display_name else cell.name).strip()
-
-                    if upc12:
-                        upc_str = upc12
-                    else:
-                        upc_str = f"LAST5 {last5_key}"
-                        disp_name = f"UNRESOLVED {last5_key}"
-                        unresolved_bucket.append(last5_key)
-
-                    try:
-                        img = crop_image_cell(
-                            images_doc,
-                            p.page_index,
-                            cell.bbox,
-                            zoom=policy["crop_zoom"],
-                            inset=policy["crop_inset"],
-                        )
-                    except Exception:
-                        img = None
-
-                    if match:
-                        matched += 1
-                    else:
-                        unmatched += 1
-
-                    items.append(
-                        {
-                            "cell": cell,
-                            "img": img,
-                            "upc": upc_str,
-                            "name": disp_name,
-                            "cpp": cpp,
-                        }
-                    )
-
-                return items, matched, unmatched
-
-            def _choose_product_layout(
-                item_count: int,
-                section_kind: str,
-                avail_w: float,
-                include_bar: bool,
-            ) -> dict:
-                candidates = _section_layout_candidates(item_count, section_kind, avail_w, include_bar)
-                return max(candidates, key=lambda d: (d["score"], -d["cols"], -d["rows"]))
-
-            def _section_layout_candidates(
-                item_count: int,
-                section_kind: str,
-                avail_w: float,
-                include_bar: bool,
-            ) -> List[dict]:
-                policy = _flow_policy(section_kind)
-
-                if item_count <= 0:
-                    return [
-                        {
-                            "cols": 0,
-                            "rows": 0,
-                            "card_w": 0.0,
-                            "card_h": 0.0,
-                            "total_h": 0.0,
-                            "block_w": 0.0,
-                            "score": 0.0,
-                        }
-                    ]
-
-                min_cols = int(policy["min_cols"])
-                max_cols = min(int(policy["max_cols"]), item_count)
-
-                if item_count < min_cols:
-                    min_cols = item_count
-
-                candidates: List[dict] = []
-                for cols in range(min_cols, max_cols + 1):
-                    raw_card_w = (avail_w - (cols - 1) * policy["col_gap"]) / cols
-                    if raw_card_w < policy["min_card_w"]:
-                        continue
-
-                    card_w = min(policy["max_card_w"], raw_card_w)
-                    card_h = min(
-                        policy["max_card_h"],
-                        max(policy["min_card_h"], card_w * policy["card_ratio"]),
-                    )
-                    rows = int(math.ceil(item_count / cols))
-                    block_w = cols * card_w + (cols - 1) * policy["col_gap"]
-                    total_h = rows * card_h + max(0, rows - 1) * policy["row_gap"]
-                    if include_bar:
-                        total_h += SECTION_BAR_H + SECTION_BAR_GAP
-
-                    col_penalty = 2.0 * cols if section_kind == "main" else 4.0 * cols
-                    score = (card_w * card_h) - col_penalty
-
-                    candidates.append(
-                        {
-                            "cols": cols,
-                            "rows": rows,
-                            "card_w": card_w,
-                            "card_h": card_h,
-                            "total_h": total_h,
-                            "block_w": block_w,
-                            "score": score,
-                        }
-                    )
-
-                if not candidates:
-                    cols = max(1, min(item_count, max_cols))
-                    card_w = max(60.0, (avail_w - max(0, cols - 1) * policy["col_gap"]) / cols)
-                    rows = int(math.ceil(item_count / cols))
-                    card_h = max(72.0, card_w * 0.92)
-                    block_w = cols * card_w + max(0, cols - 1) * policy["col_gap"]
-                    total_h = rows * card_h + max(0, rows - 1) * policy["row_gap"]
-                    if include_bar:
-                        total_h += SECTION_BAR_H + SECTION_BAR_GAP
-
-                    candidates.append(
-                        {
-                            "cols": cols,
-                            "rows": rows,
-                            "card_w": card_w,
-                            "card_h": card_h,
-                            "total_h": total_h,
-                            "block_w": block_w,
-                            "score": card_w * card_h,
-                        }
-                    )
-
-                return candidates
-
-            def _choose_product_layouts(
-                main_count: int,
-                bonus_count: int,
-                avail_w: float,
-                avail_h: float,
-            ) -> Tuple[dict, dict]:
-                main_candidates = _section_layout_candidates(main_count, "main", avail_w, include_bar=False)
-                bonus_candidates = _section_layout_candidates(bonus_count, "bonus", avail_w, include_bar=bonus_count > 0)
-
-                best_fit: Optional[Tuple[dict, dict, float]] = None
-                best_any: Optional[Tuple[dict, dict, float, float]] = None
-
-                for main_plan in main_candidates:
-                    for bonus_plan in bonus_candidates:
-                        inter_gap = BUCKET_GAP if main_count > 0 and bonus_count > 0 else 0.0
-                        total_h = main_plan["total_h"] + inter_gap + bonus_plan["total_h"]
-                        overflow = max(0.0, total_h - avail_h)
-                        score = main_plan["score"] + bonus_plan["score"]
-
-                        if overflow <= 0.0:
-                            if best_fit is None or score > best_fit[2]:
-                                best_fit = (main_plan, bonus_plan, score)
-                        else:
-                            if best_any is None or overflow < best_any[2] or (
-                                abs(overflow - best_any[2]) < 0.001 and score > best_any[3]
-                            ):
-                                best_any = (main_plan, bonus_plan, overflow, score)
-
-                if best_fit is not None:
-                    return best_fit[0], best_fit[1]
-                if best_any is not None:
-                    return best_any[0], best_any[1]
-
-                return main_candidates[0], bonus_candidates[0]
-
-            def _draw_flow_section(
-                items: List[dict],
-                section_kind: str,
-                plan: dict,
-                top_y: float,
-                bottom_limit: float,
-                label: Optional[str],
-            ) -> Tuple[float, float, int, int, bool]:
-                nonlocal rightmost_used, adjusted_to_fit
-
-                if not items:
-                    return top_y, top_y, 0, 0, False
-
-                policy = _flow_policy(section_kind)
-                y_cursor = top_y
-
-                if label:
-                    bar_y = y_cursor - SECTION_BAR_H
-                    _draw_section_bar(c, cx0, bar_y, content_w, SECTION_BAR_H, label)
-                    y_cursor = bar_y - SECTION_BAR_GAP
-
-                cols = int(plan["cols"])
-                rows = int(plan["rows"])
-                card_w = float(plan["card_w"])
-                card_h = float(plan["card_h"])
-                col_gap = float(policy["col_gap"])
-                row_gap = float(policy["row_gap"])
-                block_w = float(plan["block_w"])
-                start_x = cx0 + max(0.0, (content_w - block_w) / 2.0)
-
-                bottom_y_used = y_cursor
-                for idx, item in enumerate(items):
-                    ri = idx // cols
-                    ci = idx % cols
-                    x = start_x + ci * (card_w + col_gap)
-                    y = y_cursor - (ri + 1) * card_h - ri * row_gap
-
-                    c.setFillColorRGB(1, 1, 1)
-                    c.setStrokeColorRGB(*FILLED_STROKE)
-                    c.setLineWidth(0.75)
-                    c.rect(x, y, card_w, card_h, stroke=1, fill=1)
-                    _draw_non_ppt_card(
-                        c,
-                        x,
-                        y,
-                        card_w,
-                        card_h,
-                        item["img"],
-                        item["upc"],
-                        item["name"],
-                        item["cpp"],
-                    )
-
-                    rightmost_used = max(rightmost_used, x + card_w)
-                    bottom_y_used = min(bottom_y_used, y)
-
-                overflow = bottom_y_used < bottom_limit - 0.001
-                adjusted_to_fit = adjusted_to_fit or overflow
-
-                return top_y, bottom_y_used, cols, rows, overflow
 
             if debug_overlay:
                 _draw_debug_box(c, cx0, bucket_b_bottom, content_w, bucket_b_top - bucket_b_bottom, "HOLDERS")
