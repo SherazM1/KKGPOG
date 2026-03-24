@@ -432,25 +432,51 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
     id_re = re.compile(r"\bID\s*#?\s*[:\-]?\s*(\d{1,8})\b", re.IGNORECASE)
     side_re = re.compile(r"\bSIDE\s*([A-D])\b", re.IGNORECASE)
 
-    def _extract_card_blob(sh) -> Optional[bytes]:
+    def _extract_card_pictures(sh) -> List[dict]:
         """Return the largest non-watermark image blob from a shape or group."""
-        blobs: List[bytes] = []
+        pics: List[dict] = []
 
         def _collect(shapes) -> None:
             for s in shapes:
-                if getattr(s, "shape_type", None) == MSO_SHAPE_TYPE.PICTURE:
+                st = getattr(s, "shape_type", None)
+                if st == MSO_SHAPE_TYPE.PICTURE:
                     b = bytes(s.image.blob)
-                    if len(b) != WATERMARK_BLOB_SIZE:
-                        blobs.append(b)
-                elif getattr(s, "shape_type", None) == MSO_SHAPE_TYPE.GROUP:
+                    if len(b) == WATERMARK_BLOB_SIZE:
+                        continue
+                    l = float(getattr(s, "left", 0) or 0)
+                    t = float(getattr(s, "top", 0) or 0)
+                    w = float(getattr(s, "width", 0) or 0)
+                    h = float(getattr(s, "height", 0) or 0)
+                    pics.append({
+                        "blob": b,
+                        "cx": l + w / 2,
+                        "cy": t + h / 2,
+                        "area": w * h,
+                        "byte_size": len(b)
+                    })
+
+                elif st == MSO_SHAPE_TYPE.GROUP:
                     _collect(s.shapes)
 
-        if getattr(sh, "shape_type", None) == MSO_SHAPE_TYPE.PICTURE:
+        st = getattr(sh, "shape_type", None)
+        if st == MSO_SHAPE_TYPE.PICTURE:
             b = bytes(sh.image.blob)
-            return b if len(b) != WATERMARK_BLOB_SIZE else None
-        elif getattr(sh, "shape_type", None) == MSO_SHAPE_TYPE.GROUP:
+            if len(b) != WATERMARK_BLOB_SIZE:
+                l = float(getattr(sh, "left", 0) or 0)
+                t = float(getattr(sh, "top", 0) or 0)
+                w = float(getattr(sh, "width", 0) or 0)
+                h = float(getattr(sh, "height", 0) or 0)
+                pics.append({
+                    "blob": b,
+                    "cx": l + w / 2,
+                    "cy": t + h / 2,
+                    "area": w * h,
+                    "byte_size": len(b),
+                })
+        elif st == MSO_SHAPE_TYPE.GROUP:
             _collect(sh.shapes)
-        return max(blobs, key=len) if blobs else None
+
+        return pics
 
     best_by_side: Dict[str, Tuple[int, List[PptCard], List[PptCard]]] = {}
 
@@ -477,12 +503,12 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             if stype == MSO_SHAPE_TYPE.GROUP:
                 if w > slide_w * 0.80:
                     continue  # skip full-slide background frame
-                blob = _extract_card_blob(sh)
-                if not blob:
+                candidates = _extract_card_pictures(sh)
+                if not candidates:
                     continue
             elif stype == MSO_SHAPE_TYPE.PICTURE:
-                blob = bytes(sh.image.blob)
-                if len(blob) == WATERMARK_BLOB_SIZE:
+                candidates = _extract_card_pictures(sh)
+                if not candidates:
                     continue
             else:
                 continue
@@ -491,7 +517,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
                 "cx": l + w / 2,
                 "cy": t + h / 2,
                 "bottom": t + h,
-                "blob": blob,
+                "candidates": candidates,
             })
 
         # ── Collect labels ──────────────────────────────────────────────────
@@ -563,18 +589,28 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             img_bytes: Optional[bytes] = None
             img_ext: Optional[str] = None
             if img_entry:
-                raw = img_entry["blob"]
+                candidates = img_entry.get("candidates", [])
+                chosen: Optional[dict] = None
+
+                if candidates:
+                    chosen = min(
+                        candidates,
+                        key=lambda c: (abs(c["cx"] - lab["cx"]), abs(c["cy"] - lab["cy"]), -c["area"], -c["byte_size"]),
+                    )
                 # Normalise to PNG
-                try:
-                    from io import BytesIO as _BIO
-                    im = Image.open(_BIO(raw)).convert("RGBA")
-                    out = _BIO()
-                    im.save(out, format="PNG")
-                    img_bytes = out.getvalue()
-                    img_ext = "png"
-                except Exception:
-                    img_bytes = raw
-                    img_ext = "png"
+                if chosen:
+                    raw = chosen["blob"]
+                    try:
+                        from io import BytesIO as _BIO
+                        im = Image.open(_BIO(raw)).convert("RGBA")
+                        out = _BIO()
+                        im.save(out, format="PNG")
+                        img_bytes = out.getvalue()
+                        img_ext = "png"
+                    except Exception:
+                        img_bytes = raw
+                        img_ext = "png"
+
             return PptCard(
                 card_id=lab["card_id"],
                 title=lab["title"],
@@ -1862,7 +1898,8 @@ def render_full_pallet_pdf(
                 if card:
                     _draw_card(
                         c, x, top_row_y, top_card_w, top_card_h,
-                        None, f"ID# {card.card_id}", card.title, ppt_cpp_global,
+                        image_from_bytes(card.image_bytes),
+                        f"ID# {card.card_id}", card.title, ppt_cpp_global,
                     )
 
             # Side panel: 3 columns × 2 rows, right-aligned.
