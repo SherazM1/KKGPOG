@@ -405,39 +405,29 @@ def _coerce_item_no(v: object) -> Optional[str]:
 @st.cache_data(show_spinner=False)
 def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
     """
-    Full Pallet / Multi-Zone: Robust PPT top/side card extraction.
+    Robust PPT top/side card extraction for Full Pallet mode.
 
-    Extracts per SIDE slide:
-      - card_id from "ID #nn"
-      - title as lines above the ID line in the same textbox
-      - image as the matched image primitive directly (Option A)
+    Per SIDE slide, extracts:
+      - ID from "ID #nn"
+      - Name from lines above the ID line in the same textbox
+      - Full card image (composited from all image layers in the matched tile)
 
-    Robustness:
-      - Supports nested groups
-      - Supports picture shapes and picture-fill shapes (blipFill)
-      - Does not assume grouping consistency
-      - Option A: matches ID-label textboxes directly to image primitives (NO global clustering into tiles)
-      - Orders tiles in visual reading order (row clustering then left->right)
-
-    Output:
-      Dict[side_letter] = PptSideCards(side, top8, side6)
-
-    Notes:
-      - Assumes (per your constraint) images and text never overlap: prim.bottom <= label.top (+tol)
-      - If matching fails, raises ValueError with an actionable message.
+    Matching is geometry-driven and deterministic (row-major by tile position).
+    It supports grouped shapes, picture fills, and multi-layer card artwork.
+    If a reliable 1:1 image/text match cannot be found, it raises ValueError
+    instead of silently pairing the wrong card.
     """
     import io
-    import re
-    import math
     import hashlib
+    import re
     import statistics
+    from collections import Counter
     from io import BytesIO
     from typing import Any, Dict, List, Optional, Tuple
 
     from PIL import Image
     from pptx import Presentation  # type: ignore
     from pptx.enum.shapes import MSO_SHAPE_TYPE  # type: ignore
-    from pptx.oxml.ns import qn  # type: ignore
 
     # --- regex ---
     id_re = re.compile(r"\bID\s*#?\s*[:\-]?\s*(\d{1,8})\b", re.IGNORECASE)
@@ -451,11 +441,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
     slide_w = float(prs.slide_width)
     slide_h = float(prs.slide_height)
     slide_area = slide_w * slide_h
-
-    # Namespaces for relationship lookup (NOT for BaseOxmlElement.xpath kwargs)
-    A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
     R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-    NS = {"a": A_NS, "r": R_NS}
 
     # ----------------------------
     # helpers: geometry
@@ -586,7 +572,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
         return None
 
     # ----------------------------
-    # helpers: cluster images into "tiles"  (kept for later, unused in Option A)
+    # helpers: cluster image primitives into visual tiles
     # ----------------------------
     class DSU:
         def __init__(self, n: int):
@@ -610,9 +596,6 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
                 self.r[ra] += 1
 
     def _build_image_tiles(primitives: List[dict]) -> List[dict]:
-        """
-        Unused in Option A (kept for reference).
-        """
         if not primitives:
             return []
 
@@ -667,8 +650,9 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
                 }
             )
 
-        tiles = [t for t in tiles if 0 < t["area"] <= slide_area * 0.40]
+        tiles = [t for t in tiles if 0 < t["area"] <= slide_area * 0.50]
         tiles = [t for t in tiles if t["area"] >= slide_area * 0.001]
+        tiles.sort(key=lambda t: (t["top"], t["cx"], -t["area"]))
 
         return tiles
 
@@ -707,6 +691,123 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
         canvas.save(out, format="PNG")
         return out.getvalue()
 
+    def _primitive_tiles(primitives: List[dict]) -> List[dict]:
+        out: List[dict] = []
+        for p in primitives:
+            x, y, w, h = p["bbox"]
+            out.append(
+                {
+                    "bbox": p["bbox"],
+                    "x0": p["x0"],
+                    "x1": p["x1"],
+                    "top": p["top"],
+                    "bottom": p["bottom"],
+                    "cx": p["cx"],
+                    "cy": p["cy"],
+                    "h": p["h"],
+                    "layers": [p],
+                    "area": w * h,
+                }
+            )
+        out.sort(key=lambda t: (t["top"], t["cx"], -t["area"]))
+        return out
+
+    def _normalize_png(img_bytes: bytes, img_ext: str) -> Tuple[bytes, str]:
+        if str(img_ext).lower() == "png":
+            return img_bytes, "png"
+        try:
+            im = Image.open(BytesIO(img_bytes)).convert("RGBA")
+            out = BytesIO()
+            im.save(out, format="PNG")
+            return out.getvalue(), "png"
+        except Exception:
+            return img_bytes, img_ext
+
+    def _tile_image(tile: dict) -> Tuple[bytes, str]:
+        layers = tile.get("layers") or []
+        if len(layers) == 1:
+            blob = bytes(layers[0]["blob"])
+            ext = str(layers[0].get("ext") or "png")
+            return _normalize_png(blob, ext)
+        return _composite_tile_png(tile), "png"
+
+    def _match_labels_to_tiles(
+        labels: List[dict], tiles: List[dict], cfg: Dict[str, float]
+    ) -> Tuple[Optional[List[int]], List[List[Tuple[float, int]]], Optional[float]]:
+        if not labels:
+            return [], [], 0.0
+        if not tiles:
+            return None, [[] for _ in labels], None
+
+        cands: List[List[Tuple[float, int]]] = []
+        score_map: List[Dict[int, float]] = []
+        for lab in labels:
+            lab_w = max(1.0, float(lab["x1"] - lab["x0"]))
+            lab_h = max(1.0, float(lab["bottom"] - lab["top"]))
+            max_dx = max(lab_w * float(cfg["cx_mult"]), slide_w * float(cfg["dx_frac"]))
+            row_radius = max(lab_h * 1.5, slide_h * float(cfg["row_frac"]))
+
+            cur: List[Tuple[float, int]] = []
+            cur_score: Dict[int, float] = {}
+            for tidx, t in enumerate(tiles):
+                x_ov = _x_overlap_ratio(lab["x0"], lab["x1"], t["x0"], t["x1"])
+                dx = abs(lab["cx"] - t["cx"])
+                if x_ov < float(cfg["xmin"]) and dx > max_dx:
+                    continue
+                if t["top"] > lab["top"] + row_radius:
+                    continue
+                if bool(cfg["require_above"]) and t["bottom"] > lab["top"] + slide_h * float(cfg["tol_frac"]):
+                    continue
+
+                dy_up = max(0.0, lab["top"] - t["bottom"])
+                dy_down = max(0.0, t["bottom"] - lab["top"])
+                score = (
+                    dy_up
+                    + float(cfg["down_w"]) * dy_down
+                    + float(cfg["dx_w"]) * dx
+                    + float(cfg["size_w"]) * abs(t["h"] - lab_h)
+                    - float(cfg["xov_bonus"]) * x_ov * slide_w
+                )
+                cur.append((score, tidx))
+                cur_score[tidx] = score
+
+            cur.sort(key=lambda x: (x[0], x[1]))
+            cands.append(cur)
+            score_map.append(cur_score)
+
+        if any(len(c) == 0 for c in cands):
+            return None, cands, None
+
+        match_tile_to_lab = [-1] * len(tiles)
+
+        def _dfs(lab_idx: int, seen: List[bool]) -> bool:
+            for _, tile_idx in cands[lab_idx]:
+                if seen[tile_idx]:
+                    continue
+                seen[tile_idx] = True
+                prev = match_tile_to_lab[tile_idx]
+                if prev == -1 or _dfs(prev, seen):
+                    match_tile_to_lab[tile_idx] = lab_idx
+                    return True
+            return False
+
+        order = sorted(range(len(labels)), key=lambda i: (len(cands[i]), labels[i]["top"], labels[i]["cx"]))
+        for lab_idx in order:
+            if not _dfs(lab_idx, [False] * len(tiles)):
+                return None, cands, None
+
+        lab_to_tile = [-1] * len(labels)
+        for tile_idx, lab_idx in enumerate(match_tile_to_lab):
+            if lab_idx != -1:
+                lab_to_tile[lab_idx] = tile_idx
+        if any(i < 0 for i in lab_to_tile):
+            return None, cands, None
+
+        total_score = 0.0
+        for i, tile_idx in enumerate(lab_to_tile):
+            total_score += score_map[i].get(tile_idx, 1e12)
+        return lab_to_tile, cands, total_score
+
     # ----------------------------
     # main loop: per slide
     # ----------------------------
@@ -727,6 +828,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
 
         # --- labels: ID-anchored text boxes ---
         labels: List[dict] = []
+        label_keys: set = set()
         for sh in _iter_shapes_recursive(slide.shapes):
             if not getattr(sh, "has_text_frame", False):
                 continue
@@ -736,6 +838,10 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
                 continue
             card_id, title = parsed
             x, y, w, h = _bbox(sh)
+            key = (card_id, round(x), round(y), round(w), round(h))
+            if key in label_keys:
+                continue
+            label_keys.add(key)
             labels.append(
                 {
                     "card_id": str(card_id),
@@ -752,8 +858,16 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             # not a SIDE slide with cards
             continue
 
+        id_counts = Counter(l["card_id"] for l in labels)
+        dup_ids = sorted([card_id for card_id, n in id_counts.items() if n > 1])
+        if dup_ids:
+            raise ValueError(
+                f"PPT side {side_letter}: duplicate ID labels detected ({', '.join(dup_ids[:8])})"
+            )
+
         # --- image primitives (pictures and picture fills) ---
         primitives: List[dict] = []
+        prim_keys: set = set()
         z = 0
         recursive_shapes = _iter_shapes_recursive(slide.shapes)
         for sh in recursive_shapes:
@@ -772,6 +886,11 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             # drop huge backgrounds + tiny icons early
             if area > slide_area * 0.55 or area < slide_area * 0.0004:
                 continue
+            blob_sig = hashlib.sha1(blob).hexdigest()[:16]
+            pkey = (round(x), round(y), round(w), round(h), blob_sig)
+            if pkey in prim_keys:
+                continue
+            prim_keys.add(pkey)
 
             primitives.append(
                 {
@@ -796,205 +915,77 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
                 f"(scanned {len(recursive_shapes)} shapes recursively)"
             )
 
-        # --- Option A: direct label -> primitive matching (NO clustering into tiles) ---
+        # --- deterministic label -> tile matching ---
         # Deterministic label order (top -> bottom, then left -> right)
         labels.sort(key=lambda d: (d["top"], d["cx"]))
 
-        def _build_candidates(cfg: Dict[str, float]) -> List[List[Tuple[float, int]]]:
-            out: List[List[Tuple[float, int]]] = []
-            for lab in labels:
-                lab_w = max(1.0, float(lab["x1"] - lab["x0"]))
-                lab_h = max(1.0, float(lab["bottom"] - lab["top"]))
-                row_radius = max(lab_h * 1.8, slide_h * float(cfg["row_frac"]))
-                max_dx = max(lab_w * float(cfg["cx_mult"]), slide_w * float(cfg["dx_frac"]))
-                cands: List[Tuple[float, int]] = []
+        primitive_tiles = _primitive_tiles(primitives)
+        clustered_tiles = _build_image_tiles(primitives)
 
-                for pidx, p in enumerate(primitives):
-                    x_ov = _x_overlap_ratio(lab["x0"], lab["x1"], p["x0"], p["x1"])
-                    dx = abs(lab["cx"] - p["cx"])
-                    if x_ov < float(cfg["xmin"]) and dx > max_dx:
-                        continue
-                    if p["top"] > lab["top"] + row_radius:
-                        continue
-                    if bool(cfg["require_above"]) and p["bottom"] > lab["top"] + float(cfg["tol_y"]):
-                        continue
-
-                    dy_up = max(0.0, lab["top"] - p["bottom"])
-                    dy_down = max(0.0, p["bottom"] - (lab["top"] + float(cfg["tol_y"])))
-                    score = (
-                        dy_up
-                        + float(cfg["down_w"]) * dy_down
-                        + float(cfg["dx_w"]) * dx
-                        + float(cfg["size_w"]) * abs(p["h"] - lab_h)
-                        - float(cfg["xov_bonus"]) * x_ov * slide_w
-                    )
-                    cands.append((score, pidx))
-
-                cands.sort(key=lambda t: (t[0], t[1]))
-                out.append(cands)
-            return out
-
-        def _try_bipartite(cands: List[List[Tuple[float, int]]]) -> Optional[List[int]]:
-            if not cands:
-                return []
-            if any(len(c) == 0 for c in cands):
-                return None
-
-            match_prim_to_lab = [-1] * len(primitives)
-
-            def _dfs(lab_idx: int, seen: set[int]) -> bool:
-                for _, prim_idx in cands[lab_idx]:
-                    if prim_idx in seen:
-                        continue
-                    seen.add(prim_idx)
-                    prev_lab = match_prim_to_lab[prim_idx]
-                    if prev_lab == -1 or _dfs(prev_lab, seen):
-                        match_prim_to_lab[prim_idx] = lab_idx
-                        return True
-                return False
-
-            order = sorted(range(len(labels)), key=lambda i: (len(cands[i]), labels[i]["top"], labels[i]["cx"]))
-            for lab_idx in order:
-                if not _dfs(lab_idx, set()):
-                    return None
-
-            lab_to_prim = [-1] * len(labels)
-            for prim_idx, lab_idx in enumerate(match_prim_to_lab):
-                if lab_idx != -1:
-                    lab_to_prim[lab_idx] = prim_idx
-            if any(pidx < 0 for pidx in lab_to_prim):
-                return None
-            return lab_to_prim
-
-        matching_phases: List[Dict[str, float]] = [
-            {
-                "xmin": 0.30,
-                "tol_y": slide_h * 0.08,
-                "dx_w": 0.35,
-                "down_w": 6.0,
-                "xov_bonus": 0.06,
-                "size_w": 0.02,
-                "cx_mult": 1.1,
-                "dx_frac": 0.05,
-                "row_frac": 0.10,
-                "require_above": 1.0,
-            },
-            {
-                "xmin": 0.16,
-                "tol_y": slide_h * 0.14,
-                "dx_w": 0.30,
-                "down_w": 5.0,
-                "xov_bonus": 0.05,
-                "size_w": 0.015,
-                "cx_mult": 1.5,
-                "dx_frac": 0.08,
-                "row_frac": 0.14,
-                "require_above": 1.0,
-            },
-            {
-                "xmin": 0.05,
-                "tol_y": slide_h * 0.22,
-                "dx_w": 0.25,
-                "down_w": 3.0,
-                "xov_bonus": 0.03,
-                "size_w": 0.01,
-                "cx_mult": 2.0,
-                "dx_frac": 0.12,
-                "row_frac": 0.20,
-                "require_above": 0.0,
-            },
+        # Prefer clustered tiles because they reconstruct full-card artwork from layers.
+        phases = [
+            ("clustered_strict", clustered_tiles, {
+                "xmin": 0.20, "dx_frac": 0.07, "cx_mult": 1.4, "row_frac": 0.10,
+                "tol_frac": 0.08, "require_above": 1.0, "dx_w": 0.32,
+                "down_w": 7.5, "size_w": 0.02, "xov_bonus": 0.06,
+            }),
+            ("clustered_relaxed", clustered_tiles, {
+                "xmin": 0.10, "dx_frac": 0.11, "cx_mult": 1.9, "row_frac": 0.15,
+                "tol_frac": 0.14, "require_above": 1.0, "dx_w": 0.30,
+                "down_w": 7.0, "size_w": 0.015, "xov_bonus": 0.05,
+            }),
+            ("primitive_strict", primitive_tiles, {
+                "xmin": 0.24, "dx_frac": 0.07, "cx_mult": 1.3, "row_frac": 0.10,
+                "tol_frac": 0.08, "require_above": 1.0, "dx_w": 0.34,
+                "down_w": 8.0, "size_w": 0.02, "xov_bonus": 0.06,
+            }),
+            ("primitive_relaxed", primitive_tiles, {
+                "xmin": 0.10, "dx_frac": 0.12, "cx_mult": 2.0, "row_frac": 0.16,
+                "tol_frac": 0.14, "require_above": 1.0, "dx_w": 0.30,
+                "down_w": 7.0, "size_w": 0.015, "xov_bonus": 0.05,
+            }),
         ]
 
+        chosen_tiles: Optional[List[dict]] = None
         assignments: Optional[List[int]] = None
-        loosest_cands: Optional[List[List[Tuple[float, int]]]] = None
-        for phase in matching_phases:
-            cands = _build_candidates(phase)
-            loosest_cands = cands
-            assignments = _try_bipartite(cands)
-            if assignments is not None:
+        best_score: Optional[float] = None
+        last_cands: Optional[List[List[Tuple[float, int]]]] = None
+        last_phase_name = ""
+        for phase_name, tiles, cfg in phases:
+            if not tiles:
+                continue
+            last_phase_name = phase_name
+            assn, cands, total_score = _match_labels_to_tiles(labels, tiles, cfg)
+            last_cands = cands
+            if assn is None:
+                continue
+            if assignments is None or (total_score is not None and (best_score is None or total_score < best_score)):
+                assignments = assn
+                chosen_tiles = tiles
+                best_score = total_score
+            # Deterministic preference: first successful strict phase is good enough.
+            if phase_name in {"clustered_strict", "primitive_strict"}:
                 break
 
-        fallback_cands: Optional[List[List[Tuple[float, int]]]] = None
-        if assignments is None:
-            # Final fallback: permit every primitive as a candidate (soft-penalized)
-            # so uncommon layouts do not hard-fail when strict geometry gates are too tight.
-            fallback_cands = []
-            for lab in labels:
-                lab_w = max(1.0, float(lab["x1"] - lab["x0"]))
-                lab_h = max(1.0, float(lab["bottom"] - lab["top"]))
-                cands: List[Tuple[float, int]] = []
-                for pidx, p in enumerate(primitives):
-                    x_ov = _x_overlap_ratio(lab["x0"], lab["x1"], p["x0"], p["x1"])
-                    dx = abs(lab["cx"] - p["cx"])
-                    dy_up = max(0.0, lab["top"] - p["bottom"])
-                    dy_down = max(0.0, p["bottom"] - lab["top"])
-                    # Lower score is better. Strongly discourage images placed
-                    # materially below their labels while still allowing recovery.
-                    score = (
-                        dy_up
-                        + 7.0 * dy_down
-                        + 0.28 * dx
-                        + 0.02 * abs(p["h"] - lab_h)
-                        + 0.01 * abs((p["x1"] - p["x0"]) - lab_w)
-                        - 0.03 * x_ov * slide_w
-                    )
-                    cands.append((score, pidx))
-                cands.sort(key=lambda t: (t[0], t[1]))
-                fallback_cands.append(cands)
-
-            assignments = _try_bipartite(fallback_cands)
-
-        if assignments is None:
-            # Last-resort degradation: allow primitive reuse (best-scored choice per label)
-            # rather than failing the entire side.
-            if not primitives:
-                bad = labels[0]
-                raise ValueError(
-                    f"PPT side {side_letter}: could not match label ID {bad['card_id']} to any image primitive "
-                    f"(labels={len(labels)}, primitives=0)"
-                )
-            if fallback_cands is None:
-                fallback_cands = []
-                for lab in labels:
-                    cands: List[Tuple[float, int]] = []
-                    for pidx, p in enumerate(primitives):
-                        dx = abs(lab["cx"] - p["cx"])
-                        dy = abs(lab["top"] - p["bottom"])
-                        cands.append((dy + 0.3 * dx, pidx))
-                    cands.sort(key=lambda t: (t[0], t[1]))
-                    fallback_cands.append(cands)
-
-            assignments = []
-            used: set[int] = set()
-            for cands in fallback_cands:
-                pick = None
-                for _, pidx in cands:
-                    if pidx not in used:
-                        pick = pidx
+        if assignments is None or chosen_tiles is None:
+            bad_idx = 0
+            if last_cands:
+                for i, cands in enumerate(last_cands):
+                    if not cands:
+                        bad_idx = i
                         break
-                if pick is None:
-                    pick = cands[0][1]
-                assignments.append(pick)
-                used.add(pick)
+            bad = labels[bad_idx]
+            cand_count = len(last_cands[bad_idx]) if last_cands else 0
+            raise ValueError(
+                f"PPT side {side_letter}: could not match label ID {bad['card_id']} to any image tile "
+                f"(phase={last_phase_name or 'none'}, candidates={cand_count}, "
+                f"labels={len(labels)}, tiles={len(clustered_tiles)}, primitives={len(primitives)})"
+            )
 
         matched: List[dict] = []
         for lab_idx, lab in enumerate(labels):
-            prim = primitives[assignments[lab_idx]]
-
-            # Use the matched primitive's image directly (in this deck it is the full card image).
-            img_bytes = prim["blob"]
-            img_ext = prim.get("ext") or "png"
-
-            # Normalize to PNG for consistent downstream rendering.
-            if str(img_ext).lower() != "png":
-                try:
-                    im = Image.open(BytesIO(img_bytes)).convert("RGBA")
-                    out = BytesIO()
-                    im.save(out, format="PNG")
-                    img_bytes = out.getvalue()
-                    img_ext = "png"
-                except Exception:
-                    pass
+            tile = chosen_tiles[assignments[lab_idx]]
+            img_bytes, img_ext = _tile_image(tile)
 
             card = PptCard(
                 card_id=lab["card_id"],
@@ -1002,42 +993,51 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
                 image_bytes=img_bytes,
                 image_ext=img_ext,
             )
-            matched.append({"card": card, "cx": prim["cx"], "cy": prim["cy"], "h": prim["h"]})
+            matched.append({"card": card, "cx": tile["cx"], "cy": tile["cy"], "h": tile["h"]})
 
         # --- order in reading order ---
         med_h = statistics.median([m["h"] for m in matched]) if matched else (slide_h * 0.1)
-        rows = _cluster_rows(matched, tol=0.35 * med_h)
-        ordered_cards = [it["card"] for row in rows for it in row]
+        rows = _cluster_rows(matched, tol=0.32 * med_h)
+        top_cards: List[PptCard] = [it["card"] for it in rows[0]] if rows else []
+        side_cards: List[PptCard] = [it["card"] for row in rows[1:] for it in row] if len(rows) > 1 else []
 
-        # split by slide storage order: top row then remaining block
-        top8 = ordered_cards[:8]
-        side6 = ordered_cards[8:14]  # variable count is OK; caller can render len(side6)
+        # Fallback for pathological row clustering: preserve deterministic order.
+        if not side_cards and len(top_cards) > 8:
+            side_cards = top_cards[8:]
+            top_cards = top_cards[:8]
 
-        total = len(ordered_cards)
+        total = len(top_cards) + len(side_cards)
         prev = best_by_side.get(side_letter)
         if prev is None or total > prev[0]:
-            best_by_side[side_letter] = (total, top8, side6)
+            best_by_side[side_letter] = (total, top_cards, side_cards)
 
     parsed: Dict[str, PptSideCards] = {}
     for side in "ABCD":
         entry = best_by_side.get(side)
         if entry:
-            _, top8, side6 = entry
+            _, top_cards, side_cards = entry
         else:
-            top8, side6 = [], []
-        parsed[side] = PptSideCards(side=side, top8=top8, side6=side6)
+            top_cards, side_cards = [], []
+        parsed[side] = PptSideCards(side=side, top8=top_cards, side6=side_cards)
 
-    return parsed    
+    return parsed
 
 
 def validate_ppt_side_cards(ppt_cards: Dict[str, PptSideCards]) -> List[str]:
     issues: List[str] = []
     for side in "ABCD":
         side_cards = ppt_cards.get(side, PptSideCards(side=side, top8=[], side6=[]))
-        if len(side_cards.top8) != 8 or len(side_cards.side6) != 6:
+        cards = side_cards.top8 + side_cards.side6
+        if not cards:
             issues.append(
-                f"SIDE {side}: found top8={len(side_cards.top8)} and side6={len(side_cards.side6)} (expected 8 and 6)."
+                f"SIDE {side}: no PPT cards extracted."
             )
+            continue
+        ids = [c.card_id for c in cards]
+        if len(ids) != len(set(ids)):
+            issues.append(f"SIDE {side}: duplicate PPT card IDs detected.")
+        if any(not c.image_bytes for c in cards):
+            issues.append(f"SIDE {side}: one or more cards are missing image bytes.")
     return issues
 
 
@@ -2321,16 +2321,20 @@ def render_full_pallet_pdf(
             # Bucket A: PPT Top Cards
             a_gap_y = 8.0
             top_card_h = max(30.0, min(86.0, bucket_a_h * 0.34))
+            top_cards = list(side_ppt.top8)
+            side_cards = list(side_ppt.side6)
+
+            top_slots = max(1, len(top_cards))
             top_xs, top_card_w, _, top_right, top_overflow = _fit_x_layout(
-                cx0, cx1, 8, [1] * 7, 72.0, 6.0
+                cx0, cx1, top_slots, [1] * max(0, top_slots - 1), 72.0, 6.0
             )
             adjusted_to_fit = adjusted_to_fit or top_overflow
             rightmost_used = max(rightmost_used, top_right)
 
             top_row_y = bucket_a_top - top_card_h
-            for i in range(8):
+            for i in range(top_slots):
                 x = top_xs[i]
-                card = side_ppt.top8[i] if i < len(side_ppt.top8) else None
+                card = top_cards[i] if i < len(top_cards) else None
                 c.setFillColorRGB(1, 1, 1)
                 c.setStrokeColorRGB(*FILLED_STROKE if card else EMPTY_STROKE)
                 c.setLineWidth(0.75 if card else 0.45)
@@ -2341,33 +2345,36 @@ def render_full_pallet_pdf(
                         image_from_bytes(card.image_bytes), f"ID# {card.card_id}", card.title, ppt_cpp_global,
                     )
 
-            side_block_w = 2 * top_card_w + 6.0
+            side_cols = 3 if len(side_cards) >= 3 else max(1, len(side_cards))
+            side_rows = max(1, int(math.ceil(max(1, len(side_cards)) / side_cols)))
+            side_gap_x = 6.0
+            side_block_w = side_cols * top_card_w + max(0, side_cols - 1) * side_gap_x
             sx0 = max(cx0, cx1 - side_block_w)
             side_top = top_row_y - SECTION_BAR_GAP
             side_available_h = max(36.0, side_top - bucket_a_bottom)
-            side_xs = [
-    sx0,
-    min(cx1 - top_card_w, sx0 + (top_card_w + 6.0)),
-    min(cx1 - top_card_w, sx0 + 2 * (top_card_w + 6.0)),
-]
-            side_card_h = max(20.0, min(top_card_h, (side_available_h - 2 * a_gap_y) / 3))
-            # 3 cols x 2 rows (row-major)
-        for row in range(2):
-            y = side_top - (row + 1) * side_card_h - row * a_gap_y
-            for col in range(3):
-                idx = row * 3 + col  # [0,1,2] then [3,4,5]
+            side_xs = [sx0 + i * (top_card_w + side_gap_x) for i in range(side_cols)]
+            side_card_h = max(
+                20.0,
+                min(top_card_h, (side_available_h - max(0, side_rows - 1) * a_gap_y) / side_rows),
+            )
+
+            total_side_slots = side_rows * side_cols
+            for idx in range(total_side_slots):
+                row = idx // side_cols
+                col = idx % side_cols
+                y = side_top - (row + 1) * side_card_h - row * a_gap_y
                 x = side_xs[col]
-                card = side_ppt.side6[idx] if idx < len(side_ppt.side6) else None
+                card = side_cards[idx] if idx < len(side_cards) else None
                 c.setFillColorRGB(1, 1, 1)
                 c.setStrokeColorRGB(*FILLED_STROKE if card else EMPTY_STROKE)
                 c.setLineWidth(0.75 if card else 0.45)
                 c.rect(x, y, top_card_w, side_card_h, stroke=1, fill=1)
                 if card:
                     _draw_card(
-                            c, x, y, top_card_w, side_card_h,
-                            image_from_bytes(card.image_bytes), f"ID# {card.card_id}", card.title, ppt_cpp_global,
-                        )
-                    rightmost_used = max(rightmost_used, x + top_card_w)
+                        c, x, y, top_card_w, side_card_h,
+                        image_from_bytes(card.image_bytes), f"ID# {card.card_id}", card.title, ppt_cpp_global,
+                    )
+                rightmost_used = max(rightmost_used, x + top_card_w)
 
             if debug_overlay:
                 _draw_debug_box(c, cx0, bucket_a_bottom, content_w, bucket_a_top - bucket_a_bottom, "PPT")
