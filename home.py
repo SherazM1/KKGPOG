@@ -793,7 +793,7 @@ def _extract_top_holder_slots(
     slot_starts: List[Tuple[int, str]] = []
 
     for cidx in range(max_col):
-        raw = ws.cell(row=header_row, column=cidx + 1).value
+        raw = ws.cell(row=header_row + 1, column=cidx + 1).value
         text = str(raw).strip() if raw is not None else ""
         text_u = text.upper()
         if text_u.startswith("POCKET ") or text_u.startswith("PEG "):
