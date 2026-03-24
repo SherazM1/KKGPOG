@@ -711,6 +711,21 @@ def _extract_ws_images_by_col(ws) -> Dict[int, Tuple[bytes, str]]:
     return out
 
 
+def _nearest_image_for_col(
+    images_by_col: Dict[int, Tuple[bytes, str]],
+    target_col: int,
+    max_distance: int = 3,
+) -> Tuple[Optional[bytes], Optional[str]]:
+    best: Optional[Tuple[int, Tuple[bytes, str]]] = None
+    for col, payload in images_by_col.items():
+        dist = abs(int(col) - int(target_col))
+        if dist > max_distance:
+            continue
+        if best is None or dist < best[0]:
+            best = (dist, payload)
+    return best[1] if best else (None, None)
+
+
 @st.cache_data(show_spinner=False)
 def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
     """Parse POG workbook holder section and return ordered per-side holders."""
@@ -858,7 +873,7 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
             )
             name = desc_map.get(item_no) or raw_desc or "(missing description)"
             side = side_for_col(cidx)
-            img_bytes, img_ext = images_by_col.get(cidx, (None, None))
+            img_bytes, img_ext = _nearest_image_for_col(images_by_col, cidx, max_distance=3)
             holders.setdefault(side, []).append(
                 GiftHolder(
                     side=side,
