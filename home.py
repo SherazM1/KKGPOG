@@ -2005,10 +2005,6 @@ def render_full_pallet_pdf(
         img_h = max(8.0, ih - text_h - 2.0)
         img_y = iy + text_h + 2.0
         
-        clip_path = c.beginPath()
-        clip_path.rect(x + 0.5, y + 0.5, max(1.0, w - 1.0), max(1.0, h - 1.0))
-        c.saveState()
-        c.clipPath(clip_path, stroke=0, fill=0)
 
         if img is not None and iw > 6 and img_h > 6:
             sw, sh = img.size
@@ -2366,7 +2362,7 @@ def render_full_pallet_pdf(
             cpp_tw = pdfmetrics.stringWidth(cpp_text, BODY_BOLD_FONT, cpp_fs)
             c.drawString(ix + (iw - cpp_tw) / 2, footer_y + 1.5, cpp_text)
 
-            c.restoreState()
+            
 
         def _flow_policy(section_kind: str) -> Dict[str, float]:
             if section_kind == "main":
