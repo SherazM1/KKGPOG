@@ -1971,6 +1971,93 @@ def render_full_pallet_pdf(
             gap_units.append(max(1, int(unit)))
         return sec_cols, gap_units
 
+    def _build_non_ppt_slot_map_for_side(
+        p: FullPalletPage,
+        global_rows: List[int],
+        global_cols: List[int],
+        above_bonus_rows: List[int],
+        below_bonus_rows: List[int],
+        product_map: Dict[Tuple[int, int], Tuple[Optional[MatrixRow], CellData]],
+    ) -> Dict[str, object]:
+        global_row_rank = {r: i for i, r in enumerate(global_rows)}
+        global_col_rank = {c_: i for i, c_ in enumerate(global_cols)}
+
+        def _build_section(section_kind: str, sec_rows: List[int]) -> Dict[str, object]:
+            if not sec_rows:
+                return {
+                    "section_kind": section_kind,
+                    "row_ids": [],
+                    "col_ids": [],
+                    "rows": [],
+                    "slots_flat": [],
+                }
+
+            row_ids = list(sec_rows)
+            row_set = set(row_ids)
+
+            col_ids = sorted(
+                {cell.col for cell in p.cells if cell.row in row_set},
+                key=lambda c_: global_col_rank.get(c_, 10**6 + c_),
+            )
+
+            row_index_map = {r: i for i, r in enumerate(row_ids)}
+            col_index_map = {c_: i for i, c_ in enumerate(col_ids)}
+
+            rows_out: List[dict] = []
+            slots_flat: List[dict] = []
+
+            for row_id in row_ids:
+                row_cells = [cell for cell in p.cells if cell.row == row_id]
+                row_cells.sort(key=lambda cell: global_col_rank.get(cell.col, 10**6 + cell.col))
+
+                slot_items: List[dict] = []
+                for slot_order, cell in enumerate(row_cells):
+                    key = (cell.row, cell.col)
+                    match, _cell = product_map.get(key, (None, cell))
+
+                    slot = {
+                        "section_kind": section_kind,
+                        "row_id": cell.row,
+                        "col_id": cell.col,
+                        "row_index": row_index_map[cell.row],
+                        "col_index": col_index_map[cell.col],
+                        "slot_order": slot_order,
+                        "bbox": cell.bbox,
+                        "label_name": cell.name,
+                        "last5": cell.last5,
+                        "qty": cell.qty,
+                        "resolved_match": match,
+                        "upc12": match.upc12 if match else None,
+                        "display_name": (match.display_name if match and match.display_name else cell.name).strip(),
+                        "cpp_qty": match.cpp_qty if match else None,
+                        "occupied": True,
+                        "cell": cell,
+                    }
+                    slot_items.append(slot)
+                    slots_flat.append(slot)
+
+                rows_out.append(
+                    {
+                        "row_id": row_id,
+                        "row_index": row_index_map[row_id],
+                        "slots": slot_items,
+                    }
+                )
+
+            return {
+                "section_kind": section_kind,
+                "row_ids": row_ids,
+                "col_ids": col_ids,
+                "rows": rows_out,
+                "slots_flat": slots_flat,
+            }
+
+        return {
+            "side_letter": p.side_letter,
+            "main": _build_section("main", above_bonus_rows),
+            "bonus": _build_section("bonus", below_bonus_rows),
+        }
+
     def _draw_section_bar(
         c: canvas.Canvas, x: float, y: float, w: float, h: float, label: str
     ) -> None:
@@ -2678,9 +2765,18 @@ def render_full_pallet_pdf(
                     match = resolve_full_pallet(cell.last5, cell.name, matrix_idx)
                     product_map[(cell.row, cell.col)] = (match, cell)
 
+            slot_map = _build_non_ppt_slot_map_for_side(
+                pdata,
+                global_rows,
+                global_cols,
+                above_bonus_rows,
+                below_bonus_rows,
+                product_map,
+            )
+
             main_plan = _measure_section_shape(
                 pdata,
-                above_bonus_rows,
+                slot_map["main"]["row_ids"],
                 "main",
                 content_w,
                 global_cols,
@@ -2689,12 +2785,12 @@ def render_full_pallet_pdf(
             )
             bonus_plan = _measure_section_shape(
                 pdata,
-                below_bonus_rows,
+                slot_map["bonus"]["row_ids"],
                 "bonus",
                 content_w,
                 global_cols,
                 global_gap_units,
-                include_bar=bool(below_bonus_rows),
+                include_bar=bool(slot_map["bonus"]["row_ids"]),
             )
 
             products_block_h = float(main_plan["total_h"])
@@ -2857,7 +2953,7 @@ def render_full_pallet_pdf(
             main_over = False
             main_bottom = products_top
 
-            if above_bonus_rows:
+            if slot_map["main"]["row_ids"]:
                 (
                     main_cols,
                     main_rows_count,
@@ -2877,13 +2973,15 @@ def render_full_pallet_pdf(
             else:
                 main_bottom = products_top
 
-            bonus_top = main_bottom - (BUCKET_GAP if above_bonus_rows and below_bonus_rows else 0.0)
+            bonus_top = main_bottom - (
+                BUCKET_GAP if slot_map["main"]["row_ids"] and slot_map["bonus"]["row_ids"] else 0.0
+            )
             bonus_cols = 0
             bonus_rows_count = 0
             bonus_over = False
             bonus_bottom = bonus_top
 
-            if below_bonus_rows:
+            if slot_map["bonus"]["row_ids"]:
                 (
                     bonus_cols,
                     bonus_rows_count,
@@ -2960,6 +3058,12 @@ def render_full_pallet_pdf(
                             "exceeded": exceeded,
                             "vertical_overflow": vertical_overflow,
                             "adjusted_to_fit": adjusted_to_fit,
+                        },
+                        "slot_map_summary": {
+                            "main_rows": [len(r["slots"]) for r in slot_map["main"]["rows"]],
+                            "bonus_rows": [len(r["slots"]) for r in slot_map["bonus"]["rows"]],
+                            "main_total_slots": len(slot_map["main"]["slots_flat"]),
+                            "bonus_total_slots": len(slot_map["bonus"]["slots_flat"]),
                         },
                         "ppt_counts": {
                             "top8": len(side_ppt.top8),
