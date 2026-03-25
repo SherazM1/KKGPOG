@@ -2004,6 +2004,11 @@ def render_full_pallet_pdf(
         text_h = max(8.0, min(34.0, ih * 0.42))
         img_h = max(8.0, ih - text_h - 2.0)
         img_y = iy + text_h + 2.0
+        
+        clip_path = c.beginPath()
+        clip_path.rect(x + 0.5, y + 0.5, max(1.0, w - 1.0), max(1.0, h - 1.0))
+        c.saveState()
+        c.clipPath(clip_path, stroke=0, fill=0)
 
         if img is not None and iw > 6 and img_h > 6:
             sw, sh = img.size
@@ -2048,14 +2053,14 @@ def render_full_pallet_pdf(
     def _section_shape_policy(section_kind: str) -> Dict[str, float]:
         if section_kind == "main":
             return {
-                "desired_card_w": 70.0,
+                "desired_card_w": 64.0,
                 "desired_gap": 6.0,
-                "row_gutter": 9.0,
-                "card_ratio": 1.06,   # h / w
-                "min_card_h": 54.0,
-                "max_card_h": 86.0,
-                "crop_zoom": 2.55,
-                "crop_inset": 0.020,
+                "row_gutter": 8.0,
+                "card_ratio": 1.04,   # h / w
+                "min_card_h": 50.0,
+                "max_card_h": 82.0,
+                "crop_zoom": 2.40,
+                "crop_inset": 0.018,
             }
 
         return {
@@ -2185,10 +2190,6 @@ def render_full_pallet_pdf(
                 cell = occ.get((ri, ci))
 
                 if cell is None:
-                    c.setFillColorRGB(1, 1, 1)
-                    c.setStrokeColorRGB(*EMPTY_STROKE)
-                    c.setLineWidth(0.45)
-                    c.rect(x, y, card_w, card_h, stroke=1, fill=0)
                     continue
 
                 key = (cell.row, cell.col)
@@ -2364,6 +2365,8 @@ def render_full_pallet_pdf(
             c.setFont(BODY_BOLD_FONT, cpp_fs)
             cpp_tw = pdfmetrics.stringWidth(cpp_text, BODY_BOLD_FONT, cpp_fs)
             c.drawString(ix + (iw - cpp_tw) / 2, footer_y + 1.5, cpp_text)
+
+            c.restoreState()
 
         def _flow_policy(section_kind: str) -> Dict[str, float]:
             if section_kind == "main":
