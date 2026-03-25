@@ -1809,7 +1809,7 @@ def render_full_pallet_pdf(
     buf = io.BytesIO()
     images_doc = fitz.open(stream=images_pdf_bytes, filetype="pdf")
 
-    PAGE_W, BASE_PAGE_H = 792.0, 1224.0  # base 11x17 portrait; full-pallet pages may grow taller
+    PAGE_W, BASE_PAGE_H = 792.0, 1224.0  # 11x17 portrait template; pages may grow taller
     MARGIN = 24.0
     HEADER_H = 56.0
     FOOTER_H = 36.0
@@ -2044,6 +2044,199 @@ def render_full_pallet_pdf(
         c.setFont(BODY_BOLD_FONT, cpp_fs)
         tw = pdfmetrics.stringWidth(cpp_str, BODY_BOLD_FONT, cpp_fs)
         c.drawString(ix + (iw - tw) / 2, iy + (cpp_h - cpp_fs) / 2, cpp_str)
+
+    def _section_shape_policy(section_kind: str) -> Dict[str, float]:
+        if section_kind == "main":
+            return {
+                "desired_card_w": 70.0,
+                "desired_gap": 6.0,
+                "row_gutter": 9.0,
+                "card_ratio": 1.06,   # h / w
+                "min_card_h": 54.0,
+                "max_card_h": 86.0,
+                "crop_zoom": 2.55,
+                "crop_inset": 0.020,
+            }
+
+        return {
+            "desired_card_w": 64.0,
+            "desired_gap": 6.0,
+            "row_gutter": 8.0,
+            "card_ratio": 1.04,   # h / w
+            "min_card_h": 50.0,
+            "max_card_h": 82.0,
+            "crop_zoom": 2.40,
+            "crop_inset": 0.018,
+        }
+
+    def _measure_section_shape(
+        p: FullPalletPage,
+        sec_rows: List[int],
+        section_kind: str,
+        content_w: float,
+        global_cols: List[int],
+        global_gap_units: List[int],
+        include_bar: bool,
+    ) -> Dict[str, object]:
+        if not sec_rows:
+            return {
+                "rows": [],
+                "n_rows": 0,
+                "n_cols": 0,
+                "sec_cols": [],
+                "sec_gap_units": [],
+                "xs": [],
+                "card_w": 0.0,
+                "card_h": 0.0,
+                "row_gutter": 0.0,
+                "right": 0.0,
+                "overflow": False,
+                "total_h": 0.0,
+                "crop_zoom": 2.4,
+                "crop_inset": 0.018,
+            }
+
+        policy = _section_shape_policy(section_kind)
+        sec_rows_sorted = list(sec_rows)
+        sec_cols, sec_gap_units = _section_cols_and_gaps(
+            p, sec_rows_sorted, global_cols, global_gap_units
+        )
+
+        xs, card_w, _gap, right, overflow = _fit_x_layout(
+            0.0,
+            content_w,
+            len(sec_cols),
+            sec_gap_units,
+            policy["desired_card_w"],
+            policy["desired_gap"],
+        )
+
+        card_h = max(
+            policy["min_card_h"],
+            min(policy["max_card_h"], card_w * policy["card_ratio"]),
+        )
+        row_gutter = policy["row_gutter"]
+        total_h = len(sec_rows_sorted) * card_h + max(0, len(sec_rows_sorted) - 1) * row_gutter
+        if include_bar:
+            total_h += SECTION_BAR_H + SECTION_BAR_GAP
+
+        return {
+            "rows": sec_rows_sorted,
+            "n_rows": len(sec_rows_sorted),
+            "n_cols": len(sec_cols),
+            "sec_cols": sec_cols,
+            "sec_gap_units": sec_gap_units,
+            "xs": xs,
+            "card_w": card_w,
+            "card_h": card_h,
+            "row_gutter": row_gutter,
+            "right": right,
+            "overflow": overflow,
+            "total_h": total_h,
+            "crop_zoom": policy["crop_zoom"],
+            "crop_inset": policy["crop_inset"],
+        }
+
+    def _draw_shape_preserving_section(
+        p: FullPalletPage,
+        plan: Dict[str, object],
+        sec_top: float,
+        label: Optional[str],
+        unresolved_bucket: List[str],
+        content_x0: float,
+        product_map: Dict[Tuple[int, int], Tuple[Optional[MatrixRow], CellData]],
+    ) -> Tuple[int, int, bool, float, int, int]:
+        nonlocal rightmost_used, matched_cells, unmatched_cells
+
+        sec_rows_sorted = plan["rows"]
+        if not sec_rows_sorted:
+            return 0, 0, False, sec_top, 0, 0
+
+        y_cursor = sec_top
+        if label is not None:
+            bar_y = y_cursor - SECTION_BAR_H
+            _draw_section_bar(c, content_x0, bar_y, content_w, SECTION_BAR_H, label)
+            y_cursor = bar_y - SECTION_BAR_GAP
+
+        sec_cols = plan["sec_cols"]
+        sec_col_rank = {c_: i for i, c_ in enumerate(sec_cols)}
+        rmap = {r: i for i, r in enumerate(sec_rows_sorted)}
+        row_set = set(sec_rows_sorted)
+
+        occ: Dict[Tuple[int, int], CellData] = {}
+        for cell in p.cells:
+            if cell.row in row_set and cell.col in sec_col_rank:
+                occ[(rmap[cell.row], sec_col_rank[cell.col])] = cell
+
+        card_w = float(plan["card_w"])
+        card_h = float(plan["card_h"])
+        row_gutter = float(plan["row_gutter"])
+        xs = [content_x0 + float(x) for x in plan["xs"]]
+        rightmost_used = max(rightmost_used, content_x0 + float(plan["right"]))
+
+        grid_top = y_cursor
+        n_rows = int(plan["n_rows"])
+        n_cols = int(plan["n_cols"])
+
+        for ri in range(n_rows):
+            y = grid_top - (ri + 1) * card_h - ri * row_gutter
+            for ci in range(n_cols):
+                x = xs[ci]
+                cell = occ.get((ri, ci))
+
+                if cell is None:
+                    c.setFillColorRGB(1, 1, 1)
+                    c.setStrokeColorRGB(*EMPTY_STROKE)
+                    c.setLineWidth(0.45)
+                    c.rect(x, y, card_w, card_h, stroke=1, fill=0)
+                    continue
+
+                key = (cell.row, cell.col)
+                match, _cell = product_map.get(key, (None, cell))
+                last5_key = _to_last5(cell.last5)
+                upc12 = match.upc12 if match else None
+                cpp = match.cpp_qty if match else None
+                disp_name = (match.display_name if match and match.display_name else cell.name).strip()
+
+                if upc12:
+                    upc_str = upc12
+                else:
+                    upc_str = f"LAST5 {last5_key}"
+                    disp_name = f"UNRESOLVED {last5_key}"
+                    unresolved_bucket.append(last5_key)
+
+                try:
+                    img = crop_image_cell(
+                        images_doc,
+                        p.page_index,
+                        cell.bbox,
+                        zoom=float(plan["crop_zoom"]),
+                        inset=float(plan["crop_inset"]),
+                    )
+                except Exception:
+                    img = None
+
+                if match:
+                    matched_cells += 1
+                else:
+                    unmatched_cells += 1
+
+                c.setFillColorRGB(1, 1, 1)
+                c.setStrokeColorRGB(*FILLED_STROKE)
+                c.setLineWidth(0.75)
+                c.rect(x, y, card_w, card_h, stroke=1, fill=1)
+                _draw_card(c, x, y, card_w, card_h, img, upc_str, disp_name, cpp)
+
+        sec_bottom = grid_top - n_rows * card_h - max(0, n_rows - 1) * row_gutter
+
+        return (
+            n_cols,
+            n_rows,
+            bool(plan["overflow"]),
+            sec_bottom,
+            len([1 for k in occ.keys()]),
+            len(sec_cols),
+        )
 
     def _draw_debug_box(
         c: canvas.Canvas, x: float, y: float, w: float, h: float, label: str
@@ -2486,45 +2679,45 @@ def render_full_pallet_pdf(
                     match = resolve_full_pallet(cell.last5, cell.name, matrix_idx)
                     product_map[(cell.row, cell.col)] = (match, cell)
 
-            unresolved_main: List[str] = []
-            unresolved_bonus: List[str] = []
-
-            main_items, main_matched, main_unmatched = _collect_section_items(
+            main_plan = _measure_section_shape(
                 pdata,
                 above_bonus_rows,
                 "main",
-                unresolved_main,
-                global_rows,
+                content_w,
                 global_cols,
-                product_map,
+                global_gap_units,
+                include_bar=False,
             )
-            bonus_items, bonus_matched, bonus_unmatched = _collect_section_items(
+            bonus_plan = _measure_section_shape(
                 pdata,
                 below_bonus_rows,
                 "bonus",
-                unresolved_bonus,
-                global_rows,
+                content_w,
                 global_cols,
-                product_map,
+                global_gap_units,
+                include_bar=bool(below_bonus_rows),
             )
 
-            main_plan = _choose_product_layout(len(main_items), "main", content_w, include_bar=False)
-            bonus_plan = _choose_product_layout(len(bonus_items), "bonus", content_w, include_bar=bool(bonus_items))
-
-            products_block_h = main_plan["total_h"]
-            if main_items and bonus_items:
+            products_block_h = float(main_plan["total_h"])
+            if above_bonus_rows and below_bonus_rows:
                 products_block_h += BUCKET_GAP
-            products_block_h += bonus_plan["total_h"]
+            products_block_h += float(bonus_plan["total_h"])
 
-            required_content_h = PPT_SECTION_H + BUCKET_GAP + HOLDER_SECTION_H + BUCKET_GAP + products_block_h
-            dynamic_page_h = max(BASE_PAGE_H, (2 * MARGIN) + HEADER_H + FOOTER_H + required_content_h)
+            required_content_h = (
+                PPT_SECTION_H
+                + BUCKET_GAP
+                + HOLDER_SECTION_H
+                + BUCKET_GAP
+                + products_block_h
+            )
+            PAGE_H = max(BASE_PAGE_H, (2 * MARGIN) + HEADER_H + FOOTER_H + required_content_h)
 
-            c.setPageSize((PAGE_W, dynamic_page_h))
+            c.setPageSize((PAGE_W, PAGE_H))
 
             _draw_full_pallet_header(
                 c,
                 PAGE_W,
-                dynamic_page_h,
+                PAGE_H,
                 HEADER_H,
                 title_prefix.strip() or "POG",
                 f"SIDE {pdata.side_letter}",
@@ -2532,7 +2725,7 @@ def render_full_pallet_pdf(
             )
             _draw_footer(c, PAGE_W, MARGIN, FOOTER_H)
 
-            cy0, cy1 = MARGIN + FOOTER_H, dynamic_page_h - MARGIN - HEADER_H
+            cy0, cy1 = MARGIN + FOOTER_H, PAGE_H - MARGIN - HEADER_H
             content_h = cy1 - cy0
 
             bucket_a_h = PPT_SECTION_H
@@ -2554,8 +2747,10 @@ def render_full_pallet_pdf(
 
             rightmost_used = cx0
             adjusted_to_fit = False
-            matched_cells = main_matched + bonus_matched
-            unmatched_cells = main_unmatched + bonus_unmatched
+            matched_cells = 0
+            unmatched_cells = 0
+            unresolved_main: List[str] = []
+            unresolved_bonus: List[str] = []
 
             # Bucket A: PPT Top Cards
             a_gap_y = 8.0
@@ -2658,103 +2853,82 @@ def render_full_pallet_pdf(
             if debug_overlay:
                 _draw_debug_box(c, cx0, bucket_b_bottom, content_w, bucket_b_top - bucket_b_bottom, "HOLDERS")
 
-            products_avail_h = max(24.0, products_top - products_bottom)
-
-            main_items, main_matched, main_unmatched = _collect_section_items(
-                pdata,
-                above_bonus_rows,
-                "main",
-                unresolved_main,
-                global_rows,
-                global_cols,
-                product_map,
-            )
-            bonus_items, bonus_matched, bonus_unmatched = _collect_section_items(
-                pdata,
-                below_bonus_rows,
-                "bonus",
-                unresolved_bonus,
-                global_rows,
-                global_cols,
-                product_map,
-            )
-
-            main_plan = _choose_product_layout(len(main_items), "main", content_w, include_bar=False)
-            bonus_plan = _choose_product_layout(len(bonus_items), "bonus", content_w, include_bar=bool(bonus_items))
-
-            y_cursor = products_top
-
-            main_section_top = y_cursor
-            main_section_bottom = y_cursor
             main_cols = 0
             main_rows_count = 0
             main_over = False
-            if main_items:
+            main_bottom = products_top
+
+            if above_bonus_rows:
                 (
-                    main_section_top,
-                    main_section_bottom,
                     main_cols,
                     main_rows_count,
                     main_over,
-                ) = _draw_flow_section(
-                    main_items,
-                    "main",
+                    main_bottom,
+                    _main_occ_count,
+                    _main_sec_cols,
+                ) = _draw_shape_preserving_section(
+                    pdata,
                     main_plan,
-                    y_cursor,
-                    products_bottom,
+                    products_top,
                     None,
+                    unresolved_main,
+                    cx0,
+                    product_map,
                 )
-                y_cursor = main_section_bottom - (BUCKET_GAP if bonus_items else 0.0)
+            else:
+                main_bottom = products_top
 
-            bonus_section_top = y_cursor
-            bonus_section_bottom = y_cursor
+            bonus_top = main_bottom - (BUCKET_GAP if above_bonus_rows and below_bonus_rows else 0.0)
             bonus_cols = 0
             bonus_rows_count = 0
             bonus_over = False
-            if bonus_items:
+            bonus_bottom = bonus_top
+
+            if below_bonus_rows:
                 (
-                    bonus_section_top,
-                    bonus_section_bottom,
                     bonus_cols,
                     bonus_rows_count,
                     bonus_over,
-                ) = _draw_flow_section(
-                    bonus_items,
-                    "bonus",
+                    bonus_bottom,
+                    _bonus_occ_count,
+                    _bonus_sec_cols,
+                ) = _draw_shape_preserving_section(
+                    pdata,
                     bonus_plan,
-                    y_cursor,
-                    products_bottom,
+                    bonus_top,
                     "BONUS",
+                    unresolved_bonus,
+                    cx0,
+                    product_map,
                 )
-                y_cursor = bonus_section_bottom
 
             adjusted_to_fit = adjusted_to_fit or main_over or bonus_over
 
             if debug_overlay:
                 _draw_debug_box(c, cx0, products_bottom, content_w, products_top - products_bottom, "PRODUCTS")
-                if main_items:
+                if above_bonus_rows:
                     _draw_debug_box(
                         c,
                         cx0,
-                        main_section_bottom,
+                        main_bottom,
                         content_w,
-                        main_section_top - main_section_bottom,
-                        "MAIN FLOW",
+                        products_top - main_bottom,
+                        "MAIN SHAPE",
                     )
-                if bonus_items:
+                if below_bonus_rows:
                     _draw_debug_box(
                         c,
                         cx0,
-                        bonus_section_bottom,
+                        bonus_bottom,
                         content_w,
-                        bonus_section_top - bonus_section_bottom,
-                        "BONUS FLOW",
+                        bonus_top - bonus_bottom,
+                        "BONUS SHAPE",
                     )
 
             right_limit = cx1
             exceeded = rightmost_used > right_limit + 0.001
-            vertical_bottom_used = bonus_section_bottom if bonus_items else main_section_bottom
-            vertical_overflow = vertical_bottom_used < products_bottom - 0.001
+            lowest_bottom = bonus_bottom if below_bonus_rows else main_bottom
+            vertical_overflow = lowest_bottom < products_bottom - 0.001
             adjusted_to_fit = adjusted_to_fit or exceeded or vertical_overflow
 
             main_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(above_bonus_rows)})
@@ -2766,16 +2940,14 @@ def render_full_pallet_pdf(
                 st.write(
                     {
                         "side": pdata.side_letter,
-                        "page_size": f"{PAGE_W}x{dynamic_page_h}",
+                        "page_size": f"{PAGE_W}x{PAGE_H}",
                         "margins": {"left": cx0, "right": cx1, "top": cy1, "bottom": cy0},
                         "bucket_regions": {
                             "ppt": [round(bucket_a_top, 1), round(bucket_a_bottom, 1)],
                             "holders": [round(bucket_b_top, 1), round(bucket_b_bottom, 1)],
                             "products_available": [round(products_top, 1), round(products_bottom, 1)],
-                            "main_used": [round(main_section_top, 1), round(main_section_bottom, 1)]
-                            if main_items else None,
-                            "bonus_used": [round(bonus_section_top, 1), round(bonus_section_bottom, 1)]
-                            if bonus_items else None,
+                            "main_used": [round(products_top, 1), round(main_bottom, 1)] if above_bonus_rows else None,
+                            "bonus_used": [round(bonus_top, 1), round(bonus_bottom, 1)] if below_bonus_rows else None,
                         },
                         "grid_detected": {
                             "main_cols": main_cols,
