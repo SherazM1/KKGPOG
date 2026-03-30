@@ -1,21 +1,15 @@
 from __future__ import annotations
 
+import io
+import re
+from typing import Dict, List, Optional, Tuple
 
-
-from typing import List, Optional, Tuple
-
-
-
+import numpy as np
 import pdfplumber
 
-
-
-from app.shared.clustering import boundaries_from_centers, cluster_positions
-
+from app.shared.clustering import boundaries_from_centers, kmeans_1d
 from app.shared.constants import LAST5_RE
-
 from app.shared.models import CellData, PageData
-
 
 
 def parse_label_cell_text(text: str) -> Tuple[str, str, Optional[int]]:

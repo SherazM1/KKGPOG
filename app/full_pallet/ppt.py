@@ -1,19 +1,13 @@
 from __future__ import annotations
 
-
-
 import io
-
 import re
-
 from typing import Dict, List, Optional, Tuple
 
-
+from PIL import Image
 
 from app.shared.models import PptCard, PptSideCards
-
 from app.shared.text_utils import _coerce_int
-
 
 
 def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:

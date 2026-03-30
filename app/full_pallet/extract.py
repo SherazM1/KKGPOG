@@ -1,23 +1,17 @@
 from __future__ import annotations
 
-
-
+import io
 import re
+from typing import Dict, List, Tuple
 
-from typing import List
-
-
-
+import numpy as np
 import pdfplumber
 
-
-
+from app.shared.clustering import boundaries_from_centers, cluster_positions
 from app.shared.models import AnnotationBox, CellData, FullPalletPage
-
 from app.shared.pdf_utils import _group_nearby, _union
-
+from app.shared.text_utils import _to_last5
 from app.standard_display.extract import parse_label_cell_text
-
 
 
 def extract_full_pallet_pages(labels_pdf_bytes: bytes) -> List[FullPalletPage]:

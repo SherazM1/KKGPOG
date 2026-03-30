@@ -1,33 +1,20 @@
 from __future__ import annotations
 
-
-
 import io
-
 from datetime import date
-
 from typing import Dict, List
 
-
-
 import fitz
-
 from reportlab.lib.utils import ImageReader
-
+from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfgen import canvas
 
-
-
+from app.shared.constants import NAVY_RGB
 from app.shared.fonts import TITLE_FONT
-
 from app.shared.image_utils import _hex_to_rgb, _try_load_logo, crop_image_cell
-
 from app.shared.matching import _resolve
-
 from app.shared.models import MatrixRow, PageData
-
 from app.shared.text_utils import _draw_cell_text_block, _draw_footer, _draw_header, _fit_font
-
 
 
 def render_standard_pog_pdf(

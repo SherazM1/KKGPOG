@@ -1,25 +1,17 @@
 from __future__ import annotations
 
-
-
 import io
-
+import math
 import re
-
 from typing import Dict, List, Optional, Tuple
 
-
-
+import pandas as pd
 from openpyxl import load_workbook
+from PIL import Image
 
-
-
-from app.shared.constants import IMAGE_ANCHOR_ROW_0BASED
-
+from app.shared.constants import DIGITS_RE, IMAGE_ANCHOR_ROW_0BASED
 from app.shared.models import GiftHolder
-
-from app.shared.text_utils import _coerce_int
-
+from app.shared.text_utils import _coerce_int, _norm_header
 
 
 def _coerce_item_no(v: object) -> Optional[str]:

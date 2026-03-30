@@ -5,6 +5,7 @@ from __future__ import annotations
 import difflib
 
 import io
+import re
 
 from typing import Dict, List, Optional
 
@@ -40,6 +41,7 @@ from app.shared.text_utils import (
 
 
 
+@st.cache_data(show_spinner=False)
 def load_matrix_index(matrix_bytes: bytes) -> Dict[str, List[MatrixRow]]:
     df_raw = pd.read_excel(io.BytesIO(matrix_bytes), header=None)
 
@@ -90,6 +92,7 @@ def load_matrix_index(matrix_bytes: bytes) -> Dict[str, List[MatrixRow]]:
 
 
 
+@st.cache_data(show_spinner=False)
 def load_full_pallet_matrix_index(matrix_bytes: bytes) -> Dict[str, List[MatrixRow]]:
     """Full-pallet matrix index.
 

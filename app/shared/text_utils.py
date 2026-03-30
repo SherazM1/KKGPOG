@@ -3,15 +3,17 @@ from __future__ import annotations
 
 
 import math
-
 import re
+from datetime import date
 
 from typing import List, Optional, Tuple
 
 
 
 import pandas as pd
+from PIL import Image
 
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 
 from reportlab.pdfgen import canvas
@@ -21,6 +23,8 @@ from reportlab.pdfgen import canvas
 from app.shared.constants import DIGITS_RE, NAVY_RGB
 
 from app.shared.fonts import BODY_BOLD_FONT, BODY_FONT, TITLE_FONT
+
+_STOPWORDS = {"A", "AN", "AND", "FOR", "IN", "OF", "ON", "OR", "THE", "TO", "WITH"}
 
 
 

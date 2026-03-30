@@ -1,45 +1,29 @@
 from __future__ import annotations
 
-
-
 import io
-
 from datetime import date
-
-from typing import Dict, List, Optional
-
-
+from typing import Dict, List, Optional, Tuple
 
 import fitz
-
+import numpy as np
 from PIL import Image
-
 from reportlab.lib.utils import ImageReader
-
+from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfgen import canvas
 
-
-
+from app.shared.constants import NAVY_RGB
 from app.shared.fonts import BODY_BOLD_FONT, BODY_FONT, TITLE_FONT
-
 from app.shared.image_utils import _hex_to_rgb, _try_load_logo, crop_image_cell, image_from_bytes
-
 from app.shared.matching import resolve_full_pallet
-
-from app.shared.models import FullPalletPage, GiftHolder, MatrixRow, PptSideCards
-
+from app.shared.models import CellData, FullPalletPage, GiftHolder, MatrixRow, PptSideCards
 from app.shared.text_utils import (
-
     _draw_footer,
-
     _draw_full_pallet_header,
-
     _ellipsis,
-
     _fit_font,
-
+    _fit_name_preserve_qualifiers,
+    _to_last5,
 )
-
 
 
 def render_full_pallet_pdf(
