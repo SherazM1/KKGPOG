@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from typing import List, Optional, Tuple
+import numpy as np
 
 
 
+@dataclass(frozen=True)
 class MatrixRow:
     upc12: str
     norm_name: str
@@ -16,6 +18,7 @@ class MatrixRow:
 
 
 
+@dataclass(frozen=True)
 class CellData:
     row: int
     col: int
@@ -27,6 +30,7 @@ class CellData:
 
 
 
+@dataclass(frozen=True)
 class PageData:
     # standard display
     page_index: int
@@ -36,6 +40,7 @@ class PageData:
 
 
 
+@dataclass(frozen=True)
 class AnnotationBox:
     kind: str  # bonus_strip | gift_card_holders | marketing_signage | fraud_signage | wm_new_pkg
     label: str
@@ -43,6 +48,7 @@ class AnnotationBox:
 
 
 
+@dataclass(frozen=True)
 class FullPalletPage:
     page_index: int
     side_letter: str
@@ -51,6 +57,7 @@ class FullPalletPage:
 
 
 
+@dataclass(frozen=True)
 class PptCard:
     card_id: str
     title: str
@@ -59,6 +66,7 @@ class PptCard:
 
 
 
+@dataclass(frozen=True)
 class PptSideCards:
     side: str
     top8: List[PptCard]
@@ -66,6 +74,7 @@ class PptSideCards:
 
 
 
+@dataclass(frozen=True)
 class GiftHolder:
     side: str
     item_no: str
