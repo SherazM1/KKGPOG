@@ -72,42 +72,70 @@ def _compute_mid_band_anchor_bounds(
         if _wt(w) in {"WM", "GIFTCARD", "GIFTCAR", "IN", "NEW", "PKG", "D"}
         and float(w.get("top", 0.0)) < ph * 0.35
     ]
-    if holder_words:
-        holder_bottom = max(float(w.get("bottom", 0.0)) for w in holder_words) + 8.0
-    else:
-        holder_bottom = ph * 0.31
+    holder_bottom = max(float(w.get("bottom", 0.0)) for w in holder_words) + 8.0 if holder_words else ph * 0.31
 
     if bonus_top is None:
         bonus_top = ph * 0.84
 
+    # Anchor middle band from BONUS upward (deterministic 3-row zone).
+    row_h = max(44.0, min(76.0, ph * 0.052))
+    row_gap = max(8.0, min(18.0, ph * 0.012))
+    outer_pad_top = 8.0
+    outer_pad_bottom = 6.0
+
+    mid_bottom = bonus_top - outer_pad_bottom
+    mid_top = mid_bottom - (3.0 * row_h + 2.0 * row_gap + outer_pad_top)
+
+    # Never allow the middle-band template to climb into holder/GCI area.
+    min_top = holder_bottom + 24.0
+    if mid_top < min_top:
+        mid_top = min_top
+        mid_bottom = mid_top + (3.0 * row_h + 2.0 * row_gap + outer_pad_top)
+    if mid_bottom >= bonus_top - 2.0:
+        mid_bottom = bonus_top - 6.0
+
+    # Constrain to the visual product band near the middle section, not global token span.
+    x0 = pw * 0.16
+    x1 = pw * 0.84
+    x_window_top = max(0.0, mid_top - ph * 0.04)
+    x_window_bottom = min(ph, mid_bottom + ph * 0.03)
     five_words = [w for w in words if re.fullmatch(r"\d{5}", str(w.get("text", "")))]
     five_words = [
         w
         for w in five_words
-        if float(w.get("top", 0.0)) >= max(0.0, holder_bottom - 8.0)
-        and float(w.get("bottom", 0.0)) < (bonus_top - 2.0)
+        if x_window_top <= float(w.get("top", 0.0)) <= x_window_bottom
     ]
-
     if five_words:
-        x0 = max(0.0, min(float(w["x0"]) for w in five_words) - 16.0)
-        x1 = min(pw, max(float(w["x1"]) for w in five_words) + 16.0)
-    else:
-        x0 = pw * 0.18
-        x1 = pw * 0.82
+        x0 = max(x0, min(float(w["x0"]) for w in five_words) - 10.0)
+        x1 = min(x1, max(float(w["x1"]) for w in five_words) + 10.0)
 
-    top = holder_bottom + 8.0
-    bottom = bonus_top - 10.0
+    # Clamp inward from known signage bands.
+    mkt_words = [w for w in words if _wt(w) in {"MARKETING", "MESSAGE", "PANEL"}]
+    fraud_words = [w for w in words if _wt(w) in {"FRAUD", "SIGNAGE"}]
+    signage_groups = _group_nearby(mkt_words + fraud_words, x_tol=40, y_tol=20)
+    left_clamp = x0
+    right_clamp = x1
+    for grp in signage_groups:
+        gx0 = min(float(w["x0"]) for w in grp)
+        gx1 = max(float(w["x1"]) for w in grp)
+        gy0 = min(float(w["top"]) for w in grp)
+        gy1 = max(float(w["bottom"]) for w in grp)
+        # Only clamp using groups that vertically overlap the middle band zone.
+        if gy1 < mid_top - 20.0 or gy0 > mid_bottom + 20.0:
+            continue
+        gcx = (gx0 + gx1) / 2.0
+        if gcx < pw / 2.0:
+            left_clamp = max(left_clamp, gx1 + 8.0)
+        else:
+            right_clamp = min(right_clamp, gx0 - 8.0)
 
-    if bottom - top < ph * 0.10:
-        center = (top + bottom) / 2.0
-        half = max(48.0, ph * 0.08)
-        top = center - half
-        bottom = center + half
+    x0 = max(x0, left_clamp)
+    x1 = min(x1, right_clamp)
 
-    top = max(holder_bottom + 2.0, top)
-    bottom = min(max(top + 30.0, bottom), ph - 8.0)
+    top = max(mid_top, holder_bottom + 20.0)
+    bottom = min(mid_bottom, bonus_top - 4.0)
 
-    if x1 - x0 < 120.0 or bottom - top < 48.0:
+    if x1 - x0 < 140.0 or bottom - top < 120.0:
         return None
 
     return (x0, top, x1, bottom)
@@ -251,6 +279,7 @@ def _extract_mid_band_above_bonus(
         row_slot_counts=row_slot_counts,
         row_block_grouping=row_block_grouping,
         shape_valid=shape_valid,
+        anchor_bbox=(ax0, atop, ax1, abottom),
     )
 
 

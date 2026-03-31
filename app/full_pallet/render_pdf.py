@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import io
 import math
 from datetime import date
@@ -32,6 +33,7 @@ from app.shared.text_utils import (
     _ellipsis,
     _fit_font,
     _fit_name_preserve_qualifiers,
+    _norm_name,
     _to_last5,
 )
 
@@ -68,6 +70,7 @@ def render_full_pallet_pdf(
     FILLED_STROKE = (0.78, 0.78, 0.80)
 
     logo = _try_load_logo()
+    all_matrix_rows = [r for rows in matrix_idx.values() for r in rows]
 
     def _marker_y(p: FullPalletPage, kind: str) -> Optional[float]:
         for ann in p.annotations:
@@ -628,6 +631,26 @@ def render_full_pallet_pdf(
             "crop_inset": crop_inset,
         }
 
+    def _resolve_mid_band_slot(slot: FullPalletMidBandSlot) -> Optional[MatrixRow]:
+        primary = resolve_full_pallet(slot.last5, slot.parsed_name, matrix_idx) if slot.last5 else None
+        if primary is not None:
+            return primary
+
+        # Secondary recovery: name-only best candidate when last5 is missing/unusable.
+        label = (slot.parsed_name or slot.raw_label_text or "").strip()
+        if not label or not all_matrix_rows:
+            return None
+
+        target = _norm_name(label)
+        best: Optional[Tuple[float, MatrixRow]] = None
+        for row in all_matrix_rows:
+            ratio = difflib.SequenceMatcher(None, target, row.norm_name).ratio()
+            if best is None or ratio > best[0]:
+                best = (ratio, row)
+        if best is None:
+            return None
+        return best[1] if best[0] >= 0.78 else None
+
     def _draw_canonical_mid_band_section(
         p: FullPalletPage,
         section: FullPalletMidBandSection,
@@ -674,7 +697,7 @@ def render_full_pallet_pdf(
             for slot in ordered_slots:
                 x = row_xs[slot.slot_in_row]
 
-                match = resolve_full_pallet(slot.last5, slot.parsed_name, matrix_idx) if slot.last5 else None
+                match = _resolve_mid_band_slot(slot)
                 upc12 = match.upc12 if match else None
                 cpp = match.cpp_qty if match else None
                 disp_name = (
@@ -1216,6 +1239,7 @@ def render_full_pallet_pdf(
                             "extract_path": "template_slots",
                             "present": True,
                             "shape_valid": mid_band.shape_valid,
+                            "anchor_bbox": list(mid_band.anchor_bbox) if mid_band.anchor_bbox else None,
                             "slot_count": mid_band.slot_count,
                             "row_slot_counts": mid_band.row_slot_counts,
                             "row_block_grouping": mid_band.row_block_grouping,
@@ -1319,6 +1343,7 @@ def render_full_pallet_pdf(
                         "canonical_mid_band_failure": {
                             "present": bool(mid_band),
                             "shape_valid": bool(mid_band.shape_valid) if mid_band else False,
+                            "anchor_bbox": list(mid_band.anchor_bbox) if (mid_band and mid_band.anchor_bbox) else None,
                             "slot_count": mid_band.slot_count if mid_band else None,
                             "row_slot_counts": mid_band.row_slot_counts if mid_band else None,
                             "row_block_grouping": mid_band.row_block_grouping if mid_band else None,
@@ -1528,11 +1553,26 @@ def render_full_pallet_pdf(
                 main_slots_total = len(main_slots)
                 canonical_row_counts = [len(r.slots) for r in mid_band.rows]
                 canonical_block_counts = mid_band.row_block_grouping
+                anchor_bbox = list(mid_band.anchor_bbox) if mid_band.anchor_bbox else None
+                suspicious_patterns = ("WM", "PKG", "GCI", "MARKETING", "FRAUD", "BONUS")
+                suspicious_slots = [
+                    s.slot_id
+                    for s in main_slots
+                    if any(p in (s.raw_label_text or "").upper() for p in suspicious_patterns)
+                ]
+                suspicious_top_row_slots = [
+                    s.slot_id
+                    for s in main_slots
+                    if s.row_index == 0 and any(p in (s.raw_label_text or "").upper() for p in suspicious_patterns)
+                ]
             else:
                 main_last5_codes = []
                 main_slots_total = 24
                 canonical_row_counts = [8, 8, 8]
                 canonical_block_counts = [[2, 4, 2], [2, 4, 2], [2, 4, 2]]
+                anchor_bbox = None
+                suspicious_slots = []
+                suspicious_top_row_slots = []
 
             bonus_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(below_bonus_rows)})
             bonus_slots_total = sum(1 for c in pdata.cells if c.row in set(below_bonus_rows))
@@ -1552,11 +1592,15 @@ def render_full_pallet_pdf(
                         },
                         "mid_band_above_bonus": {
                             "render_source": main_render_source,
+                            "path": "deterministic_template",
                             "present": bool(mid_band),
                             "shape_valid": bool(mid_band.shape_valid) if mid_band else False,
                             "shape_matches_3x8_242": canonical_mid_band_ok,
+                            "anchor_bbox": anchor_bbox,
                             "row_slot_counts": canonical_row_counts,
                             "row_block_grouping": canonical_block_counts,
+                            "suspicious_slot_text_ids": sorted(set(suspicious_slots)),
+                            "suspicious_top_row_ids": sorted(set(suspicious_top_row_slots)),
                         },
                         "grid_detected": {
                             "main_cols": main_cols,

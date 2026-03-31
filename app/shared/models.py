@@ -74,6 +74,7 @@ class FullPalletMidBandSection:
     row_slot_counts: List[int]
     row_block_grouping: List[List[int]]
     shape_valid: bool
+    anchor_bbox: Optional[Tuple[float, float, float, float]] = None
 
 
 @dataclass(frozen=True)
