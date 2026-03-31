@@ -126,7 +126,7 @@ def _compute_mid_band_anchor_bounds(
     holder_words = [
         w
         for w in words
-        if _wt(w) in {"WM", "GIFTCARD", "GIFTCAR", "IN", "NEW", "PKG", "D"}
+        if _wt(w) in {"WM", "GIFTCARD", "GIFTCAR", "PKG"}
         and float(w.get("top", 0.0)) < ph * 0.35
     ]
     holder_bottom = max(float(w.get("bottom", 0.0)) for w in holder_words) + 8.0 if holder_words else ph * 0.31
@@ -211,15 +211,24 @@ def _build_mid_band_template_slots(
 
     inter_gap = max(10.0, min(28.0, section_w * 0.045))
     intra_gap = max(4.0, min(12.0, section_w * 0.014))
-    row_gap = max(6.0, min(20.0, section_h * 0.08))
+    row_gap = max(6.0, min(14.0, section_h * 0.08))
 
     slot_w = (section_w - (2.0 * inter_gap) - (5.0 * intra_gap)) / 8.0
-    slot_h = (section_h - (2.0 * row_gap)) / 3.0
+    row_h = max(40.0, min(62.0, section_h * 0.28))
+    needed_h = 3.0 * row_h + 2.0 * row_gap
 
     if slot_w < 18.0:
         return None
-    if slot_h < 12.0:
+    if section_h < 90.0:
         return None
+
+    if needed_h > section_h:
+        # Prefer keeping row gaps stable and slightly compress rows to fit.
+        row_h = (section_h - 2.0 * row_gap) / 3.0
+    if row_h < 24.0:
+        return None
+
+    slot_h = row_h
 
     row_xs = [
         x0,
@@ -234,8 +243,13 @@ def _build_mid_band_template_slots(
 
     rows: List[List[Tuple[float, float, float, float]]] = []
     for r in range(3):
-        ry0 = top + r * (slot_h + row_gap)
+        ry0 = top + r * (row_h + row_gap)
         ry1 = ry0 + slot_h
+        if r == 2 and ry1 > bottom:
+            # final guardrail against a slightly tight anchor
+            overflow = ry1 - bottom
+            ry0 -= overflow
+            ry1 -= overflow
         rows.append([(sx, ry0, sx + slot_w, ry1) for sx in row_xs])
 
     return rows
