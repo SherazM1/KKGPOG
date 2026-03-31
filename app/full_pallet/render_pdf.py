@@ -541,6 +541,8 @@ def render_full_pallet_pdf(
                     )
                 except Exception:
                     img = None
+                if img is None and missing_image_slots is not None:
+                    missing_image_slots.append(f"r{cell.row}c{cell.col}")
 
                 if match:
                     matched_cells += 1
@@ -676,9 +678,9 @@ def render_full_pallet_pdf(
                 upc12 = match.upc12 if match else None
                 cpp = match.cpp_qty if match else None
                 disp_name = (
-                match.display_name
-                if match and match.display_name
-                else (slot.parsed_name or slot.raw_label_text or "").strip()
+                    match.display_name
+                    if match and match.display_name
+                    else (slot.parsed_name or slot.raw_label_text or "").strip()
                 )
 
                 if upc12:
@@ -723,6 +725,57 @@ def render_full_pallet_pdf(
 
         sec_bottom = grid_top - 3 * card_h - 2 * row_gutter
         return 8, 3, overflow, sec_bottom, slots_drawn, 8
+
+    def _draw_mid_band_placeholder_section(
+        plan: Dict[str, float],
+        sec_top: float,
+        unresolved_bucket: List[str],
+        content_x0: float,
+    ) -> Tuple[int, int, bool, float, int, int]:
+        nonlocal rightmost_used, unmatched_cells
+
+        card_w = float(plan["card_w"])
+        card_h = float(plan["card_h"])
+        row_gutter = float(plan["row_gutter"])
+        intra_gap = float(plan["intra_gap"])
+        inter_gap = float(plan["inter_gap"])
+        total_w = float(plan["total_w"])
+
+        start_x = content_x0 + max(0.0, (content_w - total_w) / 2.0)
+        row_xs = [
+            start_x,
+            start_x + card_w + intra_gap,
+            start_x + 2 * card_w + intra_gap + inter_gap,
+            start_x + 3 * card_w + 2 * intra_gap + inter_gap,
+            start_x + 4 * card_w + 3 * intra_gap + inter_gap,
+            start_x + 5 * card_w + 4 * intra_gap + inter_gap,
+            start_x + 6 * card_w + 5 * intra_gap + 2 * inter_gap,
+            start_x + 7 * card_w + 6 * intra_gap + 2 * inter_gap,
+        ]
+        rightmost_used = max(rightmost_used, start_x + total_w)
+
+        grid_top = sec_top
+        overflow = bool(plan["overflow"])
+        for ri in range(3):
+            y = grid_top - (ri + 1) * card_h - ri * row_gutter
+            for ci in range(8):
+                x = row_xs[ci]
+                if x < content_x0 - 0.001 or (x + card_w) > (content_x0 + content_w + 0.001):
+                    overflow = True
+                c.setFillColorRGB(1, 1, 1)
+                c.setStrokeColorRGB(*EMPTY_STROKE)
+                c.setLineWidth(0.6)
+                c.rect(x, y, card_w, card_h, stroke=1, fill=1)
+                sid = f"MB-R{ri + 1}-S{ci + 1}"
+                unresolved_bucket.append(sid)
+                if debug_overlay:
+                    c.setFillColorRGB(0.55, 0.25, 0.25)
+                    c.setFont("Helvetica", 6)
+                    c.drawString(x + 2, y + card_h - 8, sid)
+
+        unmatched_cells += 24
+        sec_bottom = grid_top - 3 * card_h - 2 * row_gutter
+        return 8, 3, overflow, sec_bottom, 24, 8
     def _draw_debug_box(
         c: canvas.Canvas, x: float, y: float, w: float, h: float, label: str
     ) -> None:
@@ -1160,6 +1213,7 @@ def render_full_pallet_pdf(
                     {
                         "side": pdata.side_letter,
                         "mid_band_extract_debug": {
+                            "extract_path": "template_slots",
                             "present": True,
                             "shape_valid": mid_band.shape_valid,
                             "slot_count": mid_band.slot_count,
@@ -1190,19 +1244,8 @@ def render_full_pallet_pdf(
                 below_bonus_rows,
                 product_map,
             )
-            legacy_main_rows = slot_map["main"]["row_ids"]
 
             canonical_main_plan = _measure_canonical_mid_band(content_w, include_bar=False)
-
-            main_plan = _measure_section_shape(
-                pdata,
-                legacy_main_rows,
-                "main",
-                content_w,
-                global_cols,
-                global_gap_units,
-                include_bar=False,
-            )
             bonus_plan = _measure_section_shape(
                 pdata,
                 slot_map["bonus"]["row_ids"],
@@ -1213,12 +1256,8 @@ def render_full_pallet_pdf(
                 include_bar=bool(slot_map["bonus"]["row_ids"]),
             )
 
-            products_block_h = (
-                float(canonical_main_plan["total_h"])
-                if canonical_mid_band_ok
-                else float(main_plan["total_h"])
-            )
-            if (canonical_mid_band_ok or legacy_main_rows) and below_bonus_rows:
+            products_block_h = float(canonical_main_plan["total_h"])
+            if below_bonus_rows:
                 products_block_h += BUCKET_GAP
             products_block_h += float(bonus_plan["total_h"])
 
@@ -1272,21 +1311,22 @@ def render_full_pallet_pdf(
             unresolved_bonus: List[str] = []
             missing_main_images: List[str] = []
             missing_bonus_images: List[str] = []
-            main_render_source = "canonical_mid_band" if canonical_mid_band_ok else "legacy_rows_fallback"
+            main_render_source = "mid_band_template" if canonical_mid_band_ok else "mid_band_template_placeholder"
             if debug and not canonical_mid_band_ok:
                 st.write(
-            {
-            "side": pdata.side_letter,
-            "canonical_mid_band_failure": {
-                "present": bool(mid_band),
-                "shape_valid": bool(mid_band.shape_valid) if mid_band else False,
-                "slot_count": mid_band.slot_count if mid_band else None,
-                "row_slot_counts": mid_band.row_slot_counts if mid_band else None,
-                "row_block_grouping": mid_band.row_block_grouping if mid_band else None,
-                "fallback": "legacy_rows_fallback",
-            },
-        }
-    )
+                    {
+                        "side": pdata.side_letter,
+                        "canonical_mid_band_failure": {
+                            "present": bool(mid_band),
+                            "shape_valid": bool(mid_band.shape_valid) if mid_band else False,
+                            "slot_count": mid_band.slot_count if mid_band else None,
+                            "row_slot_counts": mid_band.row_slot_counts if mid_band else None,
+                            "row_block_grouping": mid_band.row_block_grouping if mid_band else None,
+                            "fallback": "disabled_for_mid_band",
+                            "render_mode": "mid_band_template_placeholder",
+                        },
+                    }
+                )
 
             # Bucket A: PPT Top Cards
             a_gap_y = 8.0
@@ -1411,7 +1451,7 @@ def render_full_pallet_pdf(
                     missing_main_images,
                     cx0,
                 )
-            elif legacy_main_rows:
+            else:
                 (
                     main_cols,
                     main_rows_count,
@@ -1419,18 +1459,12 @@ def render_full_pallet_pdf(
                     main_bottom,
                     _main_occ_count,
                     _main_sec_cols,
-                ) = _draw_shape_preserving_section(
-                    pdata,
-                    main_plan,
+                ) = _draw_mid_band_placeholder_section(
+                    canonical_main_plan,
                     products_top,
-                    None,
                     unresolved_main,
                     cx0,
-                    product_map,
-                    missing_main_images,
                 )
-            else:
-                main_bottom = products_top
 
             bonus_top = main_bottom - (
                 BUCKET_GAP if (main_rows_count > 0 and slot_map["bonus"]["row_ids"]) else 0.0
@@ -1470,7 +1504,7 @@ def render_full_pallet_pdf(
                         main_bottom,
                         content_w,
                         products_top - main_bottom,
-                        "MAIN SHAPE",
+                        "MAIN TEMPLATE",
                     )
                 if below_bonus_rows:
                     _draw_debug_box(
@@ -1495,10 +1529,10 @@ def render_full_pallet_pdf(
                 canonical_row_counts = [len(r.slots) for r in mid_band.rows]
                 canonical_block_counts = mid_band.row_block_grouping
             else:
-                main_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(above_bonus_rows)})
-                main_slots_total = sum(1 for c in pdata.cells if c.row in set(above_bonus_rows))
-                canonical_row_counts = []
-                canonical_block_counts = []
+                main_last5_codes = []
+                main_slots_total = 24
+                canonical_row_counts = [8, 8, 8]
+                canonical_block_counts = [[2, 4, 2], [2, 4, 2], [2, 4, 2]]
 
             bonus_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(below_bonus_rows)})
             bonus_slots_total = sum(1 for c in pdata.cells if c.row in set(below_bonus_rows))
