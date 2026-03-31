@@ -657,16 +657,18 @@ def render_full_pallet_pdf(
             start_x + 4 * card_w + 3 * intra_gap + inter_gap,
             start_x + 5 * card_w + 4 * intra_gap + inter_gap,
             start_x + 6 * card_w + 5 * intra_gap + 2 * inter_gap,
-            start_x + 7 * card_w + 5 * intra_gap + 2 * inter_gap,
+            start_x + 7 * card_w + 6 * intra_gap + 2 * inter_gap,
         ]
         rightmost_used = max(rightmost_used, start_x + total_w)
 
         grid_top = y_cursor
         slots_drawn = 0
         overflow = bool(plan["overflow"])
+
         for row in sorted(section.rows, key=lambda r: r.row_index):
             y = grid_top - (row.row_index + 1) * card_h - row.row_index * row_gutter
             ordered_slots: List[FullPalletMidBandSlot] = sorted(row.slots, key=lambda s: s.slot_in_row)
+
             for slot in ordered_slots:
                 x = row_xs[slot.slot_in_row]
 
@@ -674,9 +676,9 @@ def render_full_pallet_pdf(
                 upc12 = match.upc12 if match else None
                 cpp = match.cpp_qty if match else None
                 disp_name = (
-                    match.display_name
-                    if match and match.display_name
-                    else (slot.parsed_name or slot.raw_label_text or "").strip()
+                match.display_name
+                if match and match.display_name
+                else (slot.parsed_name or slot.raw_label_text or "").strip()
                 )
 
                 if upc12:
@@ -699,8 +701,7 @@ def render_full_pallet_pdf(
                     )
                 except Exception:
                     img = None
-                if img is None and missing_image_slots is not None:
-                    missing_image_slots.append(f"r{cell.row}c{cell.col}")
+
                 if img is None:
                     missing_image_slots.append(slot.slot_id)
 
@@ -712,15 +713,16 @@ def render_full_pallet_pdf(
                 c.setLineWidth(0.75)
                 c.rect(x, y, card_w, card_h, stroke=1, fill=1)
                 _draw_card(c, x, y, card_w, card_h, img, upc_str, disp_name, cpp)
+
                 if debug_overlay:
                     c.setFillColorRGB(0.35, 0.35, 0.35)
                     c.setFont("Helvetica", 6)
                     c.drawString(x + 2, y + card_h - 8, slot.slot_id)
+
                 slots_drawn += 1
 
         sec_bottom = grid_top - 3 * card_h - 2 * row_gutter
         return 8, 3, overflow, sec_bottom, slots_drawn, 8
-
     def _draw_debug_box(
         c: canvas.Canvas, x: float, y: float, w: float, h: float, label: str
     ) -> None:
@@ -1153,6 +1155,20 @@ def render_full_pallet_pdf(
             mid_band = pdata.mid_band_above_bonus
             canonical_mid_band_ok = _mid_band_shape_ok(mid_band)
 
+            if debug and mid_band is not None:
+                st.write(
+                    {
+                        "side": pdata.side_letter,
+                        "mid_band_extract_debug": {
+                            "present": True,
+                            "shape_valid": mid_band.shape_valid,
+                            "slot_count": mid_band.slot_count,
+                            "row_slot_counts": mid_band.row_slot_counts,
+                            "row_block_grouping": mid_band.row_block_grouping,
+                        },
+                    }
+                )
+
             side_ppt = (
                 ppt_cards.get(pdata.side_letter, PptSideCards(pdata.side_letter, [], []))
                 if ppt_cards
@@ -1257,6 +1273,20 @@ def render_full_pallet_pdf(
             missing_main_images: List[str] = []
             missing_bonus_images: List[str] = []
             main_render_source = "canonical_mid_band" if canonical_mid_band_ok else "legacy_rows_fallback"
+            if debug and not canonical_mid_band_ok:
+                st.write(
+            {
+            "side": pdata.side_letter,
+            "canonical_mid_band_failure": {
+                "present": bool(mid_band),
+                "shape_valid": bool(mid_band.shape_valid) if mid_band else False,
+                "slot_count": mid_band.slot_count if mid_band else None,
+                "row_slot_counts": mid_band.row_slot_counts if mid_band else None,
+                "row_block_grouping": mid_band.row_block_grouping if mid_band else None,
+                "fallback": "legacy_rows_fallback",
+            },
+        }
+    )
 
             # Bucket A: PPT Top Cards
             a_gap_y = 8.0

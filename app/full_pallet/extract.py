@@ -58,13 +58,38 @@ def _pick_row_window(groups: List[dict], bonus_y: Optional[float]) -> List[dict]
     if len(groups) < 3:
         return []
 
+    eligible: List[List[dict]] = []
+    for i in range(len(groups) - 2):
+        window = groups[i : i + 3]
+        ys = [float(g["y"]) for g in window]
+        counts = [len(g["rects"]) for g in window]
+
+        if bonus_y is not None and any(y >= bonus_y for y in ys):
+            continue
+        if min(counts) < 8:
+            continue
+
+        eligible.append(window)
+
+    if eligible:
+        def score(window: List[dict]) -> Tuple[float, float, float]:
+            ys = [float(g["y"]) for g in window]
+            counts = [len(g["rects"]) for g in window]
+            bottom_dist = (bonus_y - ys[-1]) if bonus_y is not None else -ys[-1]
+            gaps = [ys[1] - ys[0], ys[2] - ys[1]]
+            gap_std = float(np.std(gaps)) if len(gaps) == 2 else 999.0
+            count_penalty = float(sum(abs(c - 8) for c in counts))
+            return (bottom_dist, gap_std, count_penalty)
+
+        return min(eligible, key=score)
+
     best: Optional[Tuple[float, List[dict]]] = None
     for i in range(len(groups) - 2):
         window = groups[i : i + 3]
         counts = [len(g["rects"]) for g in window]
         ys = [float(g["y"]) for g in window]
 
-        score = float(sum(abs(c - 8) * 12.0 for c in counts))
+        score = float(sum(abs(c - 8) * 20.0 for c in counts))
         if any(c < 8 for c in counts):
             score += 1000.0
 
@@ -72,18 +97,47 @@ def _pick_row_window(groups: List[dict], bonus_y: Optional[float]) -> List[dict]
             for y in ys:
                 if y >= bonus_y:
                     score += 1000.0
+            score += max(0.0, bonus_y - ys[-1]) * 0.01
 
-        if len(ys) == 3:
-            gaps = [ys[1] - ys[0], ys[2] - ys[1]]
-            if min(gaps) <= 0:
-                score += 500.0
-            else:
-                score += float(np.std(gaps))
+        gaps = [ys[1] - ys[0], ys[2] - ys[1]]
+        if min(gaps) <= 0:
+            score += 500.0
+        else:
+            score += float(np.std(gaps)) * 4.0
 
         if best is None or score < best[0]:
             best = (score, window)
 
     return best[1] if best else []
+
+
+def _score_eight_rect_window(rects: List[Tuple[float, float, float, float]]) -> float:
+    xs = [_bbox_center(r)[0] for r in rects]
+    gaps = [xs[i + 1] - xs[i] for i in range(7)]
+    if min(gaps) <= 0:
+        return 1e9
+
+    left_gaps = gaps[0:1]
+    center_gaps = gaps[2:5]
+    right_gaps = gaps[6:7]
+    intra = left_gaps + center_gaps + right_gaps
+    inter = [gaps[1], gaps[5]]
+
+    intra_med = float(np.median(intra)) if intra else 1.0
+    inter_med = float(np.median(inter)) if inter else intra_med
+
+    if intra_med <= 0:
+        return 1e9
+
+    ratio_penalty = 0.0
+    if inter_med < intra_med * 1.2:
+        ratio_penalty += (intra_med * 1.2 - inter_med) * 20.0
+
+    intra_std = float(np.std(intra)) if intra else 0.0
+    inter_std = float(np.std(inter)) if inter else 0.0
+    span = xs[-1] - xs[0]
+
+    return span + intra_std * 10.0 + inter_std * 6.0 + ratio_penalty
 
 
 def _pick_eight_in_row(rects: List[Tuple[float, float, float, float]]) -> List[Tuple[float, float, float, float]]:
@@ -97,12 +151,10 @@ def _pick_eight_in_row(rects: List[Tuple[float, float, float, float]]) -> List[T
     best: Optional[Tuple[float, List[Tuple[float, float, float, float]]]] = None
     for i in range(len(sorted_rects) - 7):
         window = sorted_rects[i : i + 8]
-        xs = [_bbox_center(r)[0] for r in window]
-        gaps = [xs[j + 1] - xs[j] for j in range(7)]
-        span = xs[-1] - xs[0]
-        score = span + float(np.std(gaps)) * 6.0
+        score = _score_eight_rect_window(window)
         if best is None or score < best[0]:
             best = (score, window)
+
     return best[1] if best else []
 
 
@@ -195,6 +247,7 @@ def _extract_mid_band_above_bonus(
             if not last5_from_name:
                 token_hits = [w for w in five_words if _contains_point(rect, *_word_center(w))]
                 if token_hits:
+                    token_hits.sort(key=lambda w: (_word_center(w)[1], _word_center(w)[0]))
                     last5_from_name = _to_last5(str(token_hits[0].get("text", "")))
 
             if slot_in_row <= 1:
@@ -253,7 +306,6 @@ def _extract_mid_band_above_bonus(
         row_block_grouping=row_block_grouping,
         shape_valid=shape_valid,
     )
-
 
 def _extract_legacy_cells(
     page: pdfplumber.page.Page,
