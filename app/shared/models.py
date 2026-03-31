@@ -55,6 +55,9 @@ class FullPalletMidBandSlot:
     parsed_name: str
     last5: str
     qty: Optional[int]
+    extraction_bbox: Optional[Tuple[float, float, float, float]] = None
+    accepted_words: Optional[List[str]] = None
+    rejected_nearby_word_count: Optional[int] = None
     resolved_upc12: Optional[str] = None
     resolved_display_name: Optional[str] = None
     resolved_cpp_qty: Optional[int] = None

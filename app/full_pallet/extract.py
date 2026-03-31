@@ -34,6 +34,63 @@ def _contains_point(b: Tuple[float, float, float, float], x: float, y: float) ->
     return x0 <= x <= x1 and y0 <= y <= y1
 
 
+def _bbox_intersects(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> bool:
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    return not (ax1 < bx0 or bx1 < ax0 or ay1 < by0 or by1 < ay0)
+
+
+def _inset_bbox(
+    bbox: Tuple[float, float, float, float],
+    inset_x: float,
+    inset_y: float,
+) -> Tuple[float, float, float, float]:
+    x0, y0, x1, y1 = bbox
+    nx0 = x0 + inset_x
+    ny0 = y0 + inset_y
+    nx1 = x1 - inset_x
+    ny1 = y1 - inset_y
+    if nx1 <= nx0 or ny1 <= ny0:
+        return bbox
+    return (nx0, ny0, nx1, ny1)
+
+
+def _bbox_contains_word_center(bbox: Tuple[float, float, float, float], word: dict) -> bool:
+    return _contains_point(bbox, *_word_center(word))
+
+
+def _filter_words_to_bboxes(words: List[dict], allowed_bboxes: List[Tuple[float, float, float, float]]) -> List[dict]:
+    out: List[dict] = []
+    for w in words:
+        if any(_bbox_contains_word_center(b, w) for b in allowed_bboxes):
+            out.append(w)
+    return out
+
+
+def _filter_words_to_excluded_regions(
+    words: List[dict], excluded_bboxes: List[Tuple[float, float, float, float]]
+) -> List[dict]:
+    if not excluded_bboxes:
+        return words
+    out: List[dict] = []
+    for w in words:
+        if any(_bbox_contains_word_center(b, w) for b in excluded_bboxes):
+            continue
+        out.append(w)
+    return out
+
+
+def _collect_words_in_zone(
+    words: List[dict],
+    allowed_bbox: Tuple[float, float, float, float],
+    excluded_bboxes: Optional[List[Tuple[float, float, float, float]]] = None,
+) -> List[dict]:
+    picked = [w for w in words if _bbox_contains_word_center(allowed_bbox, w)]
+    if excluded_bboxes:
+        picked = _filter_words_to_excluded_regions(picked, excluded_bboxes)
+    return picked
+
+
 def _words_to_text(words: List[dict]) -> str:
     if not words:
         return ""
@@ -203,13 +260,36 @@ def _extract_mid_band_above_bonus(
     if template_rows is None:
         return None
 
+    slot_bboxes = [b for row in template_rows for b in row]
+    # Whitelist model: only slot-contained words are candidates for middle-band extraction.
+    slot_whitelist_words = _filter_words_to_bboxes(words, slot_bboxes)
+
+    excluded_bboxes: List[Tuple[float, float, float, float]] = []
+    if bonus_top is not None:
+        excluded_bboxes.append((0.0, bonus_top - 14.0, pw, min(ph, bonus_top + 28.0)))
+    excluded_terms = {"MARKETING", "MESSAGE", "PANEL", "FRAUD", "SIGNAGE", "WM", "GIFTCARD", "GIFTCAR", "PKG"}
+    excluded_words = [w for w in words if _wt(w) in excluded_terms]
+    for grp in _group_nearby(excluded_words, x_tol=30, y_tol=18):
+        gx0 = min(float(w["x0"]) for w in grp) - 4.0
+        gy0 = min(float(w["top"]) for w in grp) - 3.0
+        gx1 = max(float(w["x1"]) for w in grp) + 4.0
+        gy1 = max(float(w["bottom"]) for w in grp) + 3.0
+        excluded_bboxes.append((max(0.0, gx0), max(0.0, gy0), min(pw, gx1), min(ph, gy1)))
+
     row_slots: List[FullPalletMidBandRow] = []
     slot_order = 0
     for row_index, row_boxes in enumerate(template_rows):
         slots: List[FullPalletMidBandSlot] = []
 
         for slot_in_row, bbox in enumerate(row_boxes):
-            in_slot_words = [w for w in words if _contains_point(bbox, *_word_center(w))]
+            slot_w = bbox[2] - bbox[0]
+            slot_h = bbox[3] - bbox[1]
+            extract_bbox = _inset_bbox(bbox, inset_x=max(1.2, slot_w * 0.04), inset_y=max(1.0, slot_h * 0.05))
+
+            slot_full_words = _collect_words_in_zone(slot_whitelist_words, bbox, excluded_bboxes=excluded_bboxes)
+            in_slot_words = _collect_words_in_zone(slot_whitelist_words, extract_bbox, excluded_bboxes=excluded_bboxes)
+            rejected_nearby = max(0, len(slot_full_words) - len(in_slot_words))
+
             raw_text = _words_to_text(in_slot_words)
             parsed_name, parsed_last5, qty = parse_label_cell_text(raw_text)
 
@@ -221,7 +301,14 @@ def _extract_mid_band_above_bonus(
                 if five_tokens:
                     cx = (bbox[0] + bbox[2]) / 2.0
                     cy = (bbox[1] + bbox[3]) / 2.0
-                    five_tokens.sort(key=lambda w: (abs(_word_center(w)[1] - cy), abs(_word_center(w)[0] - cx), float(w["top"]), float(w["x0"])))
+                    five_tokens.sort(
+                        key=lambda w: (
+                            abs(_word_center(w)[1] - cy),
+                            abs(_word_center(w)[0] - cx),
+                            float(w["top"]),
+                            float(w["x0"]),
+                        )
+                    )
                     last5 = _to_last5(str(five_tokens[0].get("text", "")))
 
             if slot_in_row <= 1:
@@ -249,6 +336,9 @@ def _extract_mid_band_above_bonus(
                     parsed_name=parsed_name,
                     last5=last5,
                     qty=qty,
+                    extraction_bbox=extract_bbox,
+                    accepted_words=[str(w.get("text", "")).strip() for w in in_slot_words],
+                    rejected_nearby_word_count=rejected_nearby,
                 )
             )
             slot_order += 1

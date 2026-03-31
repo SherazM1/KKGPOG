@@ -1232,17 +1232,28 @@ def render_full_pallet_pdf(
             canonical_mid_band_ok = _mid_band_shape_ok(mid_band)
 
             if debug and mid_band is not None:
+                mid_slots_dbg = [s for r in mid_band.rows for s in r.slots]
                 st.write(
                     {
                         "side": pdata.side_letter,
                         "mid_band_extract_debug": {
                             "extract_path": "template_slots",
+                            "whitelist_only": True,
                             "present": True,
                             "shape_valid": mid_band.shape_valid,
                             "anchor_bbox": list(mid_band.anchor_bbox) if mid_band.anchor_bbox else None,
                             "slot_count": mid_band.slot_count,
                             "row_slot_counts": mid_band.row_slot_counts,
                             "row_block_grouping": mid_band.row_block_grouping,
+                            "slot_bboxes": {s.slot_id: [round(v, 2) for v in s.bbox] for s in mid_slots_dbg},
+                            "slot_extraction_bboxes": {
+                                s.slot_id: ([round(v, 2) for v in s.extraction_bbox] if s.extraction_bbox else None)
+                                for s in mid_slots_dbg
+                            },
+                            "slot_accepted_words": {s.slot_id: (s.accepted_words or []) for s in mid_slots_dbg},
+                            "slot_rejected_nearby_count": {
+                                s.slot_id: int(s.rejected_nearby_word_count or 0) for s in mid_slots_dbg
+                            },
                         },
                     }
                 )
@@ -1573,6 +1584,7 @@ def render_full_pallet_pdf(
                 anchor_bbox = None
                 suspicious_slots = []
                 suspicious_top_row_slots = []
+                main_slots = []
 
             bonus_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(below_bonus_rows)})
             bonus_slots_total = sum(1 for c in pdata.cells if c.row in set(below_bonus_rows))
@@ -1593,6 +1605,7 @@ def render_full_pallet_pdf(
                         "mid_band_above_bonus": {
                             "render_source": main_render_source,
                             "path": "deterministic_template",
+                            "whitelist_only": True,
                             "present": bool(mid_band),
                             "shape_valid": bool(mid_band.shape_valid) if mid_band else False,
                             "shape_matches_3x8_242": canonical_mid_band_ok,
@@ -1601,6 +1614,11 @@ def render_full_pallet_pdf(
                             "row_block_grouping": canonical_block_counts,
                             "suspicious_slot_text_ids": sorted(set(suspicious_slots)),
                             "suspicious_top_row_ids": sorted(set(suspicious_top_row_slots)),
+                            "slot_local_text": {s.slot_id: s.raw_label_text for s in main_slots},
+                            "slot_accepted_words": {s.slot_id: (s.accepted_words or []) for s in main_slots},
+                            "slot_rejected_nearby_count": {
+                                s.slot_id: int(s.rejected_nearby_word_count or 0) for s in main_slots
+                            },
                         },
                         "grid_detected": {
                             "main_cols": main_cols,
