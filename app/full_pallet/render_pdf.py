@@ -17,7 +17,15 @@ from app.shared.constants import NAVY_RGB
 from app.shared.fonts import BODY_BOLD_FONT, BODY_FONT, TITLE_FONT
 from app.shared.image_utils import _hex_to_rgb, _try_load_logo, crop_image_cell, image_from_bytes
 from app.shared.matching import resolve_full_pallet
-from app.shared.models import CellData, FullPalletPage, GiftHolder, MatrixRow, PptSideCards
+from app.shared.models import (
+    CellData,
+    FullPalletMidBandSection,
+    FullPalletMidBandSlot,
+    FullPalletPage,
+    GiftHolder,
+    MatrixRow,
+    PptSideCards,
+)
 from app.shared.text_utils import (
     _draw_footer,
     _draw_full_pallet_header,
@@ -466,6 +474,7 @@ def render_full_pallet_pdf(
         unresolved_bucket: List[str],
         content_x0: float,
         product_map: Dict[Tuple[int, int], Tuple[Optional[MatrixRow], CellData]],
+        missing_image_slots: Optional[List[str]] = None,
     ) -> Tuple[int, int, bool, float, int, int]:
         nonlocal rightmost_used, matched_cells, unmatched_cells
 
@@ -554,6 +563,163 @@ def render_full_pallet_pdf(
             len([1 for k in occ.keys()]),
             len(sec_cols),
         )
+
+    def _mid_band_shape_ok(section: Optional[FullPalletMidBandSection]) -> bool:
+        if section is None:
+            return False
+        if not section.shape_valid:
+            return False
+        if section.slot_count != 24 or len(section.rows) != 3:
+            return False
+        if section.row_slot_counts != [8, 8, 8]:
+            return False
+        if section.row_block_grouping != [[2, 4, 2], [2, 4, 2], [2, 4, 2]]:
+            return False
+        for row in section.rows:
+            if len(row.slots) != 8:
+                return False
+            slot_ordered = sorted(row.slots, key=lambda s: s.slot_in_row)
+            for i, s in enumerate(slot_ordered):
+                if i <= 1 and s.block_name != "left":
+                    return False
+                if 2 <= i <= 5 and s.block_name != "center":
+                    return False
+                if i >= 6 and s.block_name != "right":
+                    return False
+        return True
+
+    def _measure_canonical_mid_band(content_w: float, include_bar: bool) -> Dict[str, float]:
+        intra_gap = 6.0
+        inter_gap = 14.0
+        row_gutter = 8.0
+        min_card_h = 50.0
+        max_card_h = 82.0
+        card_ratio = 1.04  # h / w
+        crop_zoom = 2.40
+        crop_inset = 0.018
+
+        avail = max(1.0, content_w)
+        card_w = (avail - (5.0 * intra_gap) - (2.0 * inter_gap)) / 8.0
+        card_w = max(24.0, card_w)
+        card_h = max(min_card_h, min(max_card_h, card_w * card_ratio))
+        total_w = 8.0 * card_w + 5.0 * intra_gap + 2.0 * inter_gap
+        overflow = total_w > (avail + 0.001)
+        if overflow:
+            card_w = max(24.0, (avail - (5.0 * intra_gap) - (2.0 * inter_gap)) / 8.0)
+            total_w = 8.0 * card_w + 5.0 * intra_gap + 2.0 * inter_gap
+            card_h = max(min_card_h, min(max_card_h, card_w * card_ratio))
+            overflow = total_w > (avail + 0.001)
+
+        total_h = 3.0 * card_h + 2.0 * row_gutter
+        if include_bar:
+            total_h += SECTION_BAR_H + SECTION_BAR_GAP
+        return {
+            "card_w": card_w,
+            "card_h": card_h,
+            "intra_gap": intra_gap,
+            "inter_gap": inter_gap,
+            "row_gutter": row_gutter,
+            "total_w": total_w,
+            "total_h": total_h,
+            "overflow": overflow,
+            "crop_zoom": crop_zoom,
+            "crop_inset": crop_inset,
+        }
+
+    def _draw_canonical_mid_band_section(
+        p: FullPalletPage,
+        section: FullPalletMidBandSection,
+        plan: Dict[str, float],
+        sec_top: float,
+        unresolved_bucket: List[str],
+        missing_image_slots: List[str],
+        content_x0: float,
+    ) -> Tuple[int, int, bool, float, int, int]:
+        nonlocal rightmost_used, matched_cells, unmatched_cells
+
+        y_cursor = sec_top
+        if len(section.rows) == 0:
+            return 0, 0, False, sec_top, 0, 0
+
+        card_w = float(plan["card_w"])
+        card_h = float(plan["card_h"])
+        row_gutter = float(plan["row_gutter"])
+        intra_gap = float(plan["intra_gap"])
+        inter_gap = float(plan["inter_gap"])
+        total_w = float(plan["total_w"])
+
+        start_x = content_x0 + max(0.0, (content_w - total_w) / 2.0)
+        row_xs = [
+            start_x,
+            start_x + card_w + intra_gap,
+            start_x + 2 * card_w + intra_gap + inter_gap,
+            start_x + 3 * card_w + 2 * intra_gap + inter_gap,
+            start_x + 4 * card_w + 3 * intra_gap + inter_gap,
+            start_x + 5 * card_w + 4 * intra_gap + inter_gap,
+            start_x + 6 * card_w + 5 * intra_gap + 2 * inter_gap,
+            start_x + 7 * card_w + 5 * intra_gap + 2 * inter_gap,
+        ]
+        rightmost_used = max(rightmost_used, start_x + total_w)
+
+        grid_top = y_cursor
+        slots_drawn = 0
+        overflow = bool(plan["overflow"])
+        for row in sorted(section.rows, key=lambda r: r.row_index):
+            y = grid_top - (row.row_index + 1) * card_h - row.row_index * row_gutter
+            ordered_slots: List[FullPalletMidBandSlot] = sorted(row.slots, key=lambda s: s.slot_in_row)
+            for slot in ordered_slots:
+                x = row_xs[slot.slot_in_row]
+
+                match = resolve_full_pallet(slot.last5, slot.parsed_name, matrix_idx) if slot.last5 else None
+                upc12 = match.upc12 if match else None
+                cpp = match.cpp_qty if match else None
+                disp_name = (
+                    match.display_name
+                    if match and match.display_name
+                    else (slot.parsed_name or slot.raw_label_text or "").strip()
+                )
+
+                if upc12:
+                    upc_str = upc12
+                    matched_cells += 1
+                else:
+                    last5_key = _to_last5(slot.last5)
+                    upc_str = f"LAST5 {last5_key}" if last5_key else "LAST5 MISSING"
+                    disp_name = f"UNRESOLVED {last5_key}" if last5_key else "UNRESOLVED"
+                    unresolved_bucket.append(last5_key or slot.slot_id)
+                    unmatched_cells += 1
+
+                try:
+                    img = crop_image_cell(
+                        images_doc,
+                        p.page_index,
+                        slot.bbox,
+                        zoom=float(plan["crop_zoom"]),
+                        inset=float(plan["crop_inset"]),
+                    )
+                except Exception:
+                    img = None
+                if img is None and missing_image_slots is not None:
+                    missing_image_slots.append(f"r{cell.row}c{cell.col}")
+                if img is None:
+                    missing_image_slots.append(slot.slot_id)
+
+                if x < content_x0 - 0.001 or (x + card_w) > (content_x0 + content_w + 0.001):
+                    overflow = True
+
+                c.setFillColorRGB(1, 1, 1)
+                c.setStrokeColorRGB(*FILLED_STROKE)
+                c.setLineWidth(0.75)
+                c.rect(x, y, card_w, card_h, stroke=1, fill=1)
+                _draw_card(c, x, y, card_w, card_h, img, upc_str, disp_name, cpp)
+                if debug_overlay:
+                    c.setFillColorRGB(0.35, 0.35, 0.35)
+                    c.setFont("Helvetica", 6)
+                    c.drawString(x + 2, y + card_h - 8, slot.slot_id)
+                slots_drawn += 1
+
+        sec_bottom = grid_top - 3 * card_h - 2 * row_gutter
+        return 8, 3, overflow, sec_bottom, slots_drawn, 8
 
     def _draw_debug_box(
         c: canvas.Canvas, x: float, y: float, w: float, h: float, label: str
@@ -984,6 +1150,8 @@ def render_full_pallet_pdf(
             global_cols, global_gap_units = _global_col_order_and_gaps(pdata)
             global_rows = _global_row_order(pdata)
             above_bonus_rows, below_bonus_rows = _split_rows_by_bonus(pdata, global_rows)
+            mid_band = pdata.mid_band_above_bonus
+            canonical_mid_band_ok = _mid_band_shape_ok(mid_band)
 
             side_ppt = (
                 ppt_cards.get(pdata.side_letter, PptSideCards(pdata.side_letter, [], []))
@@ -1006,10 +1174,13 @@ def render_full_pallet_pdf(
                 below_bonus_rows,
                 product_map,
             )
+            legacy_main_rows = slot_map["main"]["row_ids"]
+
+            canonical_main_plan = _measure_canonical_mid_band(content_w, include_bar=False)
 
             main_plan = _measure_section_shape(
                 pdata,
-                slot_map["main"]["row_ids"],
+                legacy_main_rows,
                 "main",
                 content_w,
                 global_cols,
@@ -1026,8 +1197,12 @@ def render_full_pallet_pdf(
                 include_bar=bool(slot_map["bonus"]["row_ids"]),
             )
 
-            products_block_h = float(main_plan["total_h"])
-            if above_bonus_rows and below_bonus_rows:
+            products_block_h = (
+                float(canonical_main_plan["total_h"])
+                if canonical_mid_band_ok
+                else float(main_plan["total_h"])
+            )
+            if (canonical_mid_band_ok or legacy_main_rows) and below_bonus_rows:
                 products_block_h += BUCKET_GAP
             products_block_h += float(bonus_plan["total_h"])
 
@@ -1079,6 +1254,9 @@ def render_full_pallet_pdf(
             unmatched_cells = 0
             unresolved_main: List[str] = []
             unresolved_bonus: List[str] = []
+            missing_main_images: List[str] = []
+            missing_bonus_images: List[str] = []
+            main_render_source = "canonical_mid_band" if canonical_mid_band_ok else "legacy_rows_fallback"
 
             # Bucket A: PPT Top Cards
             a_gap_y = 8.0
@@ -1186,7 +1364,24 @@ def render_full_pallet_pdf(
             main_over = False
             main_bottom = products_top
 
-            if slot_map["main"]["row_ids"]:
+            if canonical_mid_band_ok and mid_band is not None:
+                (
+                    main_cols,
+                    main_rows_count,
+                    main_over,
+                    main_bottom,
+                    _main_occ_count,
+                    _main_sec_cols,
+                ) = _draw_canonical_mid_band_section(
+                    pdata,
+                    mid_band,
+                    canonical_main_plan,
+                    products_top,
+                    unresolved_main,
+                    missing_main_images,
+                    cx0,
+                )
+            elif legacy_main_rows:
                 (
                     main_cols,
                     main_rows_count,
@@ -1202,12 +1397,13 @@ def render_full_pallet_pdf(
                     unresolved_main,
                     cx0,
                     product_map,
+                    missing_main_images,
                 )
             else:
                 main_bottom = products_top
 
             bonus_top = main_bottom - (
-                BUCKET_GAP if slot_map["main"]["row_ids"] and slot_map["bonus"]["row_ids"] else 0.0
+                BUCKET_GAP if (main_rows_count > 0 and slot_map["bonus"]["row_ids"]) else 0.0
             )
             bonus_cols = 0
             bonus_rows_count = 0
@@ -1230,13 +1426,14 @@ def render_full_pallet_pdf(
                     unresolved_bonus,
                     cx0,
                     product_map,
+                    missing_bonus_images,
                 )
 
             adjusted_to_fit = adjusted_to_fit or main_over or bonus_over
 
             if debug_overlay:
                 _draw_debug_box(c, cx0, products_bottom, content_w, products_top - products_bottom, "PRODUCTS")
-                if above_bonus_rows:
+                if main_rows_count > 0:
                     _draw_debug_box(
                         c,
                         cx0,
@@ -1257,13 +1454,23 @@ def render_full_pallet_pdf(
 
             right_limit = cx1
             exceeded = rightmost_used > right_limit + 0.001
-            lowest_bottom = bonus_bottom if below_bonus_rows else main_bottom
+            lowest_bottom = bonus_bottom if slot_map["bonus"]["row_ids"] else main_bottom
             vertical_overflow = lowest_bottom < products_bottom - 0.001
             adjusted_to_fit = adjusted_to_fit or exceeded or vertical_overflow
 
-            main_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(above_bonus_rows)})
+            if canonical_mid_band_ok and mid_band is not None:
+                main_slots = [s for r in mid_band.rows for s in r.slots]
+                main_last5_codes = sorted({_to_last5(s.last5) for s in main_slots if _to_last5(s.last5)})
+                main_slots_total = len(main_slots)
+                canonical_row_counts = [len(r.slots) for r in mid_band.rows]
+                canonical_block_counts = mid_band.row_block_grouping
+            else:
+                main_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(above_bonus_rows)})
+                main_slots_total = sum(1 for c in pdata.cells if c.row in set(above_bonus_rows))
+                canonical_row_counts = []
+                canonical_block_counts = []
+
             bonus_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(below_bonus_rows)})
-            main_slots_total = sum(1 for c in pdata.cells if c.row in set(above_bonus_rows))
             bonus_slots_total = sum(1 for c in pdata.cells if c.row in set(below_bonus_rows))
 
             if debug:
@@ -1276,8 +1483,16 @@ def render_full_pallet_pdf(
                             "ppt": [round(bucket_a_top, 1), round(bucket_a_bottom, 1)],
                             "holders": [round(bucket_b_top, 1), round(bucket_b_bottom, 1)],
                             "products_available": [round(products_top, 1), round(products_bottom, 1)],
-                            "main_used": [round(products_top, 1), round(main_bottom, 1)] if above_bonus_rows else None,
+                            "main_used": [round(products_top, 1), round(main_bottom, 1)] if main_rows_count > 0 else None,
                             "bonus_used": [round(bonus_top, 1), round(bonus_bottom, 1)] if below_bonus_rows else None,
+                        },
+                        "mid_band_above_bonus": {
+                            "render_source": main_render_source,
+                            "present": bool(mid_band),
+                            "shape_valid": bool(mid_band.shape_valid) if mid_band else False,
+                            "shape_matches_3x8_242": canonical_mid_band_ok,
+                            "row_slot_counts": canonical_row_counts,
+                            "row_block_grouping": canonical_block_counts,
                         },
                         "grid_detected": {
                             "main_cols": main_cols,
@@ -1319,6 +1534,10 @@ def render_full_pallet_pdf(
                         "unresolved_last5": {
                             "main": sorted({x for x in unresolved_main if x}),
                             "bonus": sorted({x for x in unresolved_bonus if x}),
+                        },
+                        "missing_image_crops": {
+                            "main": sorted({x for x in missing_main_images if x}),
+                            "bonus": sorted({x for x in missing_bonus_images if x}),
                         },
                         "matrix_matches": {
                             "matched": matched_cells,
