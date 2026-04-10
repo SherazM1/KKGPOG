@@ -12,7 +12,8 @@ from app.full_pallet.service import (
     render_full_pallet_display_pdf,
     validate_ppt_cards,
 )
-from app.shared.constants import DISPLAY_FULL_PALLET, DISPLAY_STANDARD, N_COLS
+from app.sams_club.service import build_sams_planogram_structure, detect_sams_pogs
+from app.shared.constants import DISPLAY_FULL_PALLET, DISPLAY_SAMS_CLUB, DISPLAY_STANDARD, N_COLS
 from app.standard_display.service import prepare_standard_display, render_standard_display_pdf
 
 
@@ -20,23 +21,91 @@ def main() -> None:
     st.set_page_config(page_title="Planogram Generator", layout="wide")
     st.title("Planogram Generator")
 
+    matrix_file = None
+    labels_pdf = None
+    images_pdf = None
+    title_prefix = "POG"
+    out_name = "pog_export.pdf"
+    generate = False
+    sams_access_file = None
+    sams_excel_file = None
+    sams_selected_pog = None
+    build_sams = False
+
     with st.sidebar:
         st.header("Configuration")
         display_type = st.selectbox(
             "Display type",
-            [DISPLAY_STANDARD, DISPLAY_FULL_PALLET],
+            [DISPLAY_STANDARD, DISPLAY_FULL_PALLET, DISPLAY_SAMS_CLUB],
             index=0,
         )
 
-        st.divider()
-        matrix_file = st.file_uploader("Matrix Excel (.xlsx)", type=["xlsx"])
-        labels_pdf = st.file_uploader("Labels PDF", type=["pdf"])
-        images_pdf = st.file_uploader("Images PDF", type=["pdf"])
+        if display_type == DISPLAY_SAMS_CLUB:
+            st.divider()
+            sams_access_file = st.file_uploader(
+                "Sam's Access Database (.accdb/.mdb)",
+                type=["accdb", "mdb"],
+                key="sams_access_file",
+            )
+            sams_excel_file = st.file_uploader(
+                "Sam's Excel Workbook (optional support file)",
+                type=["xlsx"],
+                key="sams_excel_file",
+            )
+            if sams_access_file:
+                detected_pogs, detect_warnings = detect_sams_pogs(sams_access_file)
+                if detect_warnings:
+                    for warn in detect_warnings:
+                        st.warning(warn)
+                if detected_pogs:
+                    sams_selected_pog = st.selectbox(
+                        "Selected POG",
+                        detected_pogs,
+                        index=0,
+                        key="sams_selected_pog",
+                    )
+            build_sams = st.button("Build Sam's Planogram Structure", type="primary", use_container_width=True)
+        else:
+            st.divider()
+            matrix_file = st.file_uploader("Matrix Excel (.xlsx)", type=["xlsx"])
+            labels_pdf = st.file_uploader("Labels PDF", type=["pdf"])
+            images_pdf = st.file_uploader("Images PDF", type=["pdf"])
 
-        st.divider()
-        title_prefix = st.text_input("PDF title prefix", "POG")
-        out_name = st.text_input("Output filename", "pog_export.pdf")
-        generate = st.button("Generate POG PDF", type="primary", use_container_width=True)
+            st.divider()
+            title_prefix = st.text_input("PDF title prefix", "POG")
+            out_name = st.text_input("Output filename", "pog_export.pdf")
+            generate = st.button("Generate POG PDF", type="primary", use_container_width=True)
+
+    if display_type == DISPLAY_SAMS_CLUB:
+        st.subheader("Sam's Club Planogram Display")
+        st.info("New workflow in progress. Structure-only scaffold is available; PDF rendering is not implemented yet.")
+
+        if not sams_access_file:
+            st.warning("Upload a Sam's Access database file (.accdb/.mdb) to begin.")
+            return
+
+        st.caption("Optional support file accepted: Excel workbook (.xlsx).")
+
+        if build_sams:
+            with st.spinner("Building placeholder Sam's Club structure..."):
+                result = build_sams_planogram_structure(
+                    sams_access_file,
+                    sams_excel_file,
+                    selected_pog=sams_selected_pog,
+                )
+            st.success("Sam's Club structure build complete.")
+            for warning in result.warnings:
+                st.warning(warning)
+            st.write("Detected POGs:", result.detected_pogs)
+            st.write("Selected POG:", result.selected_pog or "(none)")
+            st.write("Side counts:", result.debug.get("side_counts", {}))
+            st.write("Rows per side:", result.debug.get("rows_per_side", {}))
+            st.write("Populated columns per row:", result.debug.get("populated_columns_per_row", {}))
+            st.write("Warnings:", result.debug.get("warnings", []))
+            st.json(result.to_dict())
+        else:
+            st.info("Click 'Build Sam's Planogram Structure' to run the scaffold workflow.")
+        return
 
     if not (matrix_file and labels_pdf and images_pdf):
         st.info("Upload Matrix XLSX + Labels PDF + Images PDF to begin.")

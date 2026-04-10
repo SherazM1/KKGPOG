@@ -8,4 +8,5 @@ N_COLS = 3
 NAVY_RGB = (0.10, 0.16, 0.33)
 DISPLAY_STANDARD = "Standard Flat Display"
 DISPLAY_FULL_PALLET = "Full Pallet / Multi-Zone Display"
+DISPLAY_SAMS_CLUB = "Sam's Club Planogram Display"
 IMAGE_ANCHOR_ROW_0BASED = 5
