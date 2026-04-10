@@ -3,18 +3,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from app.full_pallet.service import (
-    build_full_pallet_rows,
-    load_full_pallet_matrix,
-    parse_full_pallet_pages,
-    parse_gift_holders,
-    parse_ppt_cards,
-    render_full_pallet_display_pdf,
-    validate_ppt_cards,
-)
 from app.sams_club.service import build_sams_planogram_structure, detect_sams_pogs
 from app.shared.constants import DISPLAY_FULL_PALLET, DISPLAY_SAMS_CLUB, DISPLAY_STANDARD, N_COLS
-from app.standard_display.service import prepare_standard_display, render_standard_display_pdf
 
 
 def main() -> None:
@@ -116,6 +106,8 @@ def main() -> None:
     images_bytes = images_pdf.getvalue()
 
     if display_type == DISPLAY_STANDARD:
+        from app.standard_display.service import prepare_standard_display, render_standard_display_pdf
+
         pages, matrix_idx, rows = prepare_standard_display(matrix_bytes, labels_bytes, N_COLS)
         if not pages:
             st.error("No 5-digit UPC tokens found in Labels PDF.")
@@ -142,6 +134,20 @@ def main() -> None:
             )
 
     else:
+        try:
+            from app.full_pallet.service import (
+                build_full_pallet_rows,
+                load_full_pallet_matrix,
+                parse_full_pallet_pages,
+                parse_gift_holders,
+                parse_ppt_cards,
+                render_full_pallet_display_pdf,
+                validate_ppt_cards,
+            )
+        except ModuleNotFoundError as e:
+            st.error(f"Full Pallet mode dependency missing: {e.name}. Please install project requirements.")
+            return
+
         pptx_file = st.file_uploader("Top Cards Blueprint (.pptx)", type=["pptx"])
         gift_file = st.file_uploader("2025 D82 POG Workbook (.xlsx)", type=["xlsx"])
         ppt_cpp_global = st.number_input("PPT Cards CPP (Global)", min_value=0, value=0, step=1)
