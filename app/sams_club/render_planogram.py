@@ -143,6 +143,48 @@ def _compute_image_height(available_height: float, preferred_height: float, min_
     return max(min_height, available_height)
 
 
+def _effective_column_count(side_page: SamsSidePage) -> int:
+    populated_counts = []
+    for row in side_page.rows:
+        populated = row.populated_column_count
+        if populated <= 0:
+            populated = len({slot.column for slot in row.slots})
+        populated_counts.append(populated)
+    max_populated = max(populated_counts) if populated_counts else 0
+    if max_populated <= 0:
+        return 1
+    return max_populated
+
+
+def _format_retail_price(raw_value: str) -> str:
+    text = (raw_value or "").strip()
+    if text == "":
+        return "-"
+    normalized = text.replace("$", "").replace(",", "").strip()
+    try:
+        amount = float(normalized)
+        return f"${amount:.2f}"
+    except ValueError:
+        return text if text.startswith("$") else f"${text}"
+
+
+def _format_cpp_value(raw_value: str) -> str:
+    text = (raw_value or "").strip()
+    if text == "":
+        return "CPP -"
+
+    normalized = text.replace(",", "").strip()
+    try:
+        value = float(normalized)
+        if value.is_integer():
+            formatted = str(int(value))
+        else:
+            formatted = f"{value:.2f}".rstrip("0").rstrip(".")
+        return f"CPP {formatted}"
+    except ValueError:
+        return f"CPP {text}"
+
+
 def _description_for_slot(slot: SamsSlot) -> str:
     primary = (slot.description or "").strip()
     if primary:
@@ -264,8 +306,8 @@ def _draw_slot_card(
     c.setFillColorRGB(*_TEXT_DARK)
     meta_fs = _fit_text("RETAIL", "Helvetica-Bold", (w / 2) - (pad * 2), 8, 6)
     c.setFont("Helvetica-Bold", meta_fs)
-    retail = _truncate_text((slot.retail or "").strip() or "-", "Helvetica-Bold", meta_fs, (w / 2) - (pad * 2))
-    cpp = _truncate_text((slot.cpp or "").strip() or "-", "Helvetica-Bold", meta_fs, (w / 2) - (pad * 2))
+    retail = _truncate_text(_format_retail_price(slot.retail), "Helvetica-Bold", meta_fs, (w / 2) - (pad * 2))
+    cpp = _truncate_text(_format_cpp_value(slot.cpp), "Helvetica-Bold", meta_fs, (w / 2) - (pad * 2))
     c.drawString(x + pad, meta_y + (metadata_h - meta_fs) / 2, retail)
     c.drawRightString(x + w - pad, meta_y + (metadata_h - meta_fs) / 2, cpp)
 
@@ -364,8 +406,8 @@ def _render_side_page(
         c.drawCentredString(page_w / 2, (content_top + content_bottom) / 2, "No populated rows for this side.")
         return 0, 0
 
-    capacity = side_page.column_limit if side_page.column_limit > 0 else (10 if side_page.side in (2, 4) else 8)
-    card_w = (content_w - ((capacity - 1) * col_gap)) / capacity
+    effective_columns = _effective_column_count(side_page)
+    card_w = (content_w - ((effective_columns - 1) * col_gap)) / effective_columns
     card_h = (content_h - ((row_count - 1) * row_gap)) / row_count
 
     rendered_slots = 0
