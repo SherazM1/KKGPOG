@@ -419,7 +419,8 @@ def _render_side_page(
         sorted_slots = sorted(row.slots, key=lambda slot: slot.column)
         for slot_index, slot in enumerate(sorted_slots):
             card_x = content_left + slot_index * (card_w + col_gap)
-            image, image_warning = _load_slot_image(slot.file_path, image_cache)
+            image_path = (slot.resolved_image_path or slot.file_path or "").strip()
+            image, image_warning = _load_slot_image(image_path, image_cache)
             if image is None:
                 missing_image_slots += 1
                 detail = f"side={slot.side} row={slot.row} column={slot.column}"

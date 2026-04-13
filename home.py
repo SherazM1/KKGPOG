@@ -20,6 +20,7 @@ def main() -> None:
     generate = False
     sams_main_source_file = None
     sams_excel_file = None
+    sams_image_zip_file = None
     sams_selected_pog = None
     build_sams = False
 
@@ -43,6 +44,15 @@ def main() -> None:
                 "Sam's Excel Workbook (optional support file)",
                 type=["xlsx"],
                 key="sams_excel_file",
+            )
+            sams_image_zip_file = st.file_uploader(
+                "Sam's Image ZIP (optional fallback)",
+                type=["zip"],
+                help=(
+                    "Optional fallback image source for Sam's card images. "
+                    "The app first tries each record's file_path, then ZIP filename fallback."
+                ),
+                key="sams_image_zip_file",
             )
             if sams_main_source_file:
                 detected_pogs, detect_warnings = detect_sams_pogs(sams_main_source_file)
@@ -88,6 +98,7 @@ def main() -> None:
                 result = build_sams_planogram_structure(
                     sams_main_source_file,
                     sams_excel_file,
+                    image_zip_file=sams_image_zip_file,
                     selected_pog=sams_selected_pog,
                 )
             st.session_state["sams_build_result"] = result
@@ -150,6 +161,22 @@ def main() -> None:
         st.write("Side counts:", result.debug.get("side_counts", {}))
         st.write("Rows per side:", result.debug.get("rows_per_side", {}))
         st.write("Populated columns per row:", result.debug.get("populated_columns_per_row", {}))
+        image_debug = result.debug.get("image_resolution", {})
+        st.write("Sam's image zip uploaded:", "yes" if image_debug.get("image_zip_uploaded") else "no")
+        st.write("Sam's total slots:", image_debug.get("total_slots", 0))
+        st.write("Resolved by original path:", image_debug.get("resolved_by_original_path", 0))
+        st.write("Resolved by zip basename:", image_debug.get("resolved_by_zip_basename", 0))
+        st.write("Resolved by zip UPC:", image_debug.get("resolved_by_zip_upc", 0))
+        st.write("Unresolved:", image_debug.get("unresolved", 0))
+        unresolved_examples = image_debug.get("unresolved_examples", [])
+        if unresolved_examples:
+            with st.expander("Unresolved image examples (up to 10)"):
+                for example in unresolved_examples:
+                    st.write(
+                        "- "
+                        f"side={example.get('side')} row={example.get('row')} column={example.get('column')} "
+                        f"upc={example.get('upc')} file_path={example.get('file_path')}"
+                    )
         st.write("Warnings:", result.debug.get("warnings", []))
         st.write("Errors:", result.debug.get("errors", []))
         st.json(result.to_dict())

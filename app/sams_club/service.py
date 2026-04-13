@@ -4,6 +4,13 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from app.sams_club.extract_access import extract_master_pog_source
+from app.sams_club.image_resolution import (
+    SOURCE_ORIGINAL_PATH,
+    SOURCE_ZIP_BASENAME,
+    SOURCE_ZIP_UPC,
+    build_sams_image_zip_index,
+    resolve_sams_image_path,
+)
 from app.sams_club.models import SamsPlanogram, SamsRow, SamsSidePage, SamsSlot
 from app.sams_club.validate import (
     side_column_limit,
@@ -105,6 +112,7 @@ def detect_sams_pogs(main_source_file: Any) -> tuple[list[str], list[str]]:
 def build_sams_planogram_structure(
     main_source_file: Any,
     excel_file: Any = None,
+    image_zip_file: Any = None,
     selected_pog: str | None = None,
 ) -> SamsBuildResult:
     """
@@ -115,6 +123,8 @@ def build_sams_planogram_structure(
     warnings: list[str] = []
     if excel_file is not None:
         warnings.append("Excel support input received; integration is not implemented yet.")
+    image_zip_index = build_sams_image_zip_index(image_zip_file)
+    warnings.extend(image_zip_index.warnings)
 
     extraction = extract_master_pog_source(main_source_file)
     warnings.extend(extraction.warnings)
@@ -189,6 +199,12 @@ def build_sams_planogram_structure(
     side_counts: dict[str, int] = {}
     sides_found: list[int] = []
     rows_per_side: dict[str, int] = {}
+    total_slots = 0
+    resolved_by_original_path = 0
+    resolved_by_zip_basename = 0
+    resolved_by_zip_upc = 0
+    unresolved = 0
+    unresolved_examples: list[dict[str, Any]] = []
 
     for record in selected_records:
         slot_warnings: list[str] = []
@@ -199,6 +215,27 @@ def build_sams_planogram_structure(
                 )
                 slot_warnings.append(message)
                 warnings.append(message)
+
+        resolution = resolve_sams_image_path(record["file_path"], record["upc"], image_zip_index)
+        total_slots += 1
+        if resolution.source == SOURCE_ORIGINAL_PATH:
+            resolved_by_original_path += 1
+        elif resolution.source == SOURCE_ZIP_BASENAME:
+            resolved_by_zip_basename += 1
+        elif resolution.source == SOURCE_ZIP_UPC:
+            resolved_by_zip_upc += 1
+        else:
+            unresolved += 1
+            if len(unresolved_examples) < 10:
+                unresolved_examples.append(
+                    {
+                        "side": record["side"],
+                        "row": record["row"],
+                        "column": record["column"],
+                        "upc": record["upc"],
+                        "file_path": record["file_path"],
+                    }
+                )
 
         slot = SamsSlot(
             pog=record["pog"],
@@ -213,6 +250,8 @@ def build_sams_planogram_structure(
             upc=record["upc"],
             cpp=record["cpp"],
             file_path=record["file_path"],
+            resolved_image_path=resolution.resolved_path,
+            image_resolution_source=resolution.source,
             description=record["description"],
             warnings=slot_warnings,
         )
@@ -269,6 +308,19 @@ def build_sams_planogram_structure(
         "side_counts": side_counts,
         "rows_per_side": rows_per_side,
         "populated_columns_per_row": row_column_debug,
+        "image_resolution": {
+            "image_zip_uploaded": image_zip_index.uploaded,
+            "image_zip_name": image_zip_index.zip_name,
+            "image_zip_extracted_dir": image_zip_index.extracted_dir,
+            "image_zip_indexed_images": image_zip_index.indexed_images,
+            "image_zip_duplicate_filenames": image_zip_index.duplicate_filename_count,
+            "total_slots": total_slots,
+            "resolved_by_original_path": resolved_by_original_path,
+            "resolved_by_zip_basename": resolved_by_zip_basename,
+            "resolved_by_zip_upc": resolved_by_zip_upc,
+            "unresolved": unresolved,
+            "unresolved_examples": unresolved_examples,
+        },
         "warnings": warnings.copy(),
         "errors": extraction.errors.copy(),
     }

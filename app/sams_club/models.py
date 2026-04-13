@@ -19,6 +19,8 @@ class SamsSlot:
     upc: str = ""
     cpp: str = ""
     file_path: str = ""
+    resolved_image_path: str = ""
+    image_resolution_source: str = "unresolved"
     description: str = ""
     warnings: list[str] = field(default_factory=list)
 
