@@ -70,10 +70,21 @@ def _norm_header(v: object) -> str:
     return s or "COL"
 
 
+def _safe_cell_text(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except TypeError:
+        pass
+    return str(value).strip().upper()
+
+
 
 def _find_header_row(df: pd.DataFrame) -> int:
     for i in range(min(len(df), 50)):
-        row = df.iloc[i].astype(str).str.upper().tolist()
+        row = [_safe_cell_text(v) for v in df.iloc[i].tolist()]
         if any("UPC" in c for c in row) and any(
             tok in " ".join(row) for tok in ("NAME", "DESCRIPTION", "CPP")
         ):
