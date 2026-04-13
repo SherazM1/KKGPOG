@@ -50,6 +50,99 @@ def _truncate_text(text: str, font_name: str, font_size: float, max_width: float
     return f"{out}{suffix}"
 
 
+def _fit_protected_single_line_font(
+    text: str,
+    font_name: str,
+    max_width: float,
+    max_size: float,
+    min_size: float,
+) -> float:
+    if max_width <= 0:
+        return min_size
+    size = max_size
+    while size > min_size and pdfmetrics.stringWidth(text, font_name, size) > max_width:
+        size -= 0.25
+    return max(size, min_size)
+
+
+def _wrap_text_lines(text: str, font_name: str, font_size: float, max_width: float) -> list[str]:
+    raw_text = " ".join((text or "").split())
+    if raw_text == "":
+        return [""]
+    if max_width <= 0:
+        return [raw_text]
+
+    words = raw_text.split(" ")
+    lines: list[str] = []
+    current = ""
+
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if current and pdfmetrics.stringWidth(candidate, font_name, font_size) <= max_width:
+            current = candidate
+            continue
+        if not current and pdfmetrics.stringWidth(word, font_name, font_size) <= max_width:
+            current = word
+            continue
+
+        if current:
+            lines.append(current)
+            current = ""
+
+        if pdfmetrics.stringWidth(word, font_name, font_size) <= max_width:
+            current = word
+            continue
+
+        token = ""
+        for char in word:
+            test = f"{token}{char}"
+            if token and pdfmetrics.stringWidth(test, font_name, font_size) > max_width:
+                lines.append(token)
+                token = char
+            else:
+                token = test
+        current = token
+
+    if current:
+        lines.append(current)
+
+    return lines
+
+
+def _wrapped_block_height(line_count: int, font_size: float, line_gap: float = 1.4) -> float:
+    if line_count <= 0:
+        return 0.0
+    return line_count * (font_size + line_gap)
+
+
+def _draw_wrapped_lines(
+    c: canvas.Canvas,
+    lines: list[str],
+    x: float,
+    top_y: float,
+    font_name: str,
+    font_size: float,
+    line_gap: float = 1.4,
+) -> float:
+    if not lines:
+        return top_y
+    y = top_y
+    step = font_size + line_gap
+    c.setFont(font_name, font_size)
+    for line in lines:
+        c.drawString(x, y - font_size, line)
+        y -= step
+    return y
+
+
+def _compute_image_height(available_height: float, preferred_height: float, min_height: float) -> float:
+    if available_height <= 0:
+        return 0.0
+    if available_height >= preferred_height:
+        return preferred_height
+    return max(min_height, available_height)
+
+
 def _description_for_slot(slot: SamsSlot) -> str:
     primary = (slot.description or "").strip()
     if primary:
@@ -158,9 +251,10 @@ def _draw_slot_card(
 
     pad = max(4.0, min(7.0, w * 0.08))
     metadata_h = max(12.0, h * 0.11)
-    identifiers_h = max(18.0, h * 0.18)
-    description_h = max(20.0, h * 0.2)
-    image_h = max(24.0, h - (metadata_h + identifiers_h + description_h + (pad * 2)))
+    inner_x = x + pad
+    inner_w = w - (2 * pad)
+    inner_h = h - (2 * pad)
+    text_and_image_h = max(8.0, inner_h - metadata_h)
 
     meta_y = y + h - metadata_h
     c.setFillColorRGB(*_CARD_META_BG)
@@ -175,25 +269,66 @@ def _draw_slot_card(
     c.drawString(x + pad, meta_y + (metadata_h - meta_fs) / 2, retail)
     c.drawRightString(x + w - pad, meta_y + (metadata_h - meta_fs) / 2, cpp)
 
-    id_y = meta_y - identifiers_h
-    c.setFillColorRGB(*_TEXT_DARK)
-    id_fs = 7.0
-    c.setFont("Helvetica", id_fs)
-    upc_text = _truncate_text(f"UPC {(slot.upc or '').strip() or '-'}", "Helvetica", id_fs, w - (2 * pad))
-    item_text = _truncate_text(f"ITEM {(slot.item_number or '').strip() or '-'}", "Helvetica", id_fs, w - (2 * pad))
-    c.drawString(x + pad, id_y + identifiers_h - id_fs - 2, upc_text)
-    c.drawString(x + pad, id_y + 3, item_text)
-
-    desc_y = id_y - description_h
+    upc_text = f"UPC {(slot.upc or '').strip() or '-'}"
+    item_text = f"ITEM {(slot.item_number or '').strip() or '-'}"
     description = _description_for_slot(slot)
-    desc_fs = _fit_text(description, "Helvetica", w - (2 * pad), 8, 6)
-    line_1 = _truncate_text(description, "Helvetica", desc_fs, w - (2 * pad))
+
+    upc_fs = _fit_protected_single_line_font(upc_text, "Helvetica-Bold", inner_w, 8.0, 4.0)
+    item_fs = _fit_protected_single_line_font(item_text, "Helvetica", inner_w, 7.5, 4.0)
+    item_lines = _wrap_text_lines(item_text, "Helvetica", item_fs, inner_w)
+    desc_fs = 8.0
+    min_desc_fs = 2.5
+    image_preferred_h = max(24.0, h * 0.34)
+    image_min_h = 10.0
+    block_gap = 2.0
+
+    desc_lines = _wrap_text_lines(description, "Helvetica", desc_fs, inner_w)
+    while desc_fs > min_desc_fs:
+        item_lines = _wrap_text_lines(item_text, "Helvetica", item_fs, inner_w)
+        desc_lines = _wrap_text_lines(description, "Helvetica", desc_fs, inner_w)
+        text_h = (
+            (upc_fs + 1.5)
+            + block_gap
+            + _wrapped_block_height(len(item_lines), item_fs, 1.2)
+            + block_gap
+            + _wrapped_block_height(len(desc_lines), desc_fs, 1.2)
+        )
+        if text_h + image_min_h <= text_and_image_h:
+            break
+        if item_fs > 4.0:
+            item_fs = max(4.0, item_fs - 0.25)
+        elif upc_fs > 4.0:
+            upc_fs = max(4.0, upc_fs - 0.25)
+        else:
+            desc_fs = max(min_desc_fs, desc_fs - 0.25)
+
+    item_lines = _wrap_text_lines(item_text, "Helvetica", item_fs, inner_w)
+    desc_lines = _wrap_text_lines(description, "Helvetica", desc_fs, inner_w)
+    text_h = (
+        (upc_fs + 1.5)
+        + block_gap
+        + _wrapped_block_height(len(item_lines), item_fs, 1.2)
+        + block_gap
+        + _wrapped_block_height(len(desc_lines), desc_fs, 1.2)
+    )
+    image_h = _compute_image_height(text_and_image_h - text_h, image_preferred_h, image_min_h)
+
+    content_top = y + pad + inner_h - metadata_h
+    text_top = content_top - 1.0
     c.setFillColorRGB(*_TEXT_DARK)
-    c.setFont("Helvetica", desc_fs)
-    c.drawString(x + pad, desc_y + description_h - desc_fs - 2, line_1)
+    c.setFont("Helvetica-Bold", upc_fs)
+    c.drawString(inner_x, text_top - upc_fs, upc_text)
+
+    current_y = text_top - (upc_fs + 1.5) - block_gap
+    c.setFillColorRGB(*_TEXT_DARK)
+    current_y = _draw_wrapped_lines(c, item_lines, inner_x, current_y, "Helvetica", item_fs, 1.2) - block_gap
+
+    c.setFillColorRGB(*_TEXT_DARK)
+    current_y = _draw_wrapped_lines(c, desc_lines, inner_x, current_y, "Helvetica", desc_fs, 1.2)
 
     image_y = y + pad
-    _draw_image_area(c, x + pad, image_y, w - (2 * pad), image_h, image)
+    image_h = max(0.0, min(image_h, max(0.0, current_y - image_y - 1.5)))
+    _draw_image_area(c, inner_x, image_y, inner_w, image_h, image)
 
 
 def _render_side_page(
