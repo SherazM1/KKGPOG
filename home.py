@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from app.sams_club.render_planogram import render_sams_planogram_pdf
 from app.sams_club.service import build_sams_planogram_structure, detect_sams_pogs
 from app.shared.constants import DISPLAY_FULL_PALLET, DISPLAY_SAMS_CLUB, DISPLAY_STANDARD, N_COLS
 
@@ -69,7 +70,7 @@ def main() -> None:
 
     if display_type == DISPLAY_SAMS_CLUB:
         st.subheader("Sam's Club Planogram Display")
-        st.info("New workflow in progress. Structure-only scaffold is available; PDF rendering is not implemented yet.")
+        st.info("Build the populated Sam's structure, then generate one completed PDF page per side.")
 
         if not sams_main_source_file:
             st.warning("Upload a Sam's main source file (.accdb, .mdb, .xlsx, or .csv) to begin.")
@@ -77,29 +78,81 @@ def main() -> None:
 
         st.caption("Optional support file accepted: Excel workbook (.xlsx).")
 
+        if "sams_build_result" not in st.session_state:
+            st.session_state["sams_build_result"] = None
+        if "sams_pdf_result" not in st.session_state:
+            st.session_state["sams_pdf_result"] = None
+
         if build_sams:
-            with st.spinner("Building placeholder Sam's Club structure..."):
+            with st.spinner("Building Sam's Club structure..."):
                 result = build_sams_planogram_structure(
                     sams_main_source_file,
                     sams_excel_file,
                     selected_pog=sams_selected_pog,
                 )
-            st.success("Sam's Club structure build complete.")
-            for warning in result.warnings:
-                st.warning(warning)
-            st.write("Detected source type:", result.debug.get("source_type", "unknown"))
-            st.write("Normalized column mapping used:", result.debug.get("column_mapping", {}))
-            st.write("Detected POGs:", result.detected_pogs)
-            st.write("Selected POG:", result.selected_pog or "(none)")
-            st.write("Sides found:", result.debug.get("sides_found", []))
-            st.write("Side counts:", result.debug.get("side_counts", {}))
-            st.write("Rows per side:", result.debug.get("rows_per_side", {}))
-            st.write("Populated columns per row:", result.debug.get("populated_columns_per_row", {}))
-            st.write("Warnings:", result.debug.get("warnings", []))
-            st.write("Errors:", result.debug.get("errors", []))
-            st.json(result.to_dict())
-        else:
+            st.session_state["sams_build_result"] = result
+            st.session_state["sams_pdf_result"] = None
+
+        result = st.session_state.get("sams_build_result")
+        if result is None:
             st.info("Click 'Build Sam's Planogram Structure' to run the scaffold workflow.")
+            return
+
+        st.success("Sam's Club structure build complete.")
+        for warning in result.warnings:
+            st.warning(warning)
+
+        if not result.planogram.side_pages:
+            st.warning("No populated side pages are available for PDF rendering.")
+        else:
+            generate_sams_pdf = st.button(
+                "Generate Completed Sam's Planogram PDF",
+                type="primary",
+                use_container_width=True,
+                key="generate_sams_pdf",
+            )
+            if generate_sams_pdf:
+                with st.spinner("Rendering Sam's completed planogram PDF..."):
+                    st.session_state["sams_pdf_result"] = render_sams_planogram_pdf(
+                        result.planogram,
+                        generated_by="Kendal King",
+                    )
+
+        pdf_result = st.session_state.get("sams_pdf_result")
+        if pdf_result is not None:
+            st.success(
+                f"Rendered {pdf_result.rendered_slots} slots across {len(result.planogram.side_pages)} side page(s)."
+            )
+            if pdf_result.warnings:
+                st.warning(
+                    f"{pdf_result.missing_image_slots} cards rendered without image. "
+                    "Missing images were replaced with placeholders."
+                )
+                with st.expander("Image load warnings"):
+                    for warning in pdf_result.warnings:
+                        st.write(f"- {warning}")
+
+            sanitized_pog = (result.selected_pog or "sams").replace(" ", "_")
+            st.download_button(
+                "Download Completed Sam's Planogram PDF",
+                pdf_result.pdf_bytes,
+                file_name=f"{sanitized_pog}_completed_planogram.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key="download_sams_pdf",
+            )
+
+        st.write("Detected source type:", result.debug.get("source_type", "unknown"))
+        st.write("Normalized column mapping used:", result.debug.get("column_mapping", {}))
+        st.write("Detected POGs:", result.detected_pogs)
+        st.write("Selected POG:", result.selected_pog or "(none)")
+        st.write("Sides found:", result.debug.get("sides_found", []))
+        st.write("Side counts:", result.debug.get("side_counts", {}))
+        st.write("Rows per side:", result.debug.get("rows_per_side", {}))
+        st.write("Populated columns per row:", result.debug.get("populated_columns_per_row", {}))
+        st.write("Warnings:", result.debug.get("warnings", []))
+        st.write("Errors:", result.debug.get("errors", []))
+        st.json(result.to_dict())
         return
 
     if not (matrix_file and labels_pdf and images_pdf):
