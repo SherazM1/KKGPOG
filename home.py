@@ -17,7 +17,7 @@ def main() -> None:
     title_prefix = "POG"
     out_name = "pog_export.pdf"
     generate = False
-    sams_access_file = None
+    sams_main_source_file = None
     sams_excel_file = None
     sams_selected_pog = None
     build_sams = False
@@ -32,18 +32,19 @@ def main() -> None:
 
         if display_type == DISPLAY_SAMS_CLUB:
             st.divider()
-            sams_access_file = st.file_uploader(
-                "Sam's Access Database (.accdb/.mdb)",
-                type=["accdb", "mdb"],
-                key="sams_access_file",
+            sams_main_source_file = st.file_uploader(
+                "Sam's Main Source (.accdb, .mdb, .xlsx, .csv)",
+                type=["accdb", "mdb", "xlsx", "csv"],
+                help="Upload either the Access database or an exported Master POG Query file.",
+                key="sams_main_source_file",
             )
             sams_excel_file = st.file_uploader(
                 "Sam's Excel Workbook (optional support file)",
                 type=["xlsx"],
                 key="sams_excel_file",
             )
-            if sams_access_file:
-                detected_pogs, detect_warnings = detect_sams_pogs(sams_access_file)
+            if sams_main_source_file:
+                detected_pogs, detect_warnings = detect_sams_pogs(sams_main_source_file)
                 if detect_warnings:
                     for warn in detect_warnings:
                         st.warning(warn)
@@ -70,8 +71,8 @@ def main() -> None:
         st.subheader("Sam's Club Planogram Display")
         st.info("New workflow in progress. Structure-only scaffold is available; PDF rendering is not implemented yet.")
 
-        if not sams_access_file:
-            st.warning("Upload a Sam's Access database file (.accdb/.mdb) to begin.")
+        if not sams_main_source_file:
+            st.warning("Upload a Sam's main source file (.accdb, .mdb, .xlsx, or .csv) to begin.")
             return
 
         st.caption("Optional support file accepted: Excel workbook (.xlsx).")
@@ -79,19 +80,23 @@ def main() -> None:
         if build_sams:
             with st.spinner("Building placeholder Sam's Club structure..."):
                 result = build_sams_planogram_structure(
-                    sams_access_file,
+                    sams_main_source_file,
                     sams_excel_file,
                     selected_pog=sams_selected_pog,
                 )
             st.success("Sam's Club structure build complete.")
             for warning in result.warnings:
                 st.warning(warning)
+            st.write("Detected source type:", result.debug.get("source_type", "unknown"))
+            st.write("Normalized column mapping used:", result.debug.get("column_mapping", {}))
             st.write("Detected POGs:", result.detected_pogs)
             st.write("Selected POG:", result.selected_pog or "(none)")
+            st.write("Sides found:", result.debug.get("sides_found", []))
             st.write("Side counts:", result.debug.get("side_counts", {}))
             st.write("Rows per side:", result.debug.get("rows_per_side", {}))
             st.write("Populated columns per row:", result.debug.get("populated_columns_per_row", {}))
             st.write("Warnings:", result.debug.get("warnings", []))
+            st.write("Errors:", result.debug.get("errors", []))
             st.json(result.to_dict())
         else:
             st.info("Click 'Build Sam's Planogram Structure' to run the scaffold workflow.")

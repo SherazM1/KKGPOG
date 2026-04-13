@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from app.sams_club.extract_access import extract_master_pog_records
+from app.sams_club.extract_access import extract_master_pog_source
 from app.sams_club.models import SamsPlanogram, SamsRow, SamsSidePage, SamsSlot
 from app.sams_club.validate import (
     side_column_limit,
@@ -92,38 +92,35 @@ def _choose_selected_pog(detected_pogs: list[str], selected_pog: str | None, war
     return detected_pogs[0]
 
 
-def detect_sams_pogs(access_file: Any) -> tuple[list[str], list[str]]:
-    """Read Access records and return detected POG identifiers for UI selection."""
-    warnings: list[str] = []
-    try:
-        records = extract_master_pog_records(access_file)
-    except Exception as exc:
-        return [], [f"Access extraction failed: {exc}"]
-
-    pogs = sorted({_as_text(record.get("pog")) for record in records if _as_text(record.get("pog"))})
+def detect_sams_pogs(main_source_file: Any) -> tuple[list[str], list[str]]:
+    """Read Sam's main source and return detected POG identifiers for UI selection."""
+    extraction = extract_master_pog_source(main_source_file)
+    pogs = sorted({_as_text(record.get("pog")) for record in extraction.records if _as_text(record.get("pog"))})
+    warnings = extraction.warnings + extraction.errors
     if not pogs:
-        warnings.append("No POG values found in Access records.")
+        warnings.append("No POG values found in source records.")
     return pogs, warnings
 
 
 def build_sams_planogram_structure(
-    access_file: Any,
+    main_source_file: Any,
     excel_file: Any = None,
     selected_pog: str | None = None,
 ) -> SamsBuildResult:
     """
-    Build a populated Sam's Club planogram structure from Access records.
+    Build a populated Sam's Club planogram structure from Sam's main source records.
 
-    The pipeline is Access-first and currently structure-only (no PDF rendering).
+    The pipeline is source-routed (.accdb/.mdb/.xlsx/.csv) and currently structure-only (no PDF rendering).
     """
     warnings: list[str] = []
     if excel_file is not None:
         warnings.append("Excel support input received; integration is not implemented yet.")
 
-    try:
-        raw_records = extract_master_pog_records(access_file)
-    except Exception as exc:
-        warnings.append(f"Access extraction failed: {exc}")
+    extraction = extract_master_pog_source(main_source_file)
+    warnings.extend(extraction.warnings)
+    warnings.extend(extraction.errors)
+    raw_records = extraction.records
+    if extraction.errors and not raw_records:
         return SamsBuildResult(
             planogram=SamsPlanogram(pog="", side_pages=[], warnings=warnings.copy()),
             extracted_record_count=0,
@@ -132,11 +129,15 @@ def build_sams_planogram_structure(
             selected_pog="",
             warnings=warnings,
             debug={
+                "source_type": extraction.source_type,
+                "column_mapping": extraction.column_mapping,
                 "detected_pogs": [],
+                "sides_found": [],
                 "side_counts": {},
                 "rows_per_side": {},
                 "populated_columns_per_row": {},
                 "warnings": warnings.copy(),
+                "errors": extraction.errors.copy(),
             },
         )
 
@@ -186,6 +187,7 @@ def build_sams_planogram_structure(
     side_rows: dict[int, dict[int, list[SamsSlot]]] = {}
     row_column_debug: dict[str, dict[str, int]] = {}
     side_counts: dict[str, int] = {}
+    sides_found: list[int] = []
     rows_per_side: dict[str, int] = {}
 
     for record in selected_records:
@@ -221,6 +223,7 @@ def build_sams_planogram_structure(
 
     side_pages: list[SamsSidePage] = []
     for side in sorted(side_rows):
+        sides_found.append(side)
         side_map = side_rows[side]
         rows: list[SamsRow] = []
         for row_number in sorted(side_map):
@@ -259,11 +262,15 @@ def build_sams_planogram_structure(
         warnings=warnings.copy(),
     )
     debug = {
+        "source_type": extraction.source_type,
+        "column_mapping": extraction.column_mapping,
         "detected_pogs": detected_pogs,
+        "sides_found": sides_found,
         "side_counts": side_counts,
         "rows_per_side": rows_per_side,
         "populated_columns_per_row": row_column_debug,
         "warnings": warnings.copy(),
+        "errors": extraction.errors.copy(),
     }
 
     return SamsBuildResult(
