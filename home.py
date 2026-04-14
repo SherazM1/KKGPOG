@@ -92,6 +92,10 @@ def main() -> None:
             st.session_state["sams_build_result"] = None
         if "sams_pdf_result" not in st.session_state:
             st.session_state["sams_pdf_result"] = None
+        if "sams_pdf_title" not in st.session_state:
+            st.session_state["sams_pdf_title"] = ""
+        if "sams_pdf_title_seed" not in st.session_state:
+            st.session_state["sams_pdf_title_seed"] = ""
 
         if build_sams:
             with st.spinner("Building Sam's Club structure..."):
@@ -113,6 +117,18 @@ def main() -> None:
         for warning in result.warnings:
             st.warning(warning)
 
+        detected_title_seed = (result.selected_pog or result.planogram.pog or "").strip()
+        current_title_value = (st.session_state.get("sams_pdf_title") or "").strip()
+        previous_title_seed = (st.session_state.get("sams_pdf_title_seed") or "").strip()
+        if (not current_title_value) or current_title_value == previous_title_seed:
+            st.session_state["sams_pdf_title"] = detected_title_seed
+        st.session_state["sams_pdf_title_seed"] = detected_title_seed
+        sams_pdf_title = st.text_input(
+            "Sam's Sheet/Page Title",
+            key="sams_pdf_title",
+            help="This title is used in the Sam's completed planogram PDF header.",
+        )
+
         if not result.planogram.side_pages:
             st.warning("No populated side pages are available for PDF rendering.")
         else:
@@ -127,6 +143,7 @@ def main() -> None:
                     st.session_state["sams_pdf_result"] = render_sams_planogram_pdf(
                         result.planogram,
                         generated_by="Kendal King",
+                        title_override=sams_pdf_title,
                     )
 
         pdf_result = st.session_state.get("sams_pdf_result")
