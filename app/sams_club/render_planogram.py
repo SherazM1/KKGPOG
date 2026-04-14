@@ -28,6 +28,22 @@ _FONT_BODY_REGULAR = "Helvetica"
 _FONT_ITALIC = "Helvetica-Oblique"
 _RALEWAY_FONT_NAME = "Raleway-Regular"
 _RALEWAY_REGISTERED = False
+_BASE_MARGIN = 20.0
+_BASE_HEADER_H = 42.0
+_BASE_FOOTER_H = 24.0
+_BASE_BODY_BOTTOM_GAP = 8.0
+
+
+@dataclass(frozen=True)
+class _SideLayoutMetrics:
+    page_w: float
+    page_h: float
+    margin: float
+    header_h: float
+    footer_h: float
+    body_bottom_gap: float
+    row_gap: float
+    col_gap: float
 
 
 @dataclass
@@ -182,6 +198,14 @@ def _compute_image_height(available_height: float, preferred_height: float, min_
     return max(min_height, available_height)
 
 
+def _compute_image_box(card_h: float, text_and_image_h: float, text_h: float) -> tuple[float, float]:
+    preferred_h = max(36.0, max(card_h * 0.52, text_and_image_h * 0.5))
+    min_h = max(18.0, min(card_h * 0.38, text_and_image_h * 0.45))
+    available = text_and_image_h - text_h
+    image_h = _compute_image_height(available, preferred_h, min_h)
+    return max(0.0, image_h), min_h
+
+
 def _effective_column_count(side_page: SamsSidePage) -> int:
     populated_counts = []
     for row in side_page.rows:
@@ -193,6 +217,65 @@ def _effective_column_count(side_page: SamsSidePage) -> int:
     if max_populated <= 0:
         return 1
     return max_populated
+
+
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
+
+
+def _compute_card_dimensions(
+    *,
+    page_w: float,
+    page_h: float,
+    row_count: int,
+    col_count: int,
+    margin: float,
+    header_h: float,
+    footer_h: float,
+    body_bottom_gap: float,
+    row_gap: float,
+    col_gap: float,
+) -> tuple[float, float]:
+    content_w = max(1.0, page_w - (2 * margin))
+    content_h = max(1.0, page_h - header_h - (2 * margin) - footer_h - body_bottom_gap)
+    card_w = (content_w - ((col_count - 1) * col_gap)) / max(1, col_count)
+    card_h = (content_h - ((row_count - 1) * row_gap)) / max(1, row_count)
+    return max(1.0, card_w), max(1.0, card_h)
+
+
+def _compute_page_dimensions_for_side(side_page: SamsSidePage) -> _SideLayoutMetrics:
+    base_w, base_h = _PAGE_SIZE
+    margin = _BASE_MARGIN
+    header_h = _BASE_HEADER_H
+    footer_h = _BASE_FOOTER_H
+    body_bottom_gap = _BASE_BODY_BOTTOM_GAP
+
+    sorted_rows = sorted(side_page.rows, key=lambda row: row.row_number)
+    row_count = max(1, len(sorted_rows))
+    col_count = max(1, _effective_column_count(side_page))
+
+    row_gap = _clamp(8.0 - (row_count - 3) * 0.4, 5.0, 8.0)
+    col_gap = _clamp(6.0 - (col_count - 4) * 0.3, 4.0, 6.0)
+
+    # Expand page dimensions when density is high so cards stay readable and visually full.
+    min_card_w = 124.0
+    min_card_h = 164.0
+    needed_content_w = (col_count * min_card_w) + ((col_count - 1) * col_gap)
+    needed_content_h = (row_count * min_card_h) + ((row_count - 1) * row_gap)
+
+    page_w = max(base_w, needed_content_w + (2 * margin))
+    page_h = max(base_h, needed_content_h + header_h + (2 * margin) + footer_h + body_bottom_gap)
+
+    return _SideLayoutMetrics(
+        page_w=page_w,
+        page_h=page_h,
+        margin=margin,
+        header_h=header_h,
+        footer_h=footer_h,
+        body_bottom_gap=body_bottom_gap,
+        row_gap=row_gap,
+        col_gap=col_gap,
+    )
 
 
 def _format_retail_price(raw_value: str) -> str:
@@ -339,8 +422,9 @@ def _draw_slot_card(
     c.setLineWidth(0.7)
     c.rect(x, y, w, h, stroke=1, fill=1)
 
-    pad = max(3.5, min(6.0, w * 0.065))
-    metadata_h = max(11.0, h * 0.095)
+    size_scale = _clamp(min(w / 150.0, h / 185.0), 0.9, 1.45)
+    pad = _clamp(w * 0.06, 3.8, 8.0)
+    metadata_h = max(11.5, h * 0.102)
     inner_x = x + pad
     inner_w = w - (2 * pad)
     inner_h = h - (2 * pad)
@@ -352,7 +436,9 @@ def _draw_slot_card(
     c.rect(x, meta_y, w, metadata_h, stroke=0, fill=1)
 
     c.setFillColorRGB(*_TEXT_DARK)
-    meta_fs = _fit_text("RETAIL", _FONT_BODY_BOLD, (w / 2) - (pad * 2), 7.5, 5.75)
+    meta_max_fs = 7.5 * size_scale
+    meta_min_fs = max(5.75, 5.0 * size_scale)
+    meta_fs = _fit_text("RETAIL", _FONT_BODY_BOLD, (w / 2) - (pad * 2), meta_max_fs, meta_min_fs)
     c.setFont(_FONT_BODY_BOLD, meta_fs)
     retail = _truncate_text(_format_retail_price(slot.retail), _FONT_BODY_BOLD, meta_fs, (w / 2) - (pad * 2))
     cpp = _truncate_text(_format_cpp_value(slot.cpp), _FONT_BODY_BOLD, meta_fs, (w / 2) - (pad * 2))
@@ -364,13 +450,14 @@ def _draw_slot_card(
     item_text = f"ITEM {(slot.item_number or '').strip() or '-'}"
     description = _description_for_slot(slot)
 
-    upc_fs = _fit_protected_single_line_font(upc_text, _FONT_BODY_BOLD, inner_w, 7.5, 4.0)
-    item_fs = _fit_protected_single_line_font(item_text, _FONT_BODY_REGULAR, inner_w, 7.0, 4.0)
+    upc_max_fs = 7.5 * size_scale
+    item_max_fs = 7.0 * size_scale
+    desc_default_fs = 7.25 * size_scale
+    upc_fs = _fit_protected_single_line_font(upc_text, _FONT_BODY_BOLD, inner_w, upc_max_fs, 4.2)
+    item_fs = _fit_protected_single_line_font(item_text, _FONT_BODY_REGULAR, inner_w, item_max_fs, 4.0)
     item_lines = _wrap_text_lines(item_text, _FONT_BODY_REGULAR, item_fs, inner_w)
-    desc_fs = 7.25
-    min_desc_fs = 2.75
-    image_preferred_h = max(30.0, h * 0.44)
-    image_min_h = 12.0
+    desc_fs = max(6.0, desc_default_fs)
+    min_desc_fs = 4.0
     block_gap = 1.6
 
     desc_lines = _wrap_text_lines(description, _FONT_BODY_REGULAR, desc_fs, inner_w)
@@ -384,6 +471,7 @@ def _draw_slot_card(
             + block_gap
             + _wrapped_block_height(len(desc_lines), desc_fs, 1.0)
         )
+        _, image_min_h = _compute_image_box(h, text_and_image_h, text_h)
         if text_h + image_min_h <= text_and_image_h:
             break
         if item_fs > 4.0:
@@ -402,7 +490,7 @@ def _draw_slot_card(
         + block_gap
         + _wrapped_block_height(len(desc_lines), desc_fs, 1.0)
     )
-    image_h = _compute_image_height(text_and_image_h - text_h, image_preferred_h, image_min_h)
+    image_h, _ = _compute_image_box(h, text_and_image_h, text_h)
 
     content_top = y + pad + inner_h - metadata_h
     text_top = content_top - 0.8
@@ -431,12 +519,16 @@ def _render_side_page(
     warnings: list[str],
     title_override: str | None = None,
 ) -> tuple[int, int]:
-    page_w, page_h = _PAGE_SIZE
-    margin = 20.0
-    header_h = 42.0
-    footer_h = 24.0
-    row_gap = 8.0
-    col_gap = 6.0
+    metrics = _compute_page_dimensions_for_side(side_page)
+    page_w = metrics.page_w
+    page_h = metrics.page_h
+    margin = metrics.margin
+    header_h = metrics.header_h
+    footer_h = metrics.footer_h
+    row_gap = metrics.row_gap
+    col_gap = metrics.col_gap
+
+    c.setPageSize((page_w, page_h))
 
     _draw_header(c, page_w, page_h, side_page.pog, side_page.side, header_h, title_override=title_override)
     _draw_footer(c, page_w, margin, generated_by, generated_at)
@@ -444,9 +536,7 @@ def _render_side_page(
     content_left = margin
     content_right = page_w - margin
     content_top = page_h - header_h - margin
-    content_bottom = margin + footer_h + 8
-    content_w = content_right - content_left
-    content_h = content_top - content_bottom
+    content_bottom = margin + footer_h + metrics.body_bottom_gap
 
     sorted_rows = sorted(side_page.rows, key=lambda row: row.row_number)
     row_count = len(sorted_rows)
@@ -457,8 +547,18 @@ def _render_side_page(
         return 0, 0
 
     effective_columns = _effective_column_count(side_page)
-    card_w = (content_w - ((effective_columns - 1) * col_gap)) / effective_columns
-    card_h = (content_h - ((row_count - 1) * row_gap)) / row_count
+    card_w, card_h = _compute_card_dimensions(
+        page_w=page_w,
+        page_h=page_h,
+        row_count=row_count,
+        col_count=effective_columns,
+        margin=margin,
+        header_h=header_h,
+        footer_h=footer_h,
+        body_bottom_gap=metrics.body_bottom_gap,
+        row_gap=row_gap,
+        col_gap=col_gap,
+    )
 
     rendered_slots = 0
     missing_image_slots = 0
