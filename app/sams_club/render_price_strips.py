@@ -16,7 +16,8 @@ from app.shared.fonts import BODY_BOLD_FONT, BODY_FONT
 
 _PAGE_WIDTH = 11.0 * inch
 _PAGE_HEIGHT = 2.45 * inch
-_TEXT_DARK = (0.10, 0.10, 0.10)
+_TEXT_DARK = (0.06, 0.06, 0.06)
+_TEXT_ITEM = (0.22, 0.22, 0.22)
 _TEXT_MUTED = (0.34, 0.34, 0.34)
 _STRIP_BG = (1.0, 1.0, 1.0)
 _RETAIL_MARGIN_PAD = 1.2
@@ -41,9 +42,11 @@ _SAMS_STACK_BRAND_GAP = 0.92
 _SAMS_STACK_DESC_GAP = 0.72
 _SAMS_STACK_TO_PRICE_OFFSET = 1.05
 _SAMS_PRICE_SIGN_RISE_RATIO = 0.435
-_SAMS_PRICE_CENTS_RISE_RATIO = 0.485
+_SAMS_PRICE_CENTS_RISE_RATIO = 0.455
 _SAMS_PRICE_SIGN_GAP_RATIO = 0.052
-_SAMS_PRICE_CENTS_GAP_RATIO = 0.019
+_SAMS_PRICE_CENTS_GAP_RATIO = 0.012
+_TICKET_VERTICAL_LIFT_RATIO = 0.07
+_TICKET_VERTICAL_LIFT_MAX = 0.11 * inch
 _FONTS_READY = False
 _SAMS_GIBSON_AVAILABLE = False
 _SAMS_FONT_WARNING: str | None = None
@@ -301,7 +304,7 @@ def compute_ticket_positions_across_strip(strip_w: float, ticket_count: int) -> 
 def draw_ticket_item_number(c: canvas.Canvas, item_number: str, right_x: float, baseline_y: float, max_w: float) -> None:
     font = get_sams_strip_font("regular")
     text = _truncate(item_number or "-", font, _SAMS_ITEM_SIZE, max(20.0, max_w))
-    c.setFillColorRGB(*_TEXT_MUTED)
+    c.setFillColorRGB(*_TEXT_ITEM)
     c.setFont(font, _SAMS_ITEM_SIZE)
     c.drawRightString(right_x, baseline_y, text)
 
@@ -469,10 +472,11 @@ def layout_ticket_composition(x: float, y: float, w: float, h: float) -> _Ticket
     origin_y = y
     inner_top = _DEFAULT_INNER_PAD_TOP * 0.55
     inner_bottom = _DEFAULT_INNER_PAD_BOTTOM * 0.55
+    lift = min(_TICKET_VERTICAL_LIFT_MAX, max(0.0, h * _TICKET_VERTICAL_LIFT_RATIO))
     content_x = origin_x
-    content_y = origin_y + inner_bottom
+    content_y = origin_y + inner_bottom + lift
     content_w = w
-    content_h = max(12.0, h - inner_bottom - inner_top)
+    content_h = max(12.0, h - inner_bottom - inner_top - lift)
     return _TicketCompositionLayout(
         origin_x=origin_x,
         origin_y=origin_y,
@@ -512,11 +516,13 @@ def draw_strip_footer(
     footer_band_h: float,
     max_width: float,
     left_margin: float,
+    first_ticket_x: float,
 ) -> None:
     font = get_sams_strip_font("regular")
     footer_text = _resolve_strip_footer_text(row_data)
-    footer_x = max(0.035 * inch, left_margin * 0.64)
-    footer_baseline_y = y + max(0.9, min(1.8, footer_band_h * 0.23))
+    _ = left_margin
+    footer_x = max(0.03 * inch, first_ticket_x + (0.01 * inch))
+    footer_baseline_y = y + max(0.75, min(1.5, footer_band_h * 0.20))
     c.setFillColorRGB(*_TEXT_MUTED)
     c.setFont(font, _SAMS_FOOTER_SIZE)
     c.drawString(footer_x, footer_baseline_y, _truncate(footer_text, font, _SAMS_FOOTER_SIZE, max_width))
@@ -556,7 +562,8 @@ def _render_strip_page(
         draw_ticket_composition(c, row_data.segments[idx], x, ticket_y, ticket_w, strip_h)
 
     footer_w = min(page_w * 0.58, max(40.0, page_w - layout.left_margin - layout.right_margin - (0.08 * inch)))
-    draw_strip_footer(c, row_data, 0.0, footer_h, footer_w, layout.left_margin)
+    first_ticket_x = positions[0][0] if positions else layout.left_margin
+    draw_strip_footer(c, row_data, 0.0, footer_h, footer_w, layout.left_margin, first_ticket_x)
     return segment_count
 
 
