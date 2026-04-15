@@ -3,7 +3,9 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from app.sams_club.extract_price_strips import build_sams_price_strip_rows
 from app.sams_club.render_planogram import render_sams_planogram_pdf
+from app.sams_club.render_price_strips import render_sams_price_strips_pdf
 from app.sams_club.service import build_sams_planogram_structure, detect_sams_pogs
 from app.shared.constants import DISPLAY_FULL_PALLET, DISPLAY_SAMS_CLUB, DISPLAY_STANDARD, N_COLS
 
@@ -23,6 +25,7 @@ def main() -> None:
     sams_image_zip_file = None
     sams_selected_pog = None
     build_sams = False
+    generate_sams_price_strips = False
 
     with st.sidebar:
         st.header("Configuration")
@@ -41,8 +44,9 @@ def main() -> None:
                 key="sams_main_source_file",
             )
             sams_excel_file = st.file_uploader(
-                "Sam's Excel Workbook (optional support file)",
+                "Sam's Pricing Workbook (.xlsx)",
                 type=["xlsx"],
+                help="Used by the Sam's price strip workflow from the 'Price Strip Data' sheet.",
                 key="sams_excel_file",
             )
             sams_image_zip_file = st.file_uploader(
@@ -67,6 +71,11 @@ def main() -> None:
                         key="sams_selected_pog",
                     )
             build_sams = st.button("Build Sam's Planogram Structure", type="primary", use_container_width=True)
+            generate_sams_price_strips = st.button(
+                "Generate Sam's Price Strips",
+                use_container_width=True,
+                key="generate_sams_price_strips",
+            )
         else:
             st.divider()
             matrix_file = st.file_uploader("Matrix Excel (.xlsx)", type=["xlsx"])
@@ -80,13 +89,7 @@ def main() -> None:
 
     if display_type == DISPLAY_SAMS_CLUB:
         st.subheader("Sam's Club Planogram Display")
-        st.info("Build the populated Sam's structure, then generate one completed PDF page per side.")
-
-        if not sams_main_source_file:
-            st.warning("Upload a Sam's main source file (.accdb, .mdb, .xlsx, or .csv) to begin.")
-            return
-
-        st.caption("Optional support file accepted: Excel workbook (.xlsx).")
+        st.info("Completed planogram and price strips run as separate Sam's outputs.")
 
         if "sams_build_result" not in st.session_state:
             st.session_state["sams_build_result"] = None
@@ -96,8 +99,16 @@ def main() -> None:
             st.session_state["sams_pdf_title"] = ""
         if "sams_pdf_title_seed" not in st.session_state:
             st.session_state["sams_pdf_title_seed"] = ""
+        if "sams_price_strip_build_result" not in st.session_state:
+            st.session_state["sams_price_strip_build_result"] = None
+        if "sams_price_strip_pdf_result" not in st.session_state:
+            st.session_state["sams_price_strip_pdf_result"] = None
 
-        if build_sams:
+        st.markdown("### Completed Planogram")
+        if not sams_main_source_file:
+            st.warning("Upload a Sam's main source file (.accdb, .mdb, .xlsx, or .csv) to use completed planogram flow.")
+
+        if build_sams and sams_main_source_file:
             with st.spinner("Building Sam's Club structure..."):
                 result = build_sams_planogram_structure(
                     sams_main_source_file,
@@ -110,93 +121,148 @@ def main() -> None:
 
         result = st.session_state.get("sams_build_result")
         if result is None:
-            st.info("Click 'Build Sam's Planogram Structure' to run the scaffold workflow.")
-            return
-
-        st.success("Sam's Club structure build complete.")
-        for warning in result.warnings:
-            st.warning(warning)
-
-        detected_title_seed = (result.selected_pog or result.planogram.pog or "").strip()
-        current_title_value = (st.session_state.get("sams_pdf_title") or "").strip()
-        previous_title_seed = (st.session_state.get("sams_pdf_title_seed") or "").strip()
-        if (not current_title_value) or current_title_value == previous_title_seed:
-            st.session_state["sams_pdf_title"] = detected_title_seed
-        st.session_state["sams_pdf_title_seed"] = detected_title_seed
-        sams_pdf_title = st.text_input(
-            "Sam's Sheet/Page Title",
-            key="sams_pdf_title",
-            help="This title is used in the Sam's completed planogram PDF header.",
-        )
-
-        if not result.planogram.side_pages:
-            st.warning("No populated side pages are available for PDF rendering.")
+            st.info("Click 'Build Sam's Planogram Structure' to run the completed-planogram workflow.")
         else:
-            generate_sams_pdf = st.button(
-                "Generate Completed Sam's Planogram PDF",
-                type="primary",
-                use_container_width=True,
-                key="generate_sams_pdf",
-            )
-            if generate_sams_pdf:
-                with st.spinner("Rendering Sam's completed planogram PDF..."):
-                    st.session_state["sams_pdf_result"] = render_sams_planogram_pdf(
-                        result.planogram,
-                        generated_by="Kendal King",
-                        title_override=sams_pdf_title,
-                    )
+            st.success("Sam's Club structure build complete.")
+            for warning in result.warnings:
+                st.warning(warning)
 
-        pdf_result = st.session_state.get("sams_pdf_result")
-        if pdf_result is not None:
-            st.success(
-                f"Rendered {pdf_result.rendered_slots} slots across {len(result.planogram.side_pages)} side page(s)."
+            detected_title_seed = (result.selected_pog or result.planogram.pog or "").strip()
+            current_title_value = (st.session_state.get("sams_pdf_title") or "").strip()
+            previous_title_seed = (st.session_state.get("sams_pdf_title_seed") or "").strip()
+            if (not current_title_value) or current_title_value == previous_title_seed:
+                st.session_state["sams_pdf_title"] = detected_title_seed
+            st.session_state["sams_pdf_title_seed"] = detected_title_seed
+            sams_pdf_title = st.text_input(
+                "Sam's Sheet/Page Title",
+                key="sams_pdf_title",
+                help="This title is used in the Sam's completed planogram PDF header.",
             )
-            if pdf_result.warnings:
-                st.warning(
-                    f"{pdf_result.missing_image_slots} cards rendered without image. "
-                    "Missing images were replaced with placeholders."
+
+            if not result.planogram.side_pages:
+                st.warning("No populated side pages are available for PDF rendering.")
+            else:
+                generate_sams_pdf = st.button(
+                    "Generate Completed Sam's Planogram PDF",
+                    type="primary",
+                    use_container_width=True,
+                    key="generate_sams_pdf",
                 )
-                with st.expander("Image load warnings"):
-                    for warning in pdf_result.warnings:
-                        st.write(f"- {warning}")
+                if generate_sams_pdf:
+                    with st.spinner("Rendering Sam's completed planogram PDF..."):
+                        st.session_state["sams_pdf_result"] = render_sams_planogram_pdf(
+                            result.planogram,
+                            generated_by="Kendal King",
+                            title_override=sams_pdf_title,
+                        )
 
-            sanitized_pog = (result.selected_pog or "sams").replace(" ", "_")
-            st.download_button(
-                "Download Completed Sam's Planogram PDF",
-                pdf_result.pdf_bytes,
-                file_name=f"{sanitized_pog}_completed_planogram.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-                key="download_sams_pdf",
-            )
-
-        st.write("Detected source type:", result.debug.get("source_type", "unknown"))
-        st.write("Normalized column mapping used:", result.debug.get("column_mapping", {}))
-        st.write("Detected POGs:", result.detected_pogs)
-        st.write("Selected POG:", result.selected_pog or "(none)")
-        st.write("Sides found:", result.debug.get("sides_found", []))
-        st.write("Side counts:", result.debug.get("side_counts", {}))
-        st.write("Rows per side:", result.debug.get("rows_per_side", {}))
-        st.write("Populated columns per row:", result.debug.get("populated_columns_per_row", {}))
-        image_debug = result.debug.get("image_resolution", {})
-        st.write("Sam's image zip uploaded:", "yes" if image_debug.get("image_zip_uploaded") else "no")
-        st.write("Sam's total slots:", image_debug.get("total_slots", 0))
-        st.write("Resolved by original path:", image_debug.get("resolved_by_original_path", 0))
-        st.write("Resolved by zip basename:", image_debug.get("resolved_by_zip_basename", 0))
-        st.write("Resolved by zip UPC:", image_debug.get("resolved_by_zip_upc", 0))
-        st.write("Unresolved:", image_debug.get("unresolved", 0))
-        unresolved_examples = image_debug.get("unresolved_examples", [])
-        if unresolved_examples:
-            with st.expander("Unresolved image examples (up to 10)"):
-                for example in unresolved_examples:
-                    st.write(
-                        "- "
-                        f"side={example.get('side')} row={example.get('row')} column={example.get('column')} "
-                        f"upc={example.get('upc')} file_path={example.get('file_path')}"
+            pdf_result = st.session_state.get("sams_pdf_result")
+            if pdf_result is not None:
+                st.success(
+                    f"Rendered {pdf_result.rendered_slots} slots across {len(result.planogram.side_pages)} side page(s)."
+                )
+                if pdf_result.warnings:
+                    st.warning(
+                        f"{pdf_result.missing_image_slots} cards rendered without image. "
+                        "Missing images were replaced with placeholders."
                     )
-        st.write("Warnings:", result.debug.get("warnings", []))
-        st.write("Errors:", result.debug.get("errors", []))
-        st.json(result.to_dict())
+                    with st.expander("Image load warnings"):
+                        for warning in pdf_result.warnings:
+                            st.write(f"- {warning}")
+
+                sanitized_pog = (result.selected_pog or "sams").replace(" ", "_")
+                st.download_button(
+                    "Download Completed Sam's Planogram PDF",
+                    pdf_result.pdf_bytes,
+                    file_name=f"{sanitized_pog}_completed_planogram.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    key="download_sams_pdf",
+                )
+
+            st.write("Detected source type:", result.debug.get("source_type", "unknown"))
+            st.write("Normalized column mapping used:", result.debug.get("column_mapping", {}))
+            st.write("Detected POGs:", result.detected_pogs)
+            st.write("Selected POG:", result.selected_pog or "(none)")
+            st.write("Sides found:", result.debug.get("sides_found", []))
+            st.write("Side counts:", result.debug.get("side_counts", {}))
+            st.write("Rows per side:", result.debug.get("rows_per_side", {}))
+            st.write("Populated columns per row:", result.debug.get("populated_columns_per_row", {}))
+            image_debug = result.debug.get("image_resolution", {})
+            st.write("Sam's image zip uploaded:", "yes" if image_debug.get("image_zip_uploaded") else "no")
+            st.write("Sam's total slots:", image_debug.get("total_slots", 0))
+            st.write("Resolved by original path:", image_debug.get("resolved_by_original_path", 0))
+            st.write("Resolved by zip basename:", image_debug.get("resolved_by_zip_basename", 0))
+            st.write("Resolved by zip UPC:", image_debug.get("resolved_by_zip_upc", 0))
+            st.write("Unresolved:", image_debug.get("unresolved", 0))
+            unresolved_examples = image_debug.get("unresolved_examples", [])
+            if unresolved_examples:
+                with st.expander("Unresolved image examples (up to 10)"):
+                    for example in unresolved_examples:
+                        st.write(
+                            "- "
+                            f"side={example.get('side')} row={example.get('row')} column={example.get('column')} "
+                            f"upc={example.get('upc')} file_path={example.get('file_path')}"
+                        )
+            st.write("Warnings:", result.debug.get("warnings", []))
+            st.write("Errors:", result.debug.get("errors", []))
+            st.json(result.to_dict())
+
+        st.markdown("---")
+        st.markdown("### Price Strips")
+        if not sams_excel_file:
+            st.info("Upload Sam's Pricing Workbook (.xlsx) to generate price strips from 'Price Strip Data'.")
+        else:
+            if generate_sams_price_strips:
+                with st.spinner("Building Sam's price strip groups..."):
+                    strip_build = build_sams_price_strip_rows(sams_excel_file)
+                st.session_state["sams_price_strip_build_result"] = strip_build
+                if strip_build.errors:
+                    st.session_state["sams_price_strip_pdf_result"] = None
+                else:
+                    with st.spinner("Rendering Sam's price strips PDF..."):
+                        st.session_state["sams_price_strip_pdf_result"] = render_sams_price_strips_pdf(
+                            strip_build.strip_rows,
+                            generated_by="Kendal King",
+                        )
+
+            strip_build = st.session_state.get("sams_price_strip_build_result")
+            if strip_build is not None:
+                if strip_build.errors:
+                    for error in strip_build.errors:
+                        st.error(error)
+                else:
+                    st.success(
+                        f"Detected {strip_build.debug.get('strip_group_count', 0)} strip group(s) "
+                        f"from {strip_build.extracted_record_count} workbook record(s)."
+                    )
+                    st.write("Detected strip groups:", strip_build.debug.get("detected_strip_groups", []))
+                    st.write("(POG, Side, Row) group count:", strip_build.debug.get("strip_group_count", 0))
+                    st.write("Segment count per strip row:", strip_build.debug.get("segments_per_strip_row", {}))
+                    st.write("Included segment count:", strip_build.included_segment_count)
+                    st.write("Skipped segment count:", strip_build.skipped_segment_count)
+                    if strip_build.warnings:
+                        with st.expander("Price strip warnings"):
+                            for warning in strip_build.warnings:
+                                st.write(f"- {warning}")
+
+                    strip_pdf = st.session_state.get("sams_price_strip_pdf_result")
+                    if strip_pdf is not None:
+                        st.success(
+                            f"Rendered {strip_pdf.rendered_pages} strip page(s) with {strip_pdf.rendered_segments} segment block(s)."
+                        )
+                        if strip_pdf.warnings:
+                            with st.expander("Price strip render warnings"):
+                                for warning in strip_pdf.warnings:
+                                    st.write(f"- {warning}")
+                        st.download_button(
+                            "Download Sam's Price Strips PDF",
+                            strip_pdf.pdf_bytes,
+                            file_name="sams_price_strips.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                            key="download_sams_price_strips_pdf",
+                        )
         return
 
     if not (matrix_file and labels_pdf and images_pdf):
