@@ -29,7 +29,7 @@ _MIN_TICKET_GAP = 0.0
 _MIN_TICKET_WIDTH = 0.70 * inch
 _STRIP_MARGIN_MIN = 0.07 * inch
 _STRIP_MARGIN_MAX = 0.19 * inch
-_TICKET_COMPOSITION_RATIO = 0.90
+_STRIP_COMPOSITION_WIDTH_RATIO = 0.94
 _SAMS_FONT_REGULAR = "Sams-Gibson-Regular"
 _SAMS_FONT_SEMIBOLD = "Sams-Gibson-SemiBold"
 _SAMS_BRAND_SIZE = 7.5
@@ -37,6 +37,13 @@ _SAMS_DESC_SIZE = 6.0
 _SAMS_PRICE_SIZE = 47.0
 _SAMS_ITEM_SIZE = 5.0
 _SAMS_FOOTER_SIZE = 5.0
+_SAMS_STACK_BRAND_GAP = 0.92
+_SAMS_STACK_DESC_GAP = 0.72
+_SAMS_STACK_TO_PRICE_OFFSET = 1.05
+_SAMS_PRICE_SIGN_RISE_RATIO = 0.435
+_SAMS_PRICE_CENTS_RISE_RATIO = 0.485
+_SAMS_PRICE_SIGN_GAP_RATIO = 0.052
+_SAMS_PRICE_CENTS_GAP_RATIO = 0.019
 _FONTS_READY = False
 _SAMS_GIBSON_AVAILABLE = False
 _SAMS_FONT_WARNING: str | None = None
@@ -59,6 +66,8 @@ class _PriceObjectLayout(NamedTuple):
     cents_x: float
     cents_baseline_y: float
     cents_size: float
+    object_left_x: float
+    object_bottom_y: float
     object_right_x: float
     object_top_y: float
 
@@ -67,6 +76,15 @@ class _StripContinuityLayout(NamedTuple):
     positions: list[tuple[float, float]]
     left_margin: float
     right_margin: float
+
+
+class _TicketCompositionLayout(NamedTuple):
+    origin_x: float
+    origin_y: float
+    content_x: float
+    content_y: float
+    content_w: float
+    content_h: float
 
 
 def register_sams_strip_fonts() -> None:
@@ -224,11 +242,11 @@ def compute_strip_canvas(row_data: SamsPriceStripRow, warnings: list[str]) -> tu
 
 
 def _compute_strip_margins(strip_w: float, ticket_count: int) -> tuple[float, float]:
-    base_margin = max(_STRIP_MARGIN_MIN, min(_STRIP_MARGIN_MAX, strip_w * 0.015))
+    base_margin = max(_STRIP_MARGIN_MIN, min(_STRIP_MARGIN_MAX, strip_w * 0.014))
     if ticket_count <= 2:
-        base_margin = min(_STRIP_MARGIN_MAX, base_margin * 1.12)
-    elif ticket_count >= 9:
-        base_margin = max(_STRIP_MARGIN_MIN, base_margin * 0.92)
+        base_margin = min(_STRIP_MARGIN_MAX, base_margin * 1.10)
+    elif ticket_count >= 8:
+        base_margin = max(_STRIP_MARGIN_MIN, base_margin * 0.90)
     return base_margin, base_margin
 
 
@@ -237,7 +255,7 @@ def _build_gap_sequence(ticket_count: int, base_gap: float) -> list[float]:
         return []
     if ticket_count <= 3:
         return [base_gap] * (ticket_count - 1)
-    modifiers = [0.05, -0.04, 0.03, -0.03]
+    modifiers = [0.06, -0.03, 0.02, -0.02]
     gaps: list[float] = []
     for idx in range(ticket_count - 1):
         m = modifiers[idx % len(modifiers)]
@@ -250,31 +268,33 @@ def compute_ticket_positions_across_strip(strip_w: float, ticket_count: int) -> 
         return _StripContinuityLayout(positions=[], left_margin=0.0, right_margin=0.0)
 
     left_margin, right_margin = _compute_strip_margins(strip_w, ticket_count)
-    gap = _DEFAULT_TICKET_GAP
+    gap = max(0.012 * inch, min(0.03 * inch, strip_w * 0.0019))
     gaps = _build_gap_sequence(ticket_count, gap)
-    usable_w = strip_w - left_margin - right_margin - sum(gaps)
-    slot_w = usable_w / ticket_count
-    if slot_w < _MIN_TICKET_WIDTH:
+    usable_w = strip_w - left_margin - right_margin
+    total_gap_w = sum(gaps)
+    composition_w = (usable_w - total_gap_w) / ticket_count
+
+    if composition_w < _MIN_TICKET_WIDTH:
         gap = _MIN_TICKET_GAP
         gaps = [gap] * (ticket_count - 1)
-        usable_w = strip_w - left_margin - right_margin - sum(gaps)
-        slot_w = usable_w / ticket_count
+        total_gap_w = sum(gaps)
+        composition_w = (usable_w - total_gap_w) / ticket_count
 
-    if slot_w < _MIN_TICKET_WIDTH:
+    if composition_w < _MIN_TICKET_WIDTH:
         left_margin = right_margin = max(0.0, (strip_w - (ticket_count * _MIN_TICKET_WIDTH) - sum(gaps)) / 2.0)
-        usable_w = strip_w - left_margin - right_margin - sum(gaps)
-        slot_w = usable_w / ticket_count
+        usable_w = strip_w - left_margin - right_margin
+        composition_w = (usable_w - sum(gaps)) / ticket_count
 
+    draw_w = max(0.60 * inch, composition_w * _STRIP_COMPOSITION_WIDTH_RATIO)
+    inner_offset = max(0.0, (composition_w - draw_w) / 2.0)
     positions: list[tuple[float, float]] = []
-    comp_w = max(0.60 * inch, slot_w * _TICKET_COMPOSITION_RATIO)
     x = left_margin
     for idx in range(ticket_count):
-        comp_x = x + max(0.0, (slot_w - comp_w) / 2.0)
-        positions.append((comp_x, comp_w))
+        positions.append((x + inner_offset, draw_w))
         if idx < len(gaps):
-            x += slot_w + gaps[idx]
+            x += composition_w + gaps[idx]
         else:
-            x += slot_w
+            x += composition_w
     return _StripContinuityLayout(positions=positions, left_margin=left_margin, right_margin=right_margin)
 
 
@@ -306,8 +326,8 @@ def draw_ticket_text_stack(
     desc_1 = _truncate(segment.desc_1 or "-", desc_font, _SAMS_DESC_SIZE, max_w)
     desc_2 = _truncate(segment.desc_2 or "-", desc_font, _SAMS_DESC_SIZE, max_w)
 
-    desc_gap = 0.8
-    brand_gap = 1.0
+    desc_gap = _SAMS_STACK_DESC_GAP
+    brand_gap = _SAMS_STACK_BRAND_GAP
     brand_y = stack_top - _SAMS_BRAND_SIZE
     desc_1_y = brand_y - brand_gap - _SAMS_DESC_SIZE
     desc_2_y = desc_1_y - desc_gap - _SAMS_DESC_SIZE
@@ -327,15 +347,15 @@ def _layout_price_object(retail: str, x: float, y: float, w: float, h: float, fo
     price_left = x + max(_RETAIL_MARGIN_PAD, pad_x * 0.35)
     price_right = x + w - pad_x
     max_object_w = max(12.0, price_right - price_left)
-    max_object_ascent = max(15.0, h * 0.53)
+    max_object_h = max(15.0, h * 0.60)
 
     base_dollars_size = _SAMS_PRICE_SIZE
     base_sign_size = _SAMS_PRICE_SIZE * 0.33
     base_cents_size = _SAMS_PRICE_SIZE * 0.40
-    base_sign_gap = max(0.9, base_dollars_size * 0.055)
-    base_cents_gap = max(0.7, base_dollars_size * 0.020)
-    base_sign_rise = base_dollars_size * 0.44
-    base_cents_rise = base_dollars_size * 0.50
+    base_sign_gap = max(0.9, base_dollars_size * _SAMS_PRICE_SIGN_GAP_RATIO)
+    base_cents_gap = max(0.7, base_dollars_size * _SAMS_PRICE_CENTS_GAP_RATIO)
+    base_sign_rise = base_dollars_size * _SAMS_PRICE_SIGN_RISE_RATIO
+    base_cents_rise = base_dollars_size * _SAMS_PRICE_CENTS_RISE_RATIO
 
     sign_w = pdfmetrics.stringWidth("$", font_name, base_sign_size)
     dollars_w = pdfmetrics.stringWidth(dollars, font_name, base_dollars_size)
@@ -346,8 +366,10 @@ def _layout_price_object(retail: str, x: float, y: float, w: float, h: float, fo
         base_sign_rise + (base_sign_size * 0.82),
         base_cents_rise + (base_cents_size * 0.82),
     )
-    scale = min(1.0, max_object_w / max(base_object_w, 1.0), max_object_ascent / max(base_object_ascent, 1.0))
-    scale = max(0.30, scale)
+    base_object_descent = max(base_dollars_size * 0.16, base_sign_size * 0.12, base_cents_size * 0.12)
+    base_object_h = base_object_ascent + base_object_descent
+    scale = min(1.0, max_object_w / max(base_object_w, 1.0), max_object_h / max(base_object_h, 1.0))
+    scale = max(0.32, scale)
 
     dollars_size = base_dollars_size * scale
     sign_size = base_sign_size * scale
@@ -366,7 +388,9 @@ def _layout_price_object(retail: str, x: float, y: float, w: float, h: float, fo
         sign_rise + (sign_size * 0.82),
         cents_rise + (cents_size * 0.82),
     )
-    final_fit_scale = min(1.0, max_object_w / max(object_w, 1.0), max_object_ascent / max(object_ascent, 1.0))
+    object_descent = max(dollars_size * 0.16, sign_size * 0.12, cents_size * 0.12)
+    object_h = object_ascent + object_descent
+    final_fit_scale = min(1.0, max_object_w / max(object_w, 1.0), max_object_h / max(object_h, 1.0))
     if final_fit_scale < 1.0:
         dollars_size *= final_fit_scale
         sign_size *= final_fit_scale
@@ -384,8 +408,10 @@ def _layout_price_object(retail: str, x: float, y: float, w: float, h: float, fo
             sign_rise + (sign_size * 0.82),
             cents_rise + (cents_size * 0.82),
         )
+        object_descent = max(dollars_size * 0.16, sign_size * 0.12, cents_size * 0.12)
 
-    dollars_baseline = y + max(1.8, h * 0.13)
+    object_bottom_y = y + max(1.25, h * 0.084)
+    dollars_baseline = object_bottom_y + object_descent
     object_left = price_left
     dollars_x = object_left + sign_w + sign_gap
     dollar_sign_x = object_left
@@ -405,6 +431,8 @@ def _layout_price_object(retail: str, x: float, y: float, w: float, h: float, fo
         cents_x=cents_x,
         cents_baseline_y=cents_baseline,
         cents_size=cents_size,
+        object_left_x=object_left,
+        object_bottom_y=object_bottom_y,
         object_right_x=object_right_x,
         object_top_y=object_top_y,
     )
@@ -424,40 +452,74 @@ def draw_price_object(c: canvas.Canvas, retail: str, x: float, y: float, w: floa
     c.drawString(layout.cents_x, layout.cents_baseline_y, cents)
 
     price_top = layout.object_top_y
-    text_stack_anchor_top = price_top + _SAMS_BRAND_SIZE + (_SAMS_DESC_SIZE * 2) + 2.6
-    item_baseline_y = max(y + 1.4, layout.dollars_baseline_y - (_SAMS_ITEM_SIZE + 1.0))
+    text_stack_anchor_top = price_top + _SAMS_BRAND_SIZE + (_SAMS_DESC_SIZE * 2) + _SAMS_STACK_TO_PRICE_OFFSET
+    item_baseline_y = max(y + 1.1, layout.object_bottom_y + (_SAMS_ITEM_SIZE * 0.16))
     pad_x = min(max(_DEFAULT_INNER_PAD_X, w * 0.052), max(_DEFAULT_INNER_PAD_X, w * 0.095))
     return _PriceAnchor(
         text_stack_anchor_top=text_stack_anchor_top,
         item_baseline_y=item_baseline_y,
-        item_right_x=min(x + w - pad_x, layout.object_right_x),
-        item_max_w=max(20.0, min(w * 0.68, (layout.object_right_x - x) + 1.5)),
+        item_right_x=min(x + w - pad_x, layout.object_right_x + 0.1),
+        item_max_w=max(20.0, min(w * 0.68, (layout.object_right_x - layout.object_left_x) + 2.0)),
+    )
+
+
+def layout_ticket_composition(x: float, y: float, w: float, h: float) -> _TicketCompositionLayout:
+    # Single anchor/origin for every ticket composition; all internals hang off this.
+    origin_x = x
+    origin_y = y
+    inner_top = _DEFAULT_INNER_PAD_TOP * 0.55
+    inner_bottom = _DEFAULT_INNER_PAD_BOTTOM * 0.55
+    content_x = origin_x
+    content_y = origin_y + inner_bottom
+    content_w = w
+    content_h = max(12.0, h - inner_bottom - inner_top)
+    return _TicketCompositionLayout(
+        origin_x=origin_x,
+        origin_y=origin_y,
+        content_x=content_x,
+        content_y=content_y,
+        content_w=content_w,
+        content_h=content_h,
     )
 
 
 def draw_ticket_composition(c: canvas.Canvas, segment: SamsPriceStripSegment, x: float, y: float, w: float, h: float) -> None:
-    content_bottom = y + _DEFAULT_INNER_PAD_BOTTOM
-    content_h = max(12.0, h - _DEFAULT_INNER_PAD_BOTTOM - _DEFAULT_INNER_PAD_TOP)
-    anchor = draw_price_object(c, segment.retail, x, content_bottom, w, content_h)
-    draw_ticket_text_stack(c, segment, x, content_bottom, w, content_h, anchor.text_stack_anchor_top)
+    comp = layout_ticket_composition(x, y, w, h)
+    anchor = draw_price_object(c, segment.retail, comp.content_x, comp.content_y, comp.content_w, comp.content_h)
+    draw_ticket_text_stack(
+        c,
+        segment,
+        comp.content_x,
+        comp.content_y,
+        comp.content_w,
+        comp.content_h,
+        anchor.text_stack_anchor_top,
+    )
     draw_ticket_item_number(c, segment.item_number, anchor.item_right_x, anchor.item_baseline_y, anchor.item_max_w)
+
+
+def _resolve_strip_footer_text(row_data: SamsPriceStripRow) -> str:
+    raw = row_data.footer_text.strip()
+    if raw and raw.lower() not in {"nan", "none", "null"}:
+        return raw
+    return f"Side: {row_data.side}, Row: {row_data.row} - POG: {row_data.pog}"
 
 
 def draw_strip_footer(
     c: canvas.Canvas,
     row_data: SamsPriceStripRow,
     y: float,
+    footer_band_h: float,
     max_width: float,
     left_margin: float,
 ) -> None:
     font = get_sams_strip_font("regular")
-    footer_text = row_data.footer_text.strip()
-    if footer_text == "":
-        footer_text = f"Side: {row_data.side}, Row: {row_data.row} - POG: {row_data.pog}"
-    footer_x = max(0.03 * inch, left_margin * 0.55)
+    footer_text = _resolve_strip_footer_text(row_data)
+    footer_x = max(0.035 * inch, left_margin * 0.64)
+    footer_baseline_y = y + max(0.9, min(1.8, footer_band_h * 0.23))
     c.setFillColorRGB(*_TEXT_MUTED)
     c.setFont(font, _SAMS_FOOTER_SIZE)
-    c.drawString(footer_x, y + 1.0, _truncate(footer_text, font, _SAMS_FOOTER_SIZE, max_width))
+    c.drawString(footer_x, footer_baseline_y, _truncate(footer_text, font, _SAMS_FOOTER_SIZE, max_width))
 
 
 def _render_strip_page(
@@ -493,8 +555,8 @@ def _render_strip_page(
     for idx, (x, ticket_w) in enumerate(positions):
         draw_ticket_composition(c, row_data.segments[idx], x, ticket_y, ticket_w, strip_h)
 
-    footer_w = min(page_w * 0.64, max(46.0, page_w - layout.left_margin - layout.right_margin - (0.05 * inch)))
-    draw_strip_footer(c, row_data, 0.0, footer_w, layout.left_margin)
+    footer_w = min(page_w * 0.58, max(40.0, page_w - layout.left_margin - layout.right_margin - (0.08 * inch)))
+    draw_strip_footer(c, row_data, 0.0, footer_h, footer_w, layout.left_margin)
     return segment_count
 
 
