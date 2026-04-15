@@ -3,9 +3,11 @@ from __future__ import annotations
 import io
 import re
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 from reportlab.lib.units import inch
 from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
 from app.sams_club.price_strip_models import SamsPriceStripPdfResult, SamsPriceStripRow, SamsPriceStripSegment
@@ -25,6 +27,57 @@ _DEFAULT_FOOTER_HEIGHT = 0.14 * inch
 _DEFAULT_TICKET_GAP = 0.035 * inch
 _MIN_TICKET_GAP = 0.0
 _MIN_TICKET_WIDTH = 0.70 * inch
+_SAMS_FONT_REGULAR = "Sams-Gibson-Regular"
+_SAMS_FONT_SEMIBOLD = "Sams-Gibson-SemiBold"
+_SAMS_BRAND_SIZE = 7.5
+_SAMS_DESC_SIZE = 6.0
+_SAMS_PRICE_SIZE = 47.0
+_SAMS_ITEM_SIZE = 5.0
+_SAMS_FOOTER_SIZE = 5.0
+_FONTS_READY = False
+_SAMS_GIBSON_AVAILABLE = False
+
+
+def register_sams_strip_fonts() -> None:
+    global _FONTS_READY, _SAMS_GIBSON_AVAILABLE
+    if _FONTS_READY:
+        return
+    root = Path(__file__).resolve().parents[2]
+    regular_path = root / "assets" / "Gibson-Regular.otf"
+    semibold_path = root / "assets" / "Gibson-SemiBold.otf"
+    try:
+        if regular_path.is_file():
+            pdfmetrics.registerFont(TTFont(_SAMS_FONT_REGULAR, str(regular_path)))
+    except Exception:
+        pass
+    try:
+        if semibold_path.is_file():
+            pdfmetrics.registerFont(TTFont(_SAMS_FONT_SEMIBOLD, str(semibold_path)))
+    except Exception:
+        pass
+    try:
+        pdfmetrics.getFont(_SAMS_FONT_REGULAR)
+        pdfmetrics.getFont(_SAMS_FONT_SEMIBOLD)
+        _SAMS_GIBSON_AVAILABLE = True
+    except Exception:
+        _SAMS_GIBSON_AVAILABLE = False
+    _FONTS_READY = True
+
+
+def get_sams_strip_font(weight: str) -> str:
+    register_sams_strip_fonts()
+    preferred = _SAMS_FONT_SEMIBOLD if weight == "semibold" else _SAMS_FONT_REGULAR
+    fallback = BODY_BOLD_FONT if weight == "semibold" else BODY_FONT
+    try:
+        pdfmetrics.getFont(preferred)
+        return preferred
+    except Exception:
+        return fallback
+
+
+def sams_gibson_available() -> bool:
+    register_sams_strip_fonts()
+    return _SAMS_GIBSON_AVAILABLE
 
 
 def _fit_text(text: str, font_name: str, max_width: float, max_size: float, min_size: float = 6.0) -> float:
@@ -146,75 +199,53 @@ def compute_ticket_positions(strip_w: float, ticket_count: int) -> list[tuple[fl
 
 
 def draw_ticket_item_number(c: canvas.Canvas, item_number: str, x: float, y: float, w: float) -> None:
-    text = _truncate(item_number or "-", BODY_FONT, 6.0, max(20.0, w * 0.62))
+    font = get_sams_strip_font("regular")
+    text = _truncate(item_number or "-", font, _SAMS_ITEM_SIZE, max(20.0, w * 0.62))
     c.setFillColorRGB(*_TEXT_MUTED)
-    c.setFont(BODY_FONT, 6.0)
+    c.setFont(font, _SAMS_ITEM_SIZE)
     c.drawRightString(x + w - _RETAIL_MARGIN_PAD, y + 1.1, text)
 
 
 def _draw_ticket_text_stack(c: canvas.Canvas, segment: SamsPriceStripSegment, x: float, y: float, w: float, h: float) -> None:
+    brand_font = get_sams_strip_font("semibold")
+    desc_font = get_sams_strip_font("regular")
     pad_x = min(max(_DEFAULT_INNER_PAD_X, w * 0.055), max(_DEFAULT_INNER_PAD_X, w * 0.10))
     stack_top = y + h - _DEFAULT_INNER_PAD_TOP
     max_w = max(8.0, w - (2 * pad_x))
 
-    if w >= 210:
-        brand_fs = 13.0
-        desc1_fs = 11.4
-        desc2_fs = 11.0
-    elif w >= 128:
-        brand_fs = 10.5
-        desc1_fs = 9.4
-        desc2_fs = 9.0
-    elif w >= 72:
-        brand_fs = 8.0
-        desc1_fs = 7.1
-        desc2_fs = 6.9
-    else:
-        brand_fs = 6.8
-        desc1_fs = 6.2
-        desc2_fs = 6.0
-
-    brand = _truncate(segment.brand or "-", BODY_BOLD_FONT, brand_fs, max_w)
-    desc_1 = _truncate(segment.desc_1 or "-", BODY_FONT, desc1_fs, max_w)
-    desc_2 = _truncate(segment.desc_2 or "-", BODY_FONT, desc2_fs, max_w)
+    brand = _truncate(segment.brand or "-", brand_font, _SAMS_BRAND_SIZE, max_w)
+    desc_1 = _truncate(segment.desc_1 or "-", desc_font, _SAMS_DESC_SIZE, max_w)
+    desc_2 = _truncate(segment.desc_2 or "-", desc_font, _SAMS_DESC_SIZE, max_w)
 
     c.setFillColorRGB(*_TEXT_DARK)
-    c.setFont(BODY_BOLD_FONT, brand_fs)
-    c.drawString(x + pad_x, stack_top - brand_fs, brand)
-    c.setFont(BODY_FONT, desc1_fs)
-    c.drawString(x + pad_x, stack_top - brand_fs - 1.3 - desc1_fs, desc_1)
-    c.setFont(BODY_FONT, desc2_fs)
-    c.drawString(x + pad_x, stack_top - brand_fs - 1.3 - desc1_fs - 1.15 - desc2_fs, desc_2)
+    c.setFont(brand_font, _SAMS_BRAND_SIZE)
+    c.drawString(x + pad_x, stack_top - _SAMS_BRAND_SIZE, brand)
+    c.setFont(desc_font, _SAMS_DESC_SIZE)
+    c.drawString(x + pad_x, stack_top - _SAMS_BRAND_SIZE - 1.35 - _SAMS_DESC_SIZE, desc_1)
+    c.setFont(desc_font, _SAMS_DESC_SIZE)
+    c.drawString(x + pad_x, stack_top - _SAMS_BRAND_SIZE - 1.35 - _SAMS_DESC_SIZE - 1.15 - _SAMS_DESC_SIZE, desc_2)
 
 
 def draw_ticket_price(c: canvas.Canvas, retail: str, x: float, y: float, w: float, h: float) -> None:
+    price_font = get_sams_strip_font("semibold")
     dollars, cents = _normalize_price_parts(retail)
-    max_dollar_width = max(12.0, w - 18.0)
+    max_dollar_width = max(12.0, w - 17.0)
 
     c.setFillColorRGB(*_TEXT_DARK)
-    if w >= 210:
-        max_dollar_fs = 124.0
-    elif w >= 130:
-        max_dollar_fs = 86.0
-    elif w >= 80:
-        max_dollar_fs = 56.0
-    else:
-        max_dollar_fs = 39.0
-
-    dollars_size = _fit_text(dollars, BODY_BOLD_FONT, max_dollar_width, max_dollar_fs, 12.0)
-    dollar_sign_fs = max(9.0, dollars_size * 0.35)
-    c.setFont(BODY_BOLD_FONT, dollar_sign_fs)
+    dollars_size = _fit_text(dollars, price_font, max_dollar_width, _SAMS_PRICE_SIZE, 12.0)
+    dollar_sign_fs = max(8.0, min(18.0, _SAMS_PRICE_SIZE * 0.33))
+    c.setFont(price_font, dollar_sign_fs)
     c.drawString(x + _RETAIL_MARGIN_PAD, y + h - (dollar_sign_fs + 1.6), "$")
 
-    base_y = y + max(1.2, (h * 0.18) - (dollars_size * 0.06))
-    c.setFont(BODY_BOLD_FONT, dollars_size)
+    base_y = y + max(1.0, (h * 0.16) - (dollars_size * 0.05))
+    c.setFont(price_font, dollars_size)
     c.drawString(x + max(6.0, dollar_sign_fs * 0.82), base_y, dollars)
 
-    cents_fs = max(8.0, dollars_size * 0.43)
-    dollars_w = pdfmetrics.stringWidth(dollars, BODY_BOLD_FONT, dollars_size)
+    cents_fs = max(10.0, min(21.0, _SAMS_PRICE_SIZE * 0.40))
+    dollars_w = pdfmetrics.stringWidth(dollars, price_font, dollars_size)
     cents_x = x + max(6.0, dollar_sign_fs * 0.82) + dollars_w + 0.8
-    cents_y = base_y + (dollars_size * 0.47)
-    c.setFont(BODY_BOLD_FONT, cents_fs)
+    cents_y = base_y + (dollars_size * 0.50)
+    c.setFont(price_font, cents_fs)
     c.drawString(cents_x, cents_y, cents)
 
 
@@ -229,12 +260,13 @@ def draw_ticket_block(c: canvas.Canvas, segment: SamsPriceStripSegment, x: float
 
 
 def draw_strip_footer(c: canvas.Canvas, row_data: SamsPriceStripRow, y: float, max_width: float) -> None:
+    font = get_sams_strip_font("regular")
     footer_text = row_data.footer_text.strip()
     if footer_text == "":
         footer_text = f"Side: {row_data.side}, Row: {row_data.row} - POG: {row_data.pog}"
     c.setFillColorRGB(*_TEXT_MUTED)
-    c.setFont(BODY_FONT, 5.8)
-    c.drawString(0.04 * inch, y + 1.2, _truncate(footer_text, BODY_FONT, 5.8, max_width))
+    c.setFont(font, _SAMS_FOOTER_SIZE)
+    c.drawString(0.04 * inch, y + 1.2, _truncate(footer_text, font, _SAMS_FOOTER_SIZE, max_width))
 
 
 def _render_strip_page(
@@ -286,6 +318,10 @@ def render_sams_price_strips_pdf(
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=(_PAGE_WIDTH, _PAGE_HEIGHT))
     warnings: list[str] = []
+    if not sams_gibson_available():
+        warnings.append(
+            "Gibson OTF fonts were detected but ReportLab cannot load PostScript-outline OTF in this environment; using fallback fonts."
+        )
     rendered_pages = 0
     rendered_segments = 0
     for row_data in strip_rows:
