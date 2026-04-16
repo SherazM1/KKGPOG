@@ -16,8 +16,8 @@ from app.shared.fonts import BODY_BOLD_FONT, BODY_FONT
 
 _PAGE_WIDTH = 11.0 * inch
 _PAGE_HEIGHT = 2.45 * inch
-_TEXT_DARK = (0.06, 0.06, 0.06)
-_TEXT_ITEM = (0.22, 0.22, 0.22)
+_TEXT_DARK = (0.0, 0.0, 0.0)
+_TEXT_ITEM = (0.14, 0.14, 0.14)
 _TEXT_MUTED = (0.34, 0.34, 0.34)
 _STRIP_BG = (1.0, 1.0, 1.0)
 _RETAIL_MARGIN_PAD = 1.2
@@ -42,11 +42,11 @@ _SAMS_STACK_BRAND_GAP = 0.92
 _SAMS_STACK_DESC_GAP = 0.72
 _SAMS_STACK_TO_PRICE_OFFSET = 1.05
 _SAMS_PRICE_SIGN_RISE_RATIO = 0.435
-_SAMS_PRICE_CENTS_RISE_RATIO = 0.455
+_SAMS_PRICE_CENTS_RISE_RATIO = 0.43
 _SAMS_PRICE_SIGN_GAP_RATIO = 0.052
-_SAMS_PRICE_CENTS_GAP_RATIO = 0.012
-_TICKET_VERTICAL_LIFT_RATIO = 0.07
-_TICKET_VERTICAL_LIFT_MAX = 0.11 * inch
+_SAMS_PRICE_CENTS_GAP_RATIO = 0.008
+_TICKET_VERTICAL_LIFT_RATIO = 0.115
+_TICKET_VERTICAL_LIFT_MAX = 0.16 * inch
 _FONTS_READY = False
 _SAMS_GIBSON_AVAILABLE = False
 _SAMS_FONT_WARNING: str | None = None
@@ -575,6 +575,13 @@ def render_sams_price_strips_pdf(
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=(_PAGE_WIDTH, _PAGE_HEIGHT))
     warnings: list[str] = []
+    warnings.append(
+        "ACTIVE_SAMS_STRIP_RENDERER=app.sams_club.render_price_strips.render_sams_price_strips_pdf "
+        f"ticket_lift_ratio={_TICKET_VERTICAL_LIFT_RATIO:.3f} "
+        f"cents_gap_ratio={_SAMS_PRICE_CENTS_GAP_RATIO:.3f} "
+        f"cents_rise_ratio={_SAMS_PRICE_CENTS_RISE_RATIO:.3f} "
+        f"text_dark={_TEXT_DARK} item_dark={_TEXT_ITEM}"
+    )
     if not sams_gibson_available():
         warning = sams_gibson_warning()
         if warning:
