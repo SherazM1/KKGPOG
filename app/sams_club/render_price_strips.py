@@ -17,8 +17,8 @@ from app.shared.fonts import BODY_BOLD_FONT, BODY_FONT
 _PAGE_WIDTH = 11.0 * inch
 _PAGE_HEIGHT = 2.45 * inch
 _TEXT_DARK = (0.0, 0.0, 0.0)
-_TEXT_ITEM = (0.14, 0.14, 0.14)
-_TEXT_MUTED = (0.34, 0.34, 0.34)
+_TEXT_ITEM = (0.06, 0.06, 0.06)
+_TEXT_MUTED = (0.20, 0.20, 0.20)
 _STRIP_BG = (1.0, 1.0, 1.0)
 _RETAIL_MARGIN_PAD = 1.2
 _DEFAULT_INNER_PAD_X = 0.055 * inch
@@ -42,11 +42,12 @@ _SAMS_STACK_BRAND_GAP = 0.92
 _SAMS_STACK_DESC_GAP = 0.72
 _SAMS_STACK_TO_PRICE_OFFSET = 1.05
 _SAMS_PRICE_SIGN_RISE_RATIO = 0.435
-_SAMS_PRICE_CENTS_RISE_RATIO = 0.43
-_SAMS_PRICE_SIGN_GAP_RATIO = 0.052
-_SAMS_PRICE_CENTS_GAP_RATIO = 0.008
-_TICKET_VERTICAL_LIFT_RATIO = 0.115
+_SAMS_PRICE_CENTS_RISE_RATIO = 0.405
+_SAMS_PRICE_SIGN_GAP_RATIO = 0.046
+_SAMS_PRICE_CENTS_GAP_RATIO = 0.004
+_TICKET_VERTICAL_LIFT_RATIO = 0.135
 _TICKET_VERTICAL_LIFT_MAX = 0.16 * inch
+_PRICE_OBJECT_BAND_ANCHOR_RATIO = 0.22
 _FONTS_READY = False
 _SAMS_GIBSON_AVAILABLE = False
 _SAMS_FONT_WARNING: str | None = None
@@ -413,7 +414,7 @@ def _layout_price_object(retail: str, x: float, y: float, w: float, h: float, fo
         )
         object_descent = max(dollars_size * 0.16, sign_size * 0.12, cents_size * 0.12)
 
-    object_bottom_y = y + max(1.25, h * 0.084)
+    object_bottom_y = y + max(1.25, h * _PRICE_OBJECT_BAND_ANCHOR_RATIO)
     dollars_baseline = object_bottom_y + object_descent
     object_left = price_left
     dollars_x = object_left + sign_w + sign_gap
@@ -470,8 +471,8 @@ def layout_ticket_composition(x: float, y: float, w: float, h: float) -> _Ticket
     # Single anchor/origin for every ticket composition; all internals hang off this.
     origin_x = x
     origin_y = y
-    inner_top = _DEFAULT_INNER_PAD_TOP * 0.55
-    inner_bottom = _DEFAULT_INNER_PAD_BOTTOM * 0.55
+    inner_top = _DEFAULT_INNER_PAD_TOP * 0.50
+    inner_bottom = _DEFAULT_INNER_PAD_BOTTOM * 0.50
     lift = min(_TICKET_VERTICAL_LIFT_MAX, max(0.0, h * _TICKET_VERTICAL_LIFT_RATIO))
     content_x = origin_x
     content_y = origin_y + inner_bottom + lift
@@ -578,6 +579,7 @@ def render_sams_price_strips_pdf(
     warnings.append(
         "ACTIVE_SAMS_STRIP_RENDERER=app.sams_club.render_price_strips.render_sams_price_strips_pdf "
         f"ticket_lift_ratio={_TICKET_VERTICAL_LIFT_RATIO:.3f} "
+        f"price_anchor_ratio={_PRICE_OBJECT_BAND_ANCHOR_RATIO:.3f} "
         f"cents_gap_ratio={_SAMS_PRICE_CENTS_GAP_RATIO:.3f} "
         f"cents_rise_ratio={_SAMS_PRICE_CENTS_RISE_RATIO:.3f} "
         f"text_dark={_TEXT_DARK} item_dark={_TEXT_ITEM}"
