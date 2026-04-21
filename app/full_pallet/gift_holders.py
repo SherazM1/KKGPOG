@@ -205,6 +205,7 @@ def _extract_top_holder_slots(
         slots.append(
             {
                 "header": header_text,
+                "slot_order": i,
                 "start_col": start_col,
                 "end_col": end_col,
                 "item_no": re.sub(r"[^\d]", "", str(item_no)),
@@ -375,6 +376,10 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
                         qty=qty,
                         image_bytes=img_bytes,
                         image_ext=img_ext,
+                        slot_label=str(slot["header"] or "").strip() or None,
+                        slot_order=int(slot["slot_order"]),
+                        slot_start_col=int(slot["start_col"]),
+                        slot_end_col=int(slot["end_col"]),
                     )
                 )
 
@@ -391,6 +396,10 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
                         qty=h.qty,
                         image_bytes=h.image_bytes,
                         image_ext=h.image_ext,
+                        slot_label=h.slot_label,
+                        slot_order=h.slot_order,
+                        slot_start_col=h.slot_start_col,
+                        slot_end_col=h.slot_end_col,
                     )
                     for h in base_list
                 ]
@@ -425,15 +434,15 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
         name = desc_map.get(item_no) or "(missing description)"
         side = current_side if current_side in "ABCD" else "A"
         holders.setdefault(side, []).append(
-            GiftHolder(
-                side=side,
-                item_no=item_no,
-                name=name,
-                qty=qty,
-                image_bytes=None,
-                image_ext=None,
+                GiftHolder(
+                    side=side,
+                    item_no=item_no,
+                    name=name,
+                    qty=qty,
+                    image_bytes=None,
+                    image_ext=None,
+                )
             )
-        )
 
     if not any(holders.values()):
         raise ValueError("No holder Item # rows found in FULL PALLET table.")
@@ -450,6 +459,10 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
                     qty=h.qty,
                     image_bytes=h.image_bytes,
                     image_ext=h.image_ext,
+                    slot_label=h.slot_label,
+                    slot_order=h.slot_order,
+                    slot_start_col=h.slot_start_col,
+                    slot_end_col=h.slot_end_col,
                 )
                 for h in base_list
             ]

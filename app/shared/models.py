@@ -112,3 +112,7 @@ class GiftHolder:
     qty: Optional[int]
     image_bytes: Optional[bytes] = None
     image_ext: Optional[str] = None
+    slot_label: Optional[str] = None
+    slot_order: Optional[int] = None
+    slot_start_col: Optional[int] = None
+    slot_end_col: Optional[int] = None

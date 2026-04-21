@@ -251,6 +251,9 @@ def main() -> None:
                         st.success(
                             f"Rendered {strip_pdf.rendered_pages} strip page(s) with {strip_pdf.rendered_segments} segment block(s)."
                         )
+                        st.caption(
+                            "Active Sam's strip renderer: app.sams_club.render_price_strips.render_sams_price_strips_pdf"
+                        )
                         if strip_pdf.warnings:
                             with st.expander("Price strip render warnings"):
                                 for warning in strip_pdf.warnings:

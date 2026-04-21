@@ -17,8 +17,10 @@ from app.shared.fonts import BODY_BOLD_FONT, BODY_FONT
 _PAGE_WIDTH = 11.0 * inch
 _PAGE_HEIGHT = 2.45 * inch
 _TEXT_DARK = (0.0, 0.0, 0.0)
-_TEXT_ITEM = (0.06, 0.06, 0.06)
-_TEXT_MUTED = (0.20, 0.20, 0.20)
+_TEXT_STACK_BRAND = (0.0, 0.0, 0.0)
+_TEXT_STACK_DESC = (0.03, 0.03, 0.03)
+_TEXT_ITEM = (0.04, 0.04, 0.04)
+_TEXT_MUTED = (0.12, 0.12, 0.12)
 _STRIP_BG = (1.0, 1.0, 1.0)
 _RETAIL_MARGIN_PAD = 1.2
 _DEFAULT_INNER_PAD_X = 0.055 * inch
@@ -41,13 +43,13 @@ _SAMS_FOOTER_SIZE = 5.0
 _SAMS_STACK_BRAND_GAP = 0.92
 _SAMS_STACK_DESC_GAP = 0.72
 _SAMS_STACK_TO_PRICE_OFFSET = 1.05
-_SAMS_PRICE_SIGN_RISE_RATIO = 0.435
-_SAMS_PRICE_CENTS_RISE_RATIO = 0.405
-_SAMS_PRICE_SIGN_GAP_RATIO = 0.046
-_SAMS_PRICE_CENTS_GAP_RATIO = 0.004
-_TICKET_VERTICAL_LIFT_RATIO = 0.135
+_SAMS_PRICE_SIGN_RISE_RATIO = 0.400
+_SAMS_PRICE_CENTS_RISE_RATIO = 0.440
+_SAMS_PRICE_SIGN_GAP_RATIO = 0.030
+_SAMS_PRICE_CENTS_GAP_RATIO = 0.010
+_TICKET_VERTICAL_LIFT_RATIO = 0.08
 _TICKET_VERTICAL_LIFT_MAX = 0.16 * inch
-_PRICE_OBJECT_BAND_ANCHOR_RATIO = 0.22
+_PRICE_OBJECT_BAND_ANCHOR_RATIO = 0.30
 _FONTS_READY = False
 _SAMS_GIBSON_AVAILABLE = False
 _SAMS_FONT_WARNING: str | None = None
@@ -89,6 +91,74 @@ class _TicketCompositionLayout(NamedTuple):
     content_y: float
     content_w: float
     content_h: float
+
+
+def _compute_content_box_metrics(y: float, h: float) -> tuple[float, float, float]:
+    inner_top = _DEFAULT_INNER_PAD_TOP * 0.55
+    inner_bottom = _DEFAULT_INNER_PAD_BOTTOM * 0.55
+    available_h = max(12.0, h - inner_bottom - inner_top)
+    content_h = max(12.0, available_h * 0.92)
+    min_content_y = y + inner_bottom
+    max_content_y = max(min_content_y, y + h - inner_top - content_h)
+    return min_content_y, max_content_y, content_h
+
+
+def _estimate_ticket_block_offsets(segment: SamsPriceStripSegment, w: float, h: float) -> tuple[float, float]:
+    """Return (top, bottom) visual offsets from content_y for one ticket block."""
+    price_font = get_sams_strip_font("semibold")
+    layout = _layout_price_object(segment.retail, 0.0, 0.0, w, h, price_font)
+    price_top = layout.object_top_y
+    stack_top_limit = h - _DEFAULT_INNER_PAD_TOP
+    stack_anchor_top = price_top + _SAMS_BRAND_SIZE + (_SAMS_DESC_SIZE * 2) + _SAMS_STACK_TO_PRICE_OFFSET
+    stack_top = min(stack_top_limit, stack_anchor_top)
+
+    brand_y = stack_top - _SAMS_BRAND_SIZE
+    desc_1_y = brand_y - _SAMS_STACK_BRAND_GAP - _SAMS_DESC_SIZE
+    desc_2_y = desc_1_y - _SAMS_STACK_DESC_GAP - _SAMS_DESC_SIZE
+    text_top = max(
+        brand_y + (_SAMS_BRAND_SIZE * 0.82),
+        desc_1_y + (_SAMS_DESC_SIZE * 0.82),
+        desc_2_y + (_SAMS_DESC_SIZE * 0.82),
+    )
+
+    item_baseline_y = max(1.1, layout.object_bottom_y + (_SAMS_ITEM_SIZE * 0.16))
+    item_bottom = item_baseline_y - (_SAMS_ITEM_SIZE * 0.20)
+    block_top = max(price_top, text_top)
+    block_bottom = min(layout.object_bottom_y, item_bottom)
+    return block_top, block_bottom
+
+
+def _compute_row_centered_content_y(
+    row_data: SamsPriceStripRow,
+    positions: list[tuple[float, float]],
+    ticket_y: float,
+    strip_h: float,
+) -> tuple[float, float]:
+    """
+    Center the full ticket composition block (brand/desc/price/item) in strip usable area.
+    Returns (content_y, content_h) applied consistently to every ticket in the row.
+    """
+    min_content_y, max_content_y, content_h = _compute_content_box_metrics(ticket_y, strip_h)
+    if not positions:
+        return min_content_y, content_h
+
+    # Use the narrowest width in-row to keep the anchor valid for all repeated tickets.
+    composition_w = min(ticket_w for _, ticket_w in positions)
+    block_top = float("-inf")
+    block_bottom = float("inf")
+    for segment in row_data.segments[: len(positions)]:
+        seg_top, seg_bottom = _estimate_ticket_block_offsets(segment, composition_w, content_h)
+        block_top = max(block_top, seg_top)
+        block_bottom = min(block_bottom, seg_bottom)
+
+    if block_top == float("-inf") or block_bottom == float("inf") or block_top <= block_bottom:
+        return min_content_y, content_h
+
+    block_center_offset = (block_top + block_bottom) / 2.0
+    usable_center_y = ticket_y + (strip_h / 2.0)
+    centered_content_y = usable_center_y - block_center_offset
+    centered_content_y = min(max(centered_content_y, min_content_y), max_content_y)
+    return centered_content_y, content_h
 
 
 def register_sams_strip_fonts() -> None:
@@ -303,7 +373,7 @@ def compute_ticket_positions_across_strip(strip_w: float, ticket_count: int) -> 
 
 
 def draw_ticket_item_number(c: canvas.Canvas, item_number: str, right_x: float, baseline_y: float, max_w: float) -> None:
-    font = get_sams_strip_font("regular")
+    font = get_sams_strip_font("semibold")
     text = _truncate(item_number or "-", font, _SAMS_ITEM_SIZE, max(20.0, max_w))
     c.setFillColorRGB(*_TEXT_ITEM)
     c.setFont(font, _SAMS_ITEM_SIZE)
@@ -320,7 +390,7 @@ def draw_ticket_text_stack(
     stack_anchor_top: float,
 ) -> None:
     brand_font = get_sams_strip_font("semibold")
-    desc_font = get_sams_strip_font("regular")
+    desc_font = get_sams_strip_font("semibold")
     pad_x = min(max(_DEFAULT_INNER_PAD_X, w * 0.052), max(_DEFAULT_INNER_PAD_X, w * 0.095))
     stack_top_limit = y + h - _DEFAULT_INNER_PAD_TOP
     stack_top = min(stack_top_limit, stack_anchor_top)
@@ -336,9 +406,10 @@ def draw_ticket_text_stack(
     desc_1_y = brand_y - brand_gap - _SAMS_DESC_SIZE
     desc_2_y = desc_1_y - desc_gap - _SAMS_DESC_SIZE
 
-    c.setFillColorRGB(*_TEXT_DARK)
+    c.setFillColorRGB(*_TEXT_STACK_BRAND)
     c.setFont(brand_font, _SAMS_BRAND_SIZE)
     c.drawString(x + pad_x, brand_y, brand)
+    c.setFillColorRGB(*_TEXT_STACK_DESC)
     c.setFont(desc_font, _SAMS_DESC_SIZE)
     c.drawString(x + pad_x, desc_1_y, desc_1)
     c.setFont(desc_font, _SAMS_DESC_SIZE)
@@ -382,6 +453,11 @@ def _layout_price_object(retail: str, x: float, y: float, w: float, h: float, fo
     cents_gap = base_cents_gap * scale
     sign_rise = base_sign_rise * scale
     cents_rise = base_cents_rise * scale
+    # Keep the three-part retail sign visually locked as one object across sizes.
+    sign_gap = min(max(sign_gap, dollars_size * 0.018), dollars_size * 0.036)
+    cents_gap = min(max(cents_gap, dollars_size * 0.005), dollars_size * 0.014)
+    sign_rise = min(max(sign_rise, dollars_size * 0.355), dollars_size * 0.425)
+    cents_rise = min(max(cents_rise, dollars_size * 0.415), dollars_size * 0.465)
 
     sign_w = pdfmetrics.stringWidth("$", font_name, sign_size)
     dollars_w = pdfmetrics.stringWidth(dollars, font_name, dollars_size)
@@ -403,6 +479,10 @@ def _layout_price_object(retail: str, x: float, y: float, w: float, h: float, fo
         cents_gap *= final_fit_scale
         sign_rise *= final_fit_scale
         cents_rise *= final_fit_scale
+        sign_gap = min(max(sign_gap, dollars_size * 0.018), dollars_size * 0.036)
+        cents_gap = min(max(cents_gap, dollars_size * 0.005), dollars_size * 0.014)
+        sign_rise = min(max(sign_rise, dollars_size * 0.355), dollars_size * 0.425)
+        cents_rise = min(max(cents_rise, dollars_size * 0.415), dollars_size * 0.465)
         sign_w = pdfmetrics.stringWidth("$", font_name, sign_size)
         dollars_w = pdfmetrics.stringWidth(dollars, font_name, dollars_size)
         cents_w = pdfmetrics.stringWidth(cents, font_name, cents_size)
@@ -467,17 +547,27 @@ def draw_price_object(c: canvas.Canvas, retail: str, x: float, y: float, w: floa
     )
 
 
-def layout_ticket_composition(x: float, y: float, w: float, h: float) -> _TicketCompositionLayout:
+def layout_ticket_composition(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    row_content_y: float | None = None,
+    row_content_h: float | None = None,
+) -> _TicketCompositionLayout:
     # Single anchor/origin for every ticket composition; all internals hang off this.
     origin_x = x
     origin_y = y
-    inner_top = _DEFAULT_INNER_PAD_TOP * 0.50
-    inner_bottom = _DEFAULT_INNER_PAD_BOTTOM * 0.50
-    lift = min(_TICKET_VERTICAL_LIFT_MAX, max(0.0, h * _TICKET_VERTICAL_LIFT_RATIO))
+    min_content_y, max_content_y, default_content_h = _compute_content_box_metrics(origin_y, h)
+    content_h = default_content_h if row_content_h is None else max(12.0, row_content_h)
+    if row_content_y is not None:
+        content_y = min(max(row_content_y, min_content_y), max_content_y)
+    else:
+        lift = min(_TICKET_VERTICAL_LIFT_MAX, max(0.0, h * _TICKET_VERTICAL_LIFT_RATIO))
+        centered_content_y = origin_y + ((h - content_h) / 2.0)
+        content_y = min(max(centered_content_y + lift, min_content_y), max_content_y)
     content_x = origin_x
-    content_y = origin_y + inner_bottom + lift
     content_w = w
-    content_h = max(12.0, h - inner_bottom - inner_top - lift)
     return _TicketCompositionLayout(
         origin_x=origin_x,
         origin_y=origin_y,
@@ -488,8 +578,17 @@ def layout_ticket_composition(x: float, y: float, w: float, h: float) -> _Ticket
     )
 
 
-def draw_ticket_composition(c: canvas.Canvas, segment: SamsPriceStripSegment, x: float, y: float, w: float, h: float) -> None:
-    comp = layout_ticket_composition(x, y, w, h)
+def draw_ticket_composition(
+    c: canvas.Canvas,
+    segment: SamsPriceStripSegment,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    row_content_y: float | None = None,
+    row_content_h: float | None = None,
+) -> None:
+    comp = layout_ticket_composition(x, y, w, h, row_content_y=row_content_y, row_content_h=row_content_h)
     anchor = draw_price_object(c, segment.retail, comp.content_x, comp.content_y, comp.content_w, comp.content_h)
     draw_ticket_text_stack(
         c,
@@ -559,8 +658,18 @@ def _render_strip_page(
         )
 
     ticket_y = footer_h
+    row_content_y, row_content_h = _compute_row_centered_content_y(row_data, positions, ticket_y, strip_h)
     for idx, (x, ticket_w) in enumerate(positions):
-        draw_ticket_composition(c, row_data.segments[idx], x, ticket_y, ticket_w, strip_h)
+        draw_ticket_composition(
+            c,
+            row_data.segments[idx],
+            x,
+            ticket_y,
+            ticket_w,
+            strip_h,
+            row_content_y=row_content_y,
+            row_content_h=row_content_h,
+        )
 
     footer_w = min(page_w * 0.58, max(40.0, page_w - layout.left_margin - layout.right_margin - (0.08 * inch)))
     first_ticket_x = positions[0][0] if positions else layout.left_margin
@@ -578,11 +687,7 @@ def render_sams_price_strips_pdf(
     warnings: list[str] = []
     warnings.append(
         "ACTIVE_SAMS_STRIP_RENDERER=app.sams_club.render_price_strips.render_sams_price_strips_pdf "
-        f"ticket_lift_ratio={_TICKET_VERTICAL_LIFT_RATIO:.3f} "
-        f"price_anchor_ratio={_PRICE_OBJECT_BAND_ANCHOR_RATIO:.3f} "
-        f"cents_gap_ratio={_SAMS_PRICE_CENTS_GAP_RATIO:.3f} "
-        f"cents_rise_ratio={_SAMS_PRICE_CENTS_RISE_RATIO:.3f} "
-        f"text_dark={_TEXT_DARK} item_dark={_TEXT_ITEM}"
+        "vertical_anchor_mode=row_composition_centered"
     )
     if not sams_gibson_available():
         warning = sams_gibson_warning()
