@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import math
 import re
 from typing import Dict, List, Optional, Tuple
@@ -12,6 +13,8 @@ from PIL import Image
 from app.shared.constants import DIGITS_RE, IMAGE_ANCHOR_ROW_0BASED
 from app.shared.models import GiftHolder
 from app.shared.text_utils import _coerce_int, _norm_header
+
+logger = logging.getLogger(__name__)
 
 
 def _coerce_item_no(v: object) -> Optional[str]:
@@ -166,20 +169,26 @@ def _extract_top_holder_slots(
     Extract holder slots from the top FULL PALLET block:
     POCKET/PEG headers -> image -> qty/item/description below.
     """
-    header_row = IMAGE_ANCHOR_ROW_0BASED
-    if header_row < 1:
+    pocket_peg_row_1based = IMAGE_ANCHOR_ROW_0BASED
+    marketing_row_1based = IMAGE_ANCHOR_ROW_0BASED + 1
+    if pocket_peg_row_1based < 1:
         return []
 
     max_col = ws.max_column
     slot_starts: List[Tuple[int, str]] = []
 
     for cidx in range(max_col):
-        raw = ws.cell(row=header_row + 1, column=cidx + 1).value
-        text = str(raw).strip() if raw is not None else ""
-        text_u = text.upper()
-        if text_u.startswith("POCKET ") or text_u.startswith("PEG "):
-            slot_starts.append((cidx, text))
-        elif "MARKETING MESSAGE PANEL" in text_u:
+        pocket_raw = ws.cell(row=pocket_peg_row_1based, column=cidx + 1).value
+        pocket_text = str(pocket_raw).strip() if pocket_raw is not None else ""
+        pocket_text_u = pocket_text.upper()
+
+        marketing_raw = ws.cell(row=marketing_row_1based, column=cidx + 1).value
+        marketing_text = str(marketing_raw).strip() if marketing_raw is not None else ""
+        marketing_text_u = re.sub(r"\s+", " ", marketing_text.upper().strip())
+
+        if pocket_text_u.startswith("POCKET ") or pocket_text_u.startswith("PEG "):
+            slot_starts.append((cidx, pocket_text))
+        elif "MARKETING MESSAGE PANEL" in marketing_text_u:
             slot_starts.append((cidx, "__BREAK__"))
 
     if not slot_starts:
@@ -361,20 +370,45 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
     item_row = -1
     qty_row = -1
     desc_row = -1
-    for i in range(len(full_df_raw)):
+    max_rows = len(full_df_raw)
+
+    # First pass: detect the real ITEM # row in the top holder block.
+    for i in range(max_rows):
         row_vals = [str(v or "").strip().upper() for v in full_df_raw.iloc[i].tolist()]
-        if item_row < 0 and any("ITEM #" in v or v == "ITEM" for v in row_vals):
+        if any("ITEM #" in v or v == "ITEM" for v in row_vals):
             numeric_items = sum(1 for v in row_vals if _coerce_item_no(v))
             if numeric_items >= 4:
                 item_row = i
-        if item_row >= 0 and i <= item_row and qty_row < 0:
+                break
+
+    # Second pass: robustly locate QTY relative to ITEM row.
+    if item_row >= 0:
+        above_candidates = []
+        for r in range(max(0, item_row - 3), item_row + 1):
+            row_vals = [str(v or "").strip().upper() for v in full_df_raw.iloc[r].tolist()]
             if any(v == "QTY" or v.startswith("QTY") for v in row_vals):
-                qty_row = i
-        if item_row >= 0 and i >= item_row and desc_row < 0:
+                above_candidates.append(r)
+        if above_candidates:
+            qty_row = max(above_candidates)
+
+        if qty_row < 0:
+            # Fallback scan: pick nearest QTY row at/around ITEM row.
+            nearest_dist = None
+            nearest_row = -1
+            for r in range(max_rows):
+                row_vals = [str(v or "").strip().upper() for v in full_df_raw.iloc[r].tolist()]
+                if any(v == "QTY" or v.startswith("QTY") for v in row_vals):
+                    dist = abs(r - item_row)
+                    if nearest_dist is None or dist < nearest_dist:
+                        nearest_dist = dist
+                        nearest_row = r
+            qty_row = nearest_row
+
+        for r in range(item_row, min(max_rows, item_row + 8)):
+            row_vals = [str(v or "").strip().upper() for v in full_df_raw.iloc[r].tolist()]
             if any("DESCRIPTION" in v for v in row_vals):
-                desc_row = i
-        if item_row >= 0 and qty_row >= 0 and desc_row >= 0:
-            break
+                desc_row = r
+                break
 
     top_slots = _extract_top_holder_slots(
         full_pallet_ws,
@@ -382,6 +416,15 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
         qty_row=qty_row,
         item_row=item_row,
         desc_row=desc_row,
+    )
+    logger.debug(
+        "full_pallet top holder parse: item_row=%s qty_row=%s desc_row=%s top_slots=%s headers=%s items=%s",
+        item_row,
+        qty_row,
+        desc_row,
+        len(top_slots),
+        [str(s.get("header", "")) for s in top_slots[:8]],
+        [str(s.get("item_no", "")) for s in top_slots[:8]],
     )
 
     holders: Dict[str, List[GiftHolder]] = {s: [] for s in "ABCD"}
