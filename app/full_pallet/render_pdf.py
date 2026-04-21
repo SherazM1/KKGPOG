@@ -1427,13 +1427,17 @@ def render_full_pallet_pdf(
             _draw_section_bar(c, cx0, holder_bar_y, content_w, SECTION_BAR_H, "GIFT CARD HOLDERS")
             holder_grid_top = holder_bar_y - SECTION_BAR_GAP
             holder_grid_h = max(24.0, holder_grid_top - bucket_b_bottom)
-            holder_card_h = max(16.0, holder_grid_h)
-            holder_y = holder_grid_top - holder_card_h
             fixed_holder_slots = 5
-            holder_card_w = content_w / fixed_holder_slots
+            holder_gap_x = 8.0
+            holder_card_w_max = (content_w - holder_gap_x * (fixed_holder_slots - 1)) / fixed_holder_slots
+            holder_card_w = max(54.0, min(holder_card_w_max, top_card_w * 1.10))
+            holder_card_h = max(34.0, min(holder_grid_h, top_card_h * 1.08))
+            holder_row_w = fixed_holder_slots * holder_card_w + (fixed_holder_slots - 1) * holder_gap_x
+            holder_x0 = cx0 + max(0.0, (content_w - holder_row_w) / 2.0)
+            holder_y = holder_grid_top - holder_card_h - max(0.0, (holder_grid_h - holder_card_h) / 2.0)
 
             for idx in range(fixed_holder_slots):
-                x = cx0 + idx * holder_card_w
+                x = holder_x0 + idx * (holder_card_w + holder_gap_x)
                 holder = side_holders[idx] if idx < len(side_holders) else None
 
                 c.setFillColorRGB(1, 1, 1)
