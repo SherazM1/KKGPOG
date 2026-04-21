@@ -186,9 +186,15 @@ def _extract_top_holder_slots(
         return []
 
     slots: List[dict] = []
-    real_headers = [(c, h) for c, h in slot_starts if h != "__BREAK__"]
+    real_headers: List[Tuple[int, str, int]] = []
+    segment_index = 0
+    for c, h in slot_starts:
+        if h == "__BREAK__":
+            segment_index += 1
+            continue
+        real_headers.append((c, h, segment_index))
 
-    for i, (start_col, header_text) in enumerate(real_headers):
+    for i, (start_col, header_text, seg_idx) in enumerate(real_headers):
         next_boundaries = [
             c for c, _ in slot_starts
             if c > start_col
@@ -210,6 +216,7 @@ def _extract_top_holder_slots(
             {
                 "header": header_text,
                 "slot_order": i,
+                "segment_index": seg_idx,
                 "start_col": start_col,
                 "end_col": end_col,
                 "item_no": re.sub(r"[^\d]", "", str(item_no)),
@@ -226,56 +233,30 @@ def _extract_top_holder_slots(
 
 def _partition_top_slots_into_sides(top_slots: List[dict]) -> Dict[str, List[dict]]:
     """
-    Partition extracted top holder slots into ordered side regions (A/B/C/D)
-    using workbook column geometry, without relying on explicit SIDE labels.
+    Partition top holder slots into ordered side segments using
+    MARKETING MESSAGE PANEL-delimited segment indices from extraction.
     """
     by_side: Dict[str, List[dict]] = {s: [] for s in "ABCD"}
     if not top_slots:
         return by_side
 
-    ordered = sorted(
+    slots_ordered = sorted(
         top_slots,
         key=lambda s: (
+            int(s.get("segment_index", 0)),
             int(s.get("start_col", 0)),
             int(s.get("end_col", 0)),
         ),
     )
-    centers = [
-        (int(s["start_col"]) + int(s["end_col"])) / 2.0
-        for s in ordered
-    ]
+    segment_ids = sorted({int(s.get("segment_index", 0)) for s in slots_ordered})
+    segment_to_side = {seg_id: "ABCD"[idx] for idx, seg_id in enumerate(segment_ids[:4])}
 
-    # Use up to four 1D geometry clusters; each cluster maps to one side.
-    k = min(4, len(ordered))
-    if k <= 1:
-        by_side["A"] = ordered
-        return by_side
-
-    cmin = min(centers)
-    cmax = max(centers)
-    span = max(1e-6, cmax - cmin)
-    centroids = [cmin + ((i + 0.5) * span / k) for i in range(k)]
-
-    labels = [0] * len(centers)
-    for _ in range(20):
-        for i, v in enumerate(centers):
-            labels[i] = min(range(k), key=lambda j: (abs(v - centroids[j]), j))
-
-        updated = centroids[:]
-        for j in range(k):
-            vals = [centers[i] for i, lab in enumerate(labels) if lab == j]
-            if vals:
-                updated[j] = float(sum(vals) / len(vals))
-        if all(abs(updated[j] - centroids[j]) < 1e-6 for j in range(k)):
-            centroids = updated
-            break
-        centroids = updated
-
-    cluster_order = sorted(range(k), key=lambda j: centroids[j])
-    cluster_to_side = {cluster_idx: "ABCD"[rank] for rank, cluster_idx in enumerate(cluster_order)}
-
-    for slot, lab in zip(ordered, labels):
-        by_side[cluster_to_side[lab]].append(slot)
+    for slot in slots_ordered:
+        seg_id = int(slot.get("segment_index", 0))
+        side = segment_to_side.get(seg_id)
+        if side is None:
+            continue
+        by_side[side].append(slot)
 
     for side in "ABCD":
         by_side[side].sort(
