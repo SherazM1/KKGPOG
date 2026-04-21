@@ -1429,77 +1429,23 @@ def render_full_pallet_pdf(
             holder_grid_h = max(24.0, holder_grid_top - bucket_b_bottom)
             holder_card_h = max(16.0, holder_grid_h)
             holder_y = holder_grid_top - holder_card_h
-            holder_pad_x = 2.0
+            fixed_holder_slots = 5
+            holder_card_w = content_w / fixed_holder_slots
 
-            holders_with_slots = [
-                h
-                for h in side_holders
-                if h.slot_start_col is not None and h.slot_end_col is not None
-            ]
-            holders_with_slots.sort(
-                key=lambda h: (
-                    h.slot_order if h.slot_order is not None else 10**9,
-                    int(h.slot_start_col) if h.slot_start_col is not None else 10**9,
-                )
-            )
+            for idx in range(fixed_holder_slots):
+                x = cx0 + idx * holder_card_w
+                holder = side_holders[idx] if idx < len(side_holders) else None
 
-            if holders_with_slots:
-                min_slot_col = min(int(h.slot_start_col) for h in holders_with_slots)
-                max_slot_col = max(int(h.slot_end_col) for h in holders_with_slots)
-                total_slot_cols = max(1, max_slot_col - min_slot_col + 1)
+                c.setFillColorRGB(1, 1, 1)
+                c.setStrokeColorRGB(*FILLED_STROKE)
+                c.setLineWidth(0.75)
+                c.rect(x, holder_y, holder_card_w, holder_card_h, stroke=1, fill=1)
 
-                for holder in holders_with_slots:
-                    start_col = int(holder.slot_start_col)
-                    end_col = int(holder.slot_end_col)
-                    slot_x0 = cx0 + (max(0, start_col - min_slot_col) / total_slot_cols) * content_w
-                    slot_x1 = cx0 + (max(0, end_col - min_slot_col + 1) / total_slot_cols) * content_w
-
-                    x = max(cx0, slot_x0 + holder_pad_x)
-                    w = max(18.0, min(cx1, slot_x1 - holder_pad_x) - x)
-                    if x + w > cx1:
-                        w = max(10.0, cx1 - x)
-
-                    c.setFillColorRGB(1, 1, 1)
-                    c.setStrokeColorRGB(*FILLED_STROKE)
-                    c.setLineWidth(0.75)
-                    c.rect(x, holder_y, w, holder_card_h, stroke=1, fill=1)
+                if holder is not None:
                     _draw_card(
                         c,
                         x,
                         holder_y,
-                        w,
-                        holder_card_h,
-                        image_from_bytes(holder.image_bytes),
-                        holder.item_no,
-                        holder.name,
-                        holder.qty,
-                    )
-                    rightmost_used = max(rightmost_used, x + w)
-            else:
-                # Backward-compatible fallback for holder rows parsed without slot metadata.
-                holder_cols = max(1, min(8, len(side_holders) if side_holders else 8))
-                holder_rows = max(1, int(math.ceil(len(side_holders) / holder_cols)))
-                holder_gutter_y = 6.0
-                holder_card_h = max(16.0, (holder_grid_h - max(0, holder_rows - 1) * holder_gutter_y) / holder_rows)
-                holder_xs, holder_card_w, _, holder_right, holder_overflow = _fit_x_layout(
-                    cx0, cx1, holder_cols, [1] * max(0, holder_cols - 1), 74.0, 6.0
-                )
-                adjusted_to_fit = adjusted_to_fit or holder_overflow
-                rightmost_used = max(rightmost_used, holder_right)
-
-                for idx, holder in enumerate(side_holders):
-                    ri = idx // holder_cols
-                    ci = idx % holder_cols
-                    x = holder_xs[ci]
-                    y = holder_grid_top - (ri + 1) * holder_card_h - ri * holder_gutter_y
-                    c.setFillColorRGB(1, 1, 1)
-                    c.setStrokeColorRGB(*FILLED_STROKE)
-                    c.setLineWidth(0.75)
-                    c.rect(x, y, holder_card_w, holder_card_h, stroke=1, fill=1)
-                    _draw_card(
-                        c,
-                        x,
-                        y,
                         holder_card_w,
                         holder_card_h,
                         image_from_bytes(holder.image_bytes),
@@ -1507,6 +1453,8 @@ def render_full_pallet_pdf(
                         holder.name,
                         holder.qty,
                     )
+
+                rightmost_used = max(rightmost_used, x + holder_card_w)
 
             if debug_overlay:
                 _draw_debug_box(c, cx0, bucket_b_bottom, content_w, bucket_b_top - bucket_b_bottom, "HOLDERS")
