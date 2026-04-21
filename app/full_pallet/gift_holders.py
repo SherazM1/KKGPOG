@@ -122,6 +122,8 @@ def _image_for_col_span(
 
 
 def _first_nonempty_in_span(ws, row_idx: int, start_col: int, end_col: int) -> Optional[str]:
+    if row_idx < 0:
+        return None
     for c in range(start_col, end_col + 1):
         val = ws.cell(row=row_idx + 1, column=c + 1).value
         if val is None:
@@ -134,6 +136,8 @@ def _first_nonempty_in_span(ws, row_idx: int, start_col: int, end_col: int) -> O
 
 
 def _first_int_in_span(ws, row_idx: int, start_col: int, end_col: int) -> Optional[int]:
+    if row_idx < 0:
+        return None
     for c in range(start_col, end_col + 1):
         val = ws.cell(row=row_idx + 1, column=c + 1).value
         if val is None:
@@ -217,6 +221,70 @@ def _extract_top_holder_slots(
         )
 
     return slots
+
+
+
+def _partition_top_slots_into_sides(top_slots: List[dict]) -> Dict[str, List[dict]]:
+    """
+    Partition extracted top holder slots into ordered side regions (A/B/C/D)
+    using workbook column geometry, without relying on explicit SIDE labels.
+    """
+    by_side: Dict[str, List[dict]] = {s: [] for s in "ABCD"}
+    if not top_slots:
+        return by_side
+
+    ordered = sorted(
+        top_slots,
+        key=lambda s: (
+            int(s.get("start_col", 0)),
+            int(s.get("end_col", 0)),
+        ),
+    )
+    centers = [
+        (int(s["start_col"]) + int(s["end_col"])) / 2.0
+        for s in ordered
+    ]
+
+    # Use up to four 1D geometry clusters; each cluster maps to one side.
+    k = min(4, len(ordered))
+    if k <= 1:
+        by_side["A"] = ordered
+        return by_side
+
+    cmin = min(centers)
+    cmax = max(centers)
+    span = max(1e-6, cmax - cmin)
+    centroids = [cmin + ((i + 0.5) * span / k) for i in range(k)]
+
+    labels = [0] * len(centers)
+    for _ in range(20):
+        for i, v in enumerate(centers):
+            labels[i] = min(range(k), key=lambda j: (abs(v - centroids[j]), j))
+
+        updated = centroids[:]
+        for j in range(k):
+            vals = [centers[i] for i, lab in enumerate(labels) if lab == j]
+            if vals:
+                updated[j] = float(sum(vals) / len(vals))
+        if all(abs(updated[j] - centroids[j]) < 1e-6 for j in range(k)):
+            centroids = updated
+            break
+        centroids = updated
+
+    cluster_order = sorted(range(k), key=lambda j: centroids[j])
+    cluster_to_side = {cluster_idx: "ABCD"[rank] for rank, cluster_idx in enumerate(cluster_order)}
+
+    for slot, lab in zip(ordered, labels):
+        by_side[cluster_to_side[lab]].append(slot)
+
+    for side in "ABCD":
+        by_side[side].sort(
+            key=lambda s: (
+                int(s.get("start_col", 0)),
+                int(s.get("end_col", 0)),
+            )
+        )
+    return by_side
 
 
 
@@ -336,73 +404,27 @@ def load_gift_card_holders(gift_bytes: bytes) -> Dict[str, List[GiftHolder]]:
     )
 
     holders: Dict[str, List[GiftHolder]] = {s: [] for s in "ABCD"}
-    if item_row >= 0 and qty_row >= 0:
-        side_markers: List[Tuple[int, str]] = []
-        for r in range(max(0, item_row - 5), item_row + 1):
-            vals = [str(v or "").strip().upper() for v in full_df_raw.iloc[r].tolist()]
-            for cidx, txt in enumerate(vals):
-                m = re.search(r"SIDE\s*([A-D])", txt)
-                if m:
-                    side_markers.append((cidx, m.group(1)))
-        side_markers = sorted(side_markers, key=lambda t: t[0])
-
-        def side_for_col(cidx: int) -> str:
-            if not side_markers:
-                return "A"
-            chosen = side_markers[0][1]
-            for sc, ss in side_markers:
-                if cidx >= sc:
-                    chosen = ss
-                else:
-                    break
-            return chosen
-
-        if top_slots:
-            for slot in top_slots:
-                cidx = int(slot["start_col"])
-                side = side_for_col(cidx)
+    if top_slots:
+        slots_by_side = _partition_top_slots_into_sides(top_slots)
+        for side in "ABCD":
+            for slot in slots_by_side[side]:
                 item_no = str(slot["item_no"]).strip()
                 if not item_no:
                     continue
-                name = str(slot["name"] or "").strip()
-                qty = slot["qty"]
-                img_bytes = slot["image_bytes"]
-                img_ext = slot["image_ext"]
-                holders.setdefault(side, []).append(
+                holders[side].append(
                     GiftHolder(
                         side=side,
                         item_no=item_no,
-                        name=name,
-                        qty=qty,
-                        image_bytes=img_bytes,
-                        image_ext=img_ext,
+                        name=str(slot["name"] or "").strip(),
+                        qty=slot["qty"],
+                        image_bytes=slot["image_bytes"],
+                        image_ext=slot["image_ext"],
                         slot_label=str(slot["header"] or "").strip() or None,
                         slot_order=int(slot["slot_order"]),
                         slot_start_col=int(slot["start_col"]),
                         slot_end_col=int(slot["end_col"]),
                     )
                 )
-
-    if any(holders.values()):
-        non_empty = [s for s in "ABCD" if holders.get(s)]
-        if non_empty == ["A"]:
-            base_list = holders["A"]
-            for s in "BCD":
-                holders[s] = [
-                    GiftHolder(
-                        side=s,
-                        item_no=h.item_no,
-                        name=h.name,
-                        qty=h.qty,
-                        image_bytes=h.image_bytes,
-                        image_ext=h.image_ext,
-                        slot_label=h.slot_label,
-                        slot_order=h.slot_order,
-                        slot_start_col=h.slot_start_col,
-                        slot_end_col=h.slot_end_col,
-                    )
-                    for h in base_list
-                ]
         return holders
 
     header_row = find_header_row(full_df_raw, ["ITEM", "QTY"])
