@@ -3,6 +3,7 @@ from __future__ import annotations
 import difflib
 import io
 import math
+import re
 from datetime import date
 from typing import Dict, List, Optional, Tuple
 
