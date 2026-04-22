@@ -42,6 +42,31 @@ def _img_anchor_col(img) -> Optional[int]:
     return None
 
 
+def _img_anchor_row(img) -> Optional[int]:
+    try:
+        anchor = getattr(img, "anchor", None)
+        if anchor is None:
+            return None
+        _from = getattr(anchor, "_from", None)
+        if _from is not None:
+            return int(_from.row)
+        frm = getattr(anchor, "from_", None)
+        if frm is not None:
+            return int(frm.row)
+    except Exception:
+        return None
+    return None
+
+
+def _img_pixel_size(img) -> Tuple[int, int]:
+    try:
+        w = int(float(getattr(img, "width", 0) or 0))
+        h = int(float(getattr(img, "height", 0) or 0))
+        return max(0, w), max(0, h)
+    except Exception:
+        return 0, 0
+
+
 
 def _img_bytes_and_ext(img) -> Tuple[Optional[bytes], Optional[str]]:
     try:
@@ -72,55 +97,115 @@ def _img_bytes_and_ext(img) -> Tuple[Optional[bytes], Optional[str]]:
 
 
 
-def _extract_ws_images_by_col(ws) -> Dict[int, Tuple[bytes, str]]:
+def _extract_ws_images_by_col(ws) -> Dict[int, List[dict]]:
     """
-    Map 0-based Excel column index -> first embedded image found in that column.
+    Map 0-based Excel column index -> all embedded image candidates in that column.
     """
-    out: Dict[int, Tuple[bytes, str]] = {}
+    out: Dict[int, List[dict]] = {}
     for img in getattr(ws, "_images", []) or []:
         col = _img_anchor_col(img)
         if col is None:
             continue
+        row = _img_anchor_row(img)
         img_bytes, img_ext = _img_bytes_and_ext(img)
         if not img_bytes:
             continue
-        out.setdefault(col, (img_bytes, img_ext or "png"))
+        width, height = _img_pixel_size(img)
+        out.setdefault(col, []).append(
+            {
+                "col": int(col),
+                "row": int(row) if row is not None else -1,
+                "width": width,
+                "height": height,
+                "image_bytes": img_bytes,
+                "image_ext": img_ext or "png",
+            }
+        )
     return out
 
 
 
 def _nearest_image_for_col(
-    images_by_col: Dict[int, Tuple[bytes, str]],
+    images_by_col: Dict[int, List[dict]],
     target_col: int,
+    preferred_row: int,
+    top_band_min_row: int,
+    top_band_max_row: int,
     max_distance: int = 3,
 ) -> Tuple[Optional[bytes], Optional[str]]:
-    best: Optional[Tuple[int, Tuple[bytes, str]]] = None
-    for col, payload in images_by_col.items():
+    candidates: List[dict] = []
+    for col, col_candidates in images_by_col.items():
         dist = abs(int(col) - int(target_col))
         if dist > max_distance:
             continue
-        if best is None or dist < best[0]:
-            best = (dist, payload)
-    return best[1] if best else (None, None)
+        candidates.extend(col_candidates or [])
+    if not candidates:
+        return None, None
+
+    def _score(c: dict) -> Tuple[int, int, int, int, int]:
+        row = int(c.get("row", -1))
+        col = int(c.get("col", target_col))
+        w = int(c.get("width", 0))
+        h = int(c.get("height", 0))
+        area = max(0, w) * max(0, h)
+        in_top_band = top_band_min_row <= row <= top_band_max_row
+        tiny = area < 2500
+        return (
+            0 if in_top_band else 1,
+            1 if tiny else 0,
+            abs(col - int(target_col)),
+            area if area > 0 else 10**9,
+            abs(row - int(preferred_row)) if row >= 0 else 10**9,
+        )
+
+    best = min(candidates, key=_score)
+    return best.get("image_bytes"), best.get("image_ext")
 
 
 
 def _image_for_col_span(
-    images_by_col: Dict[int, Tuple[bytes, str]],
+    images_by_col: Dict[int, List[dict]],
     start_col: int,
     end_col: int,
+    preferred_row: int,
+    top_band_min_row: int,
+    top_band_max_row: int,
 ) -> Tuple[Optional[bytes], Optional[str]]:
     in_span = [
-        (col, payload)
-        for col, payload in images_by_col.items()
+        cand
+        for col, payloads in images_by_col.items()
         if start_col <= int(col) <= end_col
+        for cand in (payloads or [])
     ]
     if in_span:
-        # Prefer the left-most image in the slot span; there should normally be one.
-        in_span.sort(key=lambda x: x[0])
-        return in_span[0][1]
+        # Prefer a top-band candidate with realistic card size over large mockup/render images.
+        def _score_in_span(c: dict) -> Tuple[int, int, int, int, int]:
+            row = int(c.get("row", -1))
+            col = int(c.get("col", start_col))
+            w = int(c.get("width", 0))
+            h = int(c.get("height", 0))
+            area = max(0, w) * max(0, h)
+            in_top_band = top_band_min_row <= row <= top_band_max_row
+            tiny = area < 2500
+            return (
+                0 if in_top_band else 1,
+                1 if tiny else 0,
+                max(0, col - int(start_col)),
+                area if area > 0 else 10**9,
+                abs(row - int(preferred_row)) if row >= 0 else 10**9,
+            )
+
+        best = min(in_span, key=_score_in_span)
+        return best.get("image_bytes"), best.get("image_ext")
     center_col = (start_col + end_col) // 2
-    return _nearest_image_for_col(images_by_col, center_col, max_distance=2)
+    return _nearest_image_for_col(
+        images_by_col,
+        center_col,
+        preferred_row=preferred_row,
+        top_band_min_row=top_band_min_row,
+        top_band_max_row=top_band_max_row,
+        max_distance=2,
+    )
 
 
 
@@ -160,7 +245,7 @@ def _first_int_in_span(ws, row_idx: int, start_col: int, end_col: int) -> Option
 
 def _extract_top_holder_slots(
     ws,
-    images_by_col: Dict[int, Tuple[bytes, str]],
+    images_by_col: Dict[int, List[dict]],
     qty_row: int,
     item_row: int,
     desc_row: int,
@@ -219,7 +304,22 @@ def _extract_top_holder_slots(
         qty = _first_int_in_span(ws, qty_row, start_col, end_col)
         name = _first_nonempty_in_span(ws, desc_row, start_col, end_col) or ""
 
-        img_bytes, img_ext = _image_for_col_span(images_by_col, start_col, end_col)
+        # Prefer images anchored in the top holder band; this avoids selecting large
+        # display/mockup renders that may share nearby columns on the sheet.
+        preferred_row = max(0, marketing_row_1based - 1)
+        top_band_min_row = max(0, preferred_row - 1)
+        top_band_max_row = max(
+            top_band_min_row + 2,
+            qty_row if qty_row >= 0 else preferred_row + 8,
+        )
+        img_bytes, img_ext = _image_for_col_span(
+            images_by_col,
+            start_col,
+            end_col,
+            preferred_row=preferred_row,
+            top_band_min_row=top_band_min_row,
+            top_band_max_row=top_band_max_row,
+        )
 
         slots.append(
             {
