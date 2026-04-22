@@ -71,6 +71,143 @@ def render_full_pallet_pdf(
 
     logo = _try_load_logo()
     all_matrix_rows = [r for rows in matrix_idx.values() for r in rows]
+    upc_to_rows: Dict[str, List[MatrixRow]] = {}
+    for row in all_matrix_rows:
+        upc_to_rows.setdefault((row.upc12 or "").strip(), []).append(row)
+
+    def _best_row_for_label(candidates: List[MatrixRow], label_text: str) -> Optional[MatrixRow]:
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        target = _norm_name(label_text or "")
+        if not target:
+            return candidates[0]
+        return max(
+            candidates,
+            key=lambda r: difflib.SequenceMatcher(None, target, r.norm_name).ratio(),
+        )
+
+    def _extract_mid_slot_label_hints(slot: FullPalletMidBandSlot) -> Dict[str, List[str]]:
+        raw_label = (slot.raw_label_text or "").strip()
+        accepted = [str(t or "").strip() for t in (slot.accepted_words or [])]
+        joined = " ".join([raw_label] + accepted)
+
+        digit_tokens = re.findall(r"\d{4,14}", joined)
+        upc_candidates: List[str] = []
+        last5_candidates: List[str] = []
+        seen_upc: set = set()
+        seen_last5: set = set()
+
+        for token in digit_tokens:
+            digits = re.sub(r"[^0-9]", "", token)
+            if len(digits) >= 11:
+                candidate = digits[-12:].zfill(12)
+                if candidate not in seen_upc:
+                    upc_candidates.append(candidate)
+                    seen_upc.add(candidate)
+
+            last5 = _to_last5(digits[-5:] if len(digits) >= 5 else "")
+            if last5 and last5 not in seen_last5:
+                last5_candidates.append(last5)
+                seen_last5.add(last5)
+
+        return {
+            "upc12_candidates": upc_candidates,
+            "last5_candidates": last5_candidates,
+        }
+
+    def _resolve_mid_band_slot_no_position(slot: FullPalletMidBandSlot) -> Tuple[Optional[MatrixRow], Dict[str, object]]:
+        label = (slot.parsed_name or slot.raw_label_text or "").strip()
+        extracted_last5 = _to_last5(slot.last5)
+        hints = _extract_mid_slot_label_hints(slot)
+
+        if extracted_last5:
+            primary = resolve_full_pallet(extracted_last5, label, matrix_idx)
+            if primary is not None:
+                return primary, {
+                    "fallback_path": "labels_exact_last5",
+                    "labels_last5": extracted_last5,
+                    "label_hint_upc_candidates": hints["upc12_candidates"],
+                    "label_hint_last5_candidates": hints["last5_candidates"],
+                }
+
+        for upc_hint in hints["upc12_candidates"]:
+            upc_rows = upc_to_rows.get(upc_hint, [])
+            match = _best_row_for_label(upc_rows, label)
+            if match is not None:
+                return match, {
+                    "fallback_path": "labels_hint_upc",
+                    "labels_last5": extracted_last5,
+                    "label_hint_upc_candidates": hints["upc12_candidates"],
+                    "label_hint_last5_candidates": hints["last5_candidates"],
+                }
+
+        for last5_hint in hints["last5_candidates"]:
+            match = resolve_full_pallet(last5_hint, label, matrix_idx)
+            if match is not None:
+                return match, {
+                    "fallback_path": "labels_hint_last5",
+                    "labels_last5": extracted_last5,
+                    "label_hint_upc_candidates": hints["upc12_candidates"],
+                    "label_hint_last5_candidates": hints["last5_candidates"],
+                }
+
+        # Secondary recovery retained for compatibility: name-only best candidate.
+        if label and all_matrix_rows:
+            fallback = _best_row_for_label(all_matrix_rows, label)
+            if fallback is not None:
+                ratio = difflib.SequenceMatcher(None, _norm_name(label), fallback.norm_name).ratio()
+                if ratio >= 0.78:
+                    return fallback, {
+                        "fallback_path": "labels_name_similarity",
+                        "labels_last5": extracted_last5,
+                        "label_hint_upc_candidates": hints["upc12_candidates"],
+                        "label_hint_last5_candidates": hints["last5_candidates"],
+                    }
+
+        return None, {
+            "fallback_path": "unresolved",
+            "labels_last5": extracted_last5,
+            "label_hint_upc_candidates": hints["upc12_candidates"],
+            "label_hint_last5_candidates": hints["last5_candidates"],
+        }
+
+    def _build_mid_slot_position_lookup() -> Tuple[Dict[Tuple[str, int, int], MatrixRow], Dict[Tuple[int, int], MatrixRow]]:
+        per_side_candidates: Dict[Tuple[str, int, int], Dict[str, MatrixRow]] = {}
+        global_candidates: Dict[Tuple[int, int], Dict[str, MatrixRow]] = {}
+
+        for page in pages:
+            section = page.mid_band_above_bonus
+            if section is None:
+                continue
+            if len(section.rows) != 3 or section.row_slot_counts != [8, 8, 8]:
+                continue
+            for row in section.rows:
+                if len(row.slots) != 8:
+                    continue
+                for slot in row.slots:
+                    match, _ = _resolve_mid_band_slot_no_position(slot)
+                    if match is None:
+                        continue
+                    per_side_key = (page.side_letter, int(slot.row_index), int(slot.slot_in_row))
+                    global_key = (int(slot.row_index), int(slot.slot_in_row))
+                    per_side_candidates.setdefault(per_side_key, {})[match.upc12] = match
+                    global_candidates.setdefault(global_key, {})[match.upc12] = match
+
+        per_side_lookup: Dict[Tuple[str, int, int], MatrixRow] = {}
+        for key, rows in per_side_candidates.items():
+            if len(rows) == 1:
+                per_side_lookup[key] = next(iter(rows.values()))
+
+        global_lookup: Dict[Tuple[int, int], MatrixRow] = {}
+        for key, rows in global_candidates.items():
+            if len(rows) == 1:
+                global_lookup[key] = next(iter(rows.values()))
+
+        return per_side_lookup, global_lookup
+
+    mid_slot_lookup_by_side, mid_slot_lookup_global = _build_mid_slot_position_lookup()
 
     def _marker_y(p: FullPalletPage, kind: str) -> Optional[float]:
         for ann in p.annotations:
@@ -631,25 +768,31 @@ def render_full_pallet_pdf(
             "crop_inset": crop_inset,
         }
 
-    def _resolve_mid_band_slot(slot: FullPalletMidBandSlot) -> Optional[MatrixRow]:
-        primary = resolve_full_pallet(slot.last5, slot.parsed_name, matrix_idx) if slot.last5 else None
-        if primary is not None:
-            return primary
+    def _resolve_mid_band_slot(
+        page: FullPalletPage,
+        slot: FullPalletMidBandSlot,
+    ) -> Tuple[Optional[MatrixRow], Dict[str, object]]:
+        match, trace = _resolve_mid_band_slot_no_position(slot)
+        if match is not None:
+            trace["excel_lookup_succeeded"] = True
+            return match, trace
 
-        # Secondary recovery: name-only best candidate when last5 is missing/unusable.
-        label = (slot.parsed_name or slot.raw_label_text or "").strip()
-        if not label or not all_matrix_rows:
-            return None
+        side_key = (page.side_letter, int(slot.row_index), int(slot.slot_in_row))
+        pos_match = mid_slot_lookup_by_side.get(side_key)
+        if pos_match is not None:
+            trace["fallback_path"] = "template_position_side"
+            trace["excel_lookup_succeeded"] = True
+            return pos_match, trace
 
-        target = _norm_name(label)
-        best: Optional[Tuple[float, MatrixRow]] = None
-        for row in all_matrix_rows:
-            ratio = difflib.SequenceMatcher(None, target, row.norm_name).ratio()
-            if best is None or ratio > best[0]:
-                best = (ratio, row)
-        if best is None:
-            return None
-        return best[1] if best[0] >= 0.78 else None
+        global_key = (int(slot.row_index), int(slot.slot_in_row))
+        pos_global = mid_slot_lookup_global.get(global_key)
+        if pos_global is not None:
+            trace["fallback_path"] = "template_position_global"
+            trace["excel_lookup_succeeded"] = True
+            return pos_global, trace
+
+        trace["excel_lookup_succeeded"] = False
+        return None, trace
 
     def _draw_canonical_mid_band_section(
         p: FullPalletPage,
@@ -659,6 +802,7 @@ def render_full_pallet_pdf(
         unresolved_bucket: List[str],
         missing_image_slots: List[str],
         content_x0: float,
+        unresolved_debug_rows: Optional[List[dict]] = None,
     ) -> Tuple[int, int, bool, float, int, int]:
         nonlocal rightmost_used, matched_cells, unmatched_cells
 
@@ -697,7 +841,7 @@ def render_full_pallet_pdf(
             for slot in ordered_slots:
                 x = row_xs[slot.slot_in_row]
 
-                match = _resolve_mid_band_slot(slot)
+                match, resolve_trace = _resolve_mid_band_slot(p, slot)
                 upc12 = match.upc12 if match else None
                 cpp = match.cpp_qty if match else None
                 disp_name = (
@@ -714,6 +858,23 @@ def render_full_pallet_pdf(
                     upc_str = f"LAST5 {last5_key}" if last5_key else "LAST5 MISSING"
                     disp_name = f"UNRESOLVED {last5_key}" if last5_key else "UNRESOLVED"
                     unresolved_bucket.append(last5_key or slot.slot_id)
+                    if unresolved_debug_rows is not None:
+                        unresolved_debug_rows.append(
+                            {
+                                "page_index": p.page_index,
+                                "side": p.side_letter,
+                                "slot_id": slot.slot_id,
+                                "row_index": slot.row_index,
+                                "slot_in_row": slot.slot_in_row,
+                                "block_name": slot.block_name,
+                                "labels_last5": resolve_trace.get("labels_last5"),
+                                "labels_text": (slot.raw_label_text or "").strip(),
+                                "fallback_path": resolve_trace.get("fallback_path"),
+                                "label_hint_upc_candidates": resolve_trace.get("label_hint_upc_candidates", []),
+                                "label_hint_last5_candidates": resolve_trace.get("label_hint_last5_candidates", []),
+                                "excel_lookup_succeeded": bool(resolve_trace.get("excel_lookup_succeeded")),
+                            }
+                        )
                     unmatched_cells += 1
 
                 try:
@@ -1344,6 +1505,7 @@ def render_full_pallet_pdf(
             unmatched_cells = 0
             unresolved_main: List[str] = []
             unresolved_bonus: List[str] = []
+            unresolved_mid_slot_debug: List[dict] = []
             missing_main_images: List[str] = []
             missing_bonus_images: List[str] = []
             main_render_source = "mid_band_template" if canonical_mid_band_ok else "mid_band_template_placeholder"
@@ -1484,6 +1646,7 @@ def render_full_pallet_pdf(
                     unresolved_main,
                     missing_main_images,
                     cx0,
+                    unresolved_debug_rows=unresolved_mid_slot_debug,
                 )
             else:
                 (
@@ -1669,6 +1832,7 @@ def render_full_pallet_pdf(
                             "main": sorted({x for x in unresolved_main if x}),
                             "bonus": sorted({x for x in unresolved_bonus if x}),
                         },
+                        "mid_unresolved_slot_debug": unresolved_mid_slot_debug,
                         "missing_image_crops": {
                             "main": sorted({x for x in missing_main_images if x}),
                             "bonus": sorted({x for x in missing_bonus_images if x}),
