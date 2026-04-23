@@ -174,7 +174,10 @@ def render_full_pallet_pdf(
             "label_hint_last5_candidates": hints["last5_candidates"],
         }
 
-    def _build_mid_slot_position_lookup() -> Tuple[Dict[Tuple[str, int, int], MatrixRow], Dict[Tuple[int, int], MatrixRow]]:
+    def _build_mid_slot_position_lookup() -> Tuple[
+        Dict[Tuple[str, int, int], List[MatrixRow]],
+        Dict[Tuple[int, int], List[MatrixRow]],
+    ]:
         per_side_candidates: Dict[Tuple[str, int, int], Dict[str, MatrixRow]] = {}
         global_candidates: Dict[Tuple[int, int], Dict[str, MatrixRow]] = {}
 
@@ -196,19 +199,62 @@ def render_full_pallet_pdf(
                     per_side_candidates.setdefault(per_side_key, {})[match.upc12] = match
                     global_candidates.setdefault(global_key, {})[match.upc12] = match
 
-        per_side_lookup: Dict[Tuple[str, int, int], MatrixRow] = {}
-        for key, rows in per_side_candidates.items():
-            if len(rows) == 1:
-                per_side_lookup[key] = next(iter(rows.values()))
-
-        global_lookup: Dict[Tuple[int, int], MatrixRow] = {}
-        for key, rows in global_candidates.items():
-            if len(rows) == 1:
-                global_lookup[key] = next(iter(rows.values()))
+        per_side_lookup: Dict[Tuple[str, int, int], List[MatrixRow]] = {
+            key: list(rows.values()) for key, rows in per_side_candidates.items()
+        }
+        global_lookup: Dict[Tuple[int, int], List[MatrixRow]] = {
+            key: list(rows.values()) for key, rows in global_candidates.items()
+        }
 
         return per_side_lookup, global_lookup
 
     mid_slot_lookup_by_side, mid_slot_lookup_global = _build_mid_slot_position_lookup()
+
+    def _resolve_mid_slot_position_candidates(
+        slot: FullPalletMidBandSlot,
+        candidates: List[MatrixRow],
+    ) -> Tuple[Optional[MatrixRow], Dict[str, object]]:
+        candidate_upcs: List[str] = []
+        similarity_scores: Dict[str, float] = {}
+        if not candidates:
+            return None, {
+                "fallback_candidate_upcs": candidate_upcs,
+                "fallback_similarity_scores": similarity_scores,
+                "chosen_candidate": None,
+            }
+
+        parsed_target = _norm_name(slot.parsed_name or "")
+        raw_target = _norm_name(slot.raw_label_text or "")
+
+        ranked: List[Tuple[float, float, MatrixRow]] = []
+        for row in candidates:
+            upc = (row.upc12 or "").strip()
+            candidate_upcs.append(upc)
+            row_name = row.norm_name or ""
+            parsed_ratio = (
+                difflib.SequenceMatcher(None, parsed_target, row_name).ratio() if parsed_target else -1.0
+            )
+            raw_ratio = difflib.SequenceMatcher(None, raw_target, row_name).ratio() if raw_target else -1.0
+            primary_ratio = parsed_ratio if parsed_target else raw_ratio
+            secondary_ratio = raw_ratio if parsed_target else -1.0
+            ranked.append((primary_ratio, secondary_ratio, row))
+            similarity_scores[upc] = float(primary_ratio if primary_ratio >= 0.0 else 0.0)
+
+        ranked.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        best_primary, _, best_row = ranked[0]
+        threshold = 0.60
+        if best_primary >= threshold:
+            return best_row, {
+                "fallback_candidate_upcs": candidate_upcs,
+                "fallback_similarity_scores": similarity_scores,
+                "chosen_candidate": best_row.upc12,
+            }
+
+        return None, {
+            "fallback_candidate_upcs": candidate_upcs,
+            "fallback_similarity_scores": similarity_scores,
+            "chosen_candidate": None,
+        }
 
     def _marker_y(p: FullPalletPage, kind: str) -> Optional[float]:
         for ann in p.annotations:
@@ -779,19 +825,28 @@ def render_full_pallet_pdf(
             return match, trace
 
         side_key = (page.side_letter, int(slot.row_index), int(slot.slot_in_row))
-        pos_match = mid_slot_lookup_by_side.get(side_key)
+        side_candidates = mid_slot_lookup_by_side.get(side_key, [])
+        pos_match, pos_debug = _resolve_mid_slot_position_candidates(slot, side_candidates)
+        trace.update(pos_debug)
         if pos_match is not None:
             trace["fallback_path"] = "template_position_side"
+            trace["position_fallback_scope"] = "side"
             trace["excel_lookup_succeeded"] = True
             return pos_match, trace
 
         global_key = (int(slot.row_index), int(slot.slot_in_row))
-        pos_global = mid_slot_lookup_global.get(global_key)
+        global_candidates = mid_slot_lookup_global.get(global_key, [])
+        pos_global, pos_global_debug = _resolve_mid_slot_position_candidates(slot, global_candidates)
+        trace["fallback_candidate_upcs"] = pos_global_debug.get("fallback_candidate_upcs", [])
+        trace["fallback_similarity_scores"] = pos_global_debug.get("fallback_similarity_scores", {})
+        trace["chosen_candidate"] = pos_global_debug.get("chosen_candidate")
         if pos_global is not None:
             trace["fallback_path"] = "template_position_global"
+            trace["position_fallback_scope"] = "global"
             trace["excel_lookup_succeeded"] = True
             return pos_global, trace
 
+        trace["position_fallback_scope"] = "none"
         trace["excel_lookup_succeeded"] = False
         return None, trace
 
@@ -804,6 +859,7 @@ def render_full_pallet_pdf(
         missing_image_slots: List[str],
         content_x0: float,
         unresolved_debug_rows: Optional[List[dict]] = None,
+        position_fallback_debug_rows: Optional[List[dict]] = None,
     ) -> Tuple[int, int, bool, float, int, int]:
         nonlocal rightmost_used, matched_cells, unmatched_cells
 
@@ -843,6 +899,22 @@ def render_full_pallet_pdf(
                 x = row_xs[slot.slot_in_row]
 
                 match, resolve_trace = _resolve_mid_band_slot(p, slot)
+                if (
+                    position_fallback_debug_rows is not None
+                    and str(resolve_trace.get("fallback_path", "")).startswith("template_position_")
+                ):
+                    position_fallback_debug_rows.append(
+                        {
+                            "side": p.side_letter,
+                            "slot_id": slot.slot_id,
+                            "row_index": slot.row_index,
+                            "slot_in_row": slot.slot_in_row,
+                            "fallback_scope": resolve_trace.get("position_fallback_scope"),
+                            "fallback_candidate_upcs": resolve_trace.get("fallback_candidate_upcs", []),
+                            "fallback_similarity_scores": resolve_trace.get("fallback_similarity_scores", {}),
+                            "chosen_candidate": resolve_trace.get("chosen_candidate"),
+                        }
+                    )
                 upc12 = match.upc12 if match else None
                 cpp = match.cpp_qty if match else None
                 disp_name = (
@@ -873,6 +945,10 @@ def render_full_pallet_pdf(
                                 "fallback_path": resolve_trace.get("fallback_path"),
                                 "label_hint_upc_candidates": resolve_trace.get("label_hint_upc_candidates", []),
                                 "label_hint_last5_candidates": resolve_trace.get("label_hint_last5_candidates", []),
+                                "fallback_candidate_upcs": resolve_trace.get("fallback_candidate_upcs", []),
+                                "fallback_similarity_scores": resolve_trace.get("fallback_similarity_scores", {}),
+                                "chosen_candidate": resolve_trace.get("chosen_candidate"),
+                                "position_fallback_scope": resolve_trace.get("position_fallback_scope"),
                                 "excel_lookup_succeeded": bool(resolve_trace.get("excel_lookup_succeeded")),
                             }
                         )
@@ -1507,6 +1583,7 @@ def render_full_pallet_pdf(
             unresolved_main: List[str] = []
             unresolved_bonus: List[str] = []
             unresolved_mid_slot_debug: List[dict] = []
+            position_fallback_mid_slot_debug: List[dict] = []
             missing_main_images: List[str] = []
             missing_bonus_images: List[str] = []
             main_render_source = "mid_band_template" if canonical_mid_band_ok else "mid_band_template_placeholder"
@@ -1648,6 +1725,7 @@ def render_full_pallet_pdf(
                     missing_main_images,
                     cx0,
                     unresolved_debug_rows=unresolved_mid_slot_debug,
+                    position_fallback_debug_rows=position_fallback_mid_slot_debug,
                 )
             else:
                 (
@@ -1834,6 +1912,7 @@ def render_full_pallet_pdf(
                             "bonus": sorted({x for x in unresolved_bonus if x}),
                         },
                         "mid_unresolved_slot_debug": unresolved_mid_slot_debug,
+                        "mid_position_fallback_debug": position_fallback_mid_slot_debug,
                         "missing_image_crops": {
                             "main": sorted({x for x in missing_main_images if x}),
                             "bonus": sorted({x for x in missing_bonus_images if x}),
