@@ -4,6 +4,7 @@ import difflib
 import io
 import math
 import re
+from dataclasses import dataclass
 from datetime import date
 from typing import Dict, List, Optional, Tuple
 
@@ -38,6 +39,172 @@ from app.shared.text_utils import (
     _norm_name,
     _to_last5,
 )
+
+FULL_PALLET_MID_BAND_PROFILES = {
+    "A": {
+        "profile_name": "profile_1_ac",
+        "physical_groups": ["left", "center", "right"],
+        "expected_max_per_group": {"left": 6, "center": 12, "right": 6},
+        "expected_rows_per_group": {
+            "left": [2, 2, 2],
+            "center": [4, 4, 4],
+            "right": [2, 2, 2],
+        },
+        "render_layout_hints": {
+            "rows": 3,
+            "group_order": ["left", "center", "right"],
+            "row_grouping": [[2, 4, 2], [2, 4, 2], [2, 4, 2]],
+        },
+    },
+    "B": {
+        "profile_name": "profile_2_bd",
+        "physical_groups": ["left", "center", "right"],
+        "expected_max_per_group": {"left": 6, "center": 12, "right": 6},
+        "expected_rows_per_group": {
+            "left": [2, 2, 2],
+            "center": [4, 4, 4],
+            "right": [2, 2, 2],
+        },
+        "render_layout_hints": {
+            "rows": 3,
+            "group_order": ["left", "center", "right"],
+            "row_grouping": [[2, 4, 2], [2, 4, 2], [2, 4, 2]],
+            "strict_image_cell_guardrails": True,
+        },
+    },
+    "C": {
+        "profile_name": "profile_1_ac",
+        "physical_groups": ["left", "center", "right"],
+        "expected_max_per_group": {"left": 6, "center": 12, "right": 6},
+        "expected_rows_per_group": {
+            "left": [2, 2, 2],
+            "center": [4, 4, 4],
+            "right": [2, 2, 2],
+        },
+        "render_layout_hints": {
+            "rows": 3,
+            "group_order": ["left", "center", "right"],
+            "row_grouping": [[2, 4, 2], [2, 4, 2], [2, 4, 2]],
+        },
+    },
+    "D": {
+        "profile_name": "profile_2_bd",
+        "physical_groups": ["left", "center", "right"],
+        "expected_max_per_group": {"left": 6, "center": 12, "right": 6},
+        "expected_rows_per_group": {
+            "left": [2, 2, 2],
+            "center": [4, 4, 4],
+            "right": [2, 2, 2],
+        },
+        "render_layout_hints": {
+            "rows": 3,
+            "group_order": ["left", "center", "right"],
+            "row_grouping": [[2, 4, 2], [2, 4, 2], [2, 4, 2]],
+            "strict_image_cell_guardrails": True,
+        },
+    },
+}
+
+
+def get_mid_band_physical_profile(side_letter: str) -> Dict[str, object]:
+    side = str(side_letter or "").strip().upper()
+    return FULL_PALLET_MID_BAND_PROFILES.get(side, FULL_PALLET_MID_BAND_PROFILES["A"])
+
+
+@dataclass(frozen=True)
+class SelectionResult:
+    selected_cards: List[dict]
+    omitted_cards: List[dict]
+    selected_by_group: Dict[str, List[dict]]
+    omitted_by_group: Dict[str, List[dict]]
+    debug_summary: Dict[str, object]
+
+
+def select_mid_band_cards_for_display(
+    side_letter: str,
+    candidates: List[dict],
+    profile: Dict[str, object],
+) -> SelectionResult:
+    groups = [str(g) for g in profile.get("physical_groups", ["left", "center", "right"])]
+    group_rank = {g: i for i, g in enumerate(groups)}
+    expected_counts = {
+        str(k): int(v)
+        for k, v in dict(profile.get("expected_max_per_group", {})).items()
+        if v is not None
+    }
+
+    def _group_for(candidate: dict) -> str:
+        slot = candidate.get("slot")
+        return str(candidate.get("group") or getattr(slot, "block_name", "") or "unknown")
+
+    def _visual_key(candidate: dict) -> Tuple[int, int, int, int]:
+        slot = candidate.get("slot")
+        group = _group_for(candidate)
+        return (
+            group_rank.get(group, 10**6),
+            int(candidate.get("row_index", getattr(slot, "row_index", 0))),
+            int(candidate.get("slot_in_row", getattr(slot, "slot_in_row", 0))),
+            int(candidate.get("slot_order", getattr(slot, "slot_order", 0))),
+        )
+
+    candidates_by_group: Dict[str, List[dict]] = {g: [] for g in groups}
+    for candidate in sorted(candidates, key=_visual_key):
+        group = _group_for(candidate)
+        if group not in candidates_by_group:
+            candidates_by_group[group] = []
+        candidates_by_group[group].append(candidate)
+
+    selected_by_group: Dict[str, List[dict]] = {}
+    omitted_by_group: Dict[str, List[dict]] = {}
+    selected_cards: List[dict] = []
+    omitted_cards: List[dict] = []
+
+    for group, group_candidates in candidates_by_group.items():
+        expected = expected_counts.get(group)
+        if expected is None:
+            selected = list(group_candidates)
+            omitted: List[dict] = []
+        else:
+            selected = group_candidates[:expected]
+            omitted = [
+                {**candidate, "omit_reason": "group_overflow"}
+                for candidate in group_candidates[expected:]
+            ]
+
+        selected_by_group[group] = selected
+        omitted_by_group[group] = omitted
+        selected_cards.extend(selected)
+        omitted_cards.extend(omitted)
+
+    def _ids(rows: List[dict]) -> List[str]:
+        return [str(r.get("slot_id") or getattr(r.get("slot"), "slot_id", "")) for r in rows]
+
+    def _upcs(rows: List[dict]) -> List[Optional[str]]:
+        return [r.get("upc12") for r in rows]
+
+    debug_summary = {
+        "side": side_letter,
+        "profile": profile.get("profile_name"),
+        "candidate_count": len(candidates),
+        "selected_count": len(selected_cards),
+        "omitted_count": len(omitted_cards),
+        "selected_slot_ids_by_group": {g: _ids(rows) for g, rows in selected_by_group.items()},
+        "selected_upcs_by_group": {g: _upcs(rows) for g, rows in selected_by_group.items()},
+        "omitted_slot_ids_by_group": {g: _ids(rows) for g, rows in omitted_by_group.items()},
+        "omitted_upcs_by_group": {g: _upcs(rows) for g, rows in omitted_by_group.items()},
+        "omit_reasons_by_slot": {
+            str(row.get("slot_id") or getattr(row.get("slot"), "slot_id", "")): row.get("omit_reason")
+            for row in omitted_cards
+        },
+    }
+
+    return SelectionResult(
+        selected_cards=selected_cards,
+        omitted_cards=omitted_cards,
+        selected_by_group=selected_by_group,
+        omitted_by_group=omitted_by_group,
+        debug_summary=debug_summary,
+    )
 
 
 def render_full_pallet_pdf(
@@ -1313,6 +1480,81 @@ def render_full_pallet_pdf(
         trace["excel_lookup_succeeded"] = False
         return None, trace
 
+    def _build_mid_band_profile_comparison(
+        p: FullPalletPage,
+        slots: List[FullPalletMidBandSlot],
+    ) -> Dict[str, object]:
+        profile = get_mid_band_physical_profile(p.side_letter)
+        groups = [str(g) for g in profile.get("physical_groups", ["left", "center", "right"])]
+        expected_counts = {
+            str(k): int(v)
+            for k, v in dict(profile.get("expected_max_per_group", {})).items()
+            if v is not None
+        }
+
+        candidates_by_group: Dict[str, List[dict]] = {g: [] for g in groups}
+        for slot in sorted(slots, key=lambda s: (int(s.row_index), int(s.slot_in_row), int(s.slot_order))):
+            group = str(slot.block_name or "unknown")
+            if group not in candidates_by_group:
+                candidates_by_group[group] = []
+            match, resolve_trace = _resolve_mid_band_slot(p, slot)
+            last5 = _to_last5(slot.last5)
+            candidates_by_group[group].append(
+                {
+                    "side": p.side_letter,
+                    "slot": slot,
+                    "slot_id": slot.slot_id,
+                    "group": group,
+                    "row_index": int(slot.row_index),
+                    "slot_in_row": int(slot.slot_in_row),
+                    "slot_order": int(slot.slot_order),
+                    "last5": last5,
+                    "upc12": match.upc12 if match else None,
+                    "display_name": match.display_name if match else (slot.parsed_name or slot.raw_label_text or "").strip(),
+                    "resolve_fallback_path": resolve_trace.get("fallback_path"),
+                }
+            )
+
+        detected_counts = {g: len(candidates_by_group.get(g, [])) for g in candidates_by_group.keys()}
+        overage: Dict[str, int] = {}
+        shortage: Dict[str, int] = {}
+        candidate_upcs_by_group: Dict[str, List[Optional[str]]] = {}
+        candidate_records = [candidate for rows in candidates_by_group.values() for candidate in rows]
+        selection = select_mid_band_cards_for_display(p.side_letter, candidate_records, profile)
+
+        for group, candidates in candidates_by_group.items():
+            expected = expected_counts.get(group)
+            candidate_upcs_by_group[group] = [c.get("upc12") for c in candidates]
+            if expected is None:
+                overage[group] = 0
+                shortage[group] = 0
+                continue
+
+            overage[group] = max(0, len(candidates) - expected)
+            shortage[group] = max(0, expected - len(candidates))
+
+        def _debug_rows_by_group(rows_by_group: Dict[str, List[dict]]) -> Dict[str, List[dict]]:
+            return {
+                group: [{k: v for k, v in row.items() if k != "slot"} for row in rows]
+                for group, rows in rows_by_group.items()
+            }
+
+        return {
+            "side": p.side_letter,
+            "profile_name": profile.get("profile_name"),
+            "detected_candidate_count": sum(detected_counts.values()),
+            "detected_group_counts": detected_counts,
+            "expected_group_counts": expected_counts,
+            "expected_rows_per_group": profile.get("expected_rows_per_group", {}),
+            "render_layout_hints": profile.get("render_layout_hints", {}),
+            "overage_per_group": overage,
+            "shortage_per_group": shortage,
+            "candidate_upcs_by_group": candidate_upcs_by_group,
+            "retained_if_expected_max_enforced": _debug_rows_by_group(selection.selected_by_group),
+            "omitted_if_expected_max_enforced": _debug_rows_by_group(selection.omitted_by_group),
+            "display_selection_debug": selection.debug_summary,
+        }
+
     def _draw_canonical_mid_band_section(
         p: FullPalletPage,
         section: FullPalletMidBandSection,
@@ -1325,12 +1567,41 @@ def render_full_pallet_pdf(
         position_fallback_debug_rows: Optional[List[dict]] = None,
         layout_debug: Optional[Dict[str, object]] = None,
         layout_assignment_rows: Optional[List[dict]] = None,
+        selection_debug: Optional[Dict[str, object]] = None,
     ) -> Tuple[int, int, bool, float, int, int]:
         nonlocal rightmost_used, matched_cells, unmatched_cells
 
         y_cursor = sec_top
         if len(section.rows) == 0:
             return 0, 0, False, sec_top, 0, 0
+        profile = get_mid_band_physical_profile(p.side_letter)
+        candidate_slots = sorted(
+            [s for r in section.rows for s in r.slots],
+            key=lambda s: (int(s.row_index), int(s.slot_in_row), int(s.slot_order)),
+        )
+        selection = select_mid_band_cards_for_display(
+            p.side_letter,
+            [
+                {
+                    "slot": slot,
+                    "slot_id": slot.slot_id,
+                    "group": slot.block_name,
+                    "row_index": int(slot.row_index),
+                    "slot_in_row": int(slot.slot_in_row),
+                    "slot_order": int(slot.slot_order),
+                    "last5": _to_last5(slot.last5),
+                    "upc12": None,
+                }
+                for slot in candidate_slots
+            ],
+            profile,
+        )
+        selected_slot_ids = {
+            str(candidate.get("slot_id") or getattr(candidate.get("slot"), "slot_id", ""))
+            for candidate in selection.selected_cards
+        }
+        if selection_debug is not None:
+            selection_debug.update(selection.debug_summary)
 
         card_w = float(plan["card_w"])
         card_h = float(plan["card_h"])
@@ -1358,7 +1629,8 @@ def render_full_pallet_pdf(
                 {
                     "side": p.side_letter,
                     "mode": "canonical_mid_band",
-                    "card_count": len([s for r in section.rows for s in r.slots]),
+                    "candidate_card_count": len(candidate_slots),
+                    "card_count": len(selection.selected_cards),
                     "columns_used": 8,
                     "rows_used": 3,
                     "card_w": card_w,
@@ -1377,6 +1649,8 @@ def render_full_pallet_pdf(
             ordered_slots: List[FullPalletMidBandSlot] = sorted(row.slots, key=lambda s: s.slot_in_row)
 
             for slot in ordered_slots:
+                if slot.slot_id not in selected_slot_ids:
+                    continue
                 x = row_xs[slot.slot_in_row]
 
                 match, resolve_trace = _resolve_mid_band_slot(p, slot)
@@ -1494,13 +1768,39 @@ def render_full_pallet_pdf(
         detection_debug: Optional[Dict[str, object]] = None,
         layout_debug: Optional[Dict[str, object]] = None,
         layout_assignment_rows: Optional[List[dict]] = None,
+        selection_debug: Optional[Dict[str, object]] = None,
     ) -> Tuple[int, int, bool, float, int, int]:
         nonlocal rightmost_used, matched_cells, unmatched_cells
 
-        all_slots: List[FullPalletMidBandSlot] = sorted(
+        all_candidate_slots: List[FullPalletMidBandSlot] = sorted(
             [s for r in section.rows for s in r.slots],
             key=lambda s: (int(s.row_index), int(s.slot_in_row), int(s.slot_order)),
         )
+        if not all_candidate_slots:
+            return 0, 0, False, sec_top, 0, 0
+        profile = get_mid_band_physical_profile(p.side_letter)
+        selection = select_mid_band_cards_for_display(
+            p.side_letter,
+            [
+                {
+                    "slot": slot,
+                    "slot_id": slot.slot_id,
+                    "group": slot.block_name,
+                    "row_index": int(slot.row_index),
+                    "slot_in_row": int(slot.slot_in_row),
+                    "slot_order": int(slot.slot_order),
+                    "last5": _to_last5(slot.last5),
+                    "upc12": None,
+                }
+                for slot in all_candidate_slots
+            ],
+            profile,
+        )
+        all_slots: List[FullPalletMidBandSlot] = [
+            candidate["slot"] for candidate in selection.selected_cards if candidate.get("slot") is not None
+        ]
+        if selection_debug is not None:
+            selection_debug.update(selection.debug_summary)
         if not all_slots:
             return 0, 0, False, sec_top, 0, 0
 
@@ -1508,7 +1808,7 @@ def render_full_pallet_pdf(
         rows = int(plan.get("rows", 0))
         if cols <= 0:
             cols = min(8, max(1, len(all_slots)))
-            rows = int(math.ceil(len(all_slots) / cols))
+        rows = int(math.ceil(len(all_slots) / cols))
 
         card_w = float(plan["card_w"])
         card_h = float(plan["card_h"])
@@ -1547,7 +1847,7 @@ def render_full_pallet_pdf(
             page_height=page_height,
         )
         source_cells = _detect_mid_band_image_cells(img_page, region_bbox) if img_page is not None else []
-        slot_to_cell = _map_mid_band_slots_to_image_cells(all_slots, source_cells)
+        slot_to_cell = _map_mid_band_slots_to_image_cells(all_candidate_slots, source_cells)
         strict_side_guardrails = str(p.side_letter or "").upper() in {"B", "D"}
         if detection_debug is not None:
             detection_debug["side"] = p.side_letter
@@ -1562,6 +1862,7 @@ def render_full_pallet_pdf(
                     "side": p.side_letter,
                     "mode": "token_first_mid_band",
                     "layout_mode": str(plan.get("layout_mode", "token_first")),
+                    "candidate_card_count": len(all_candidate_slots),
                     "card_count": len(all_slots),
                     "columns_used": cols,
                     "rows_used": rows,
@@ -1813,6 +2114,7 @@ def render_full_pallet_pdf(
 
         if detection_debug is not None:
             detection_debug["resolved_mid_band_slot_count"] = len(all_slots)
+            detection_debug["candidate_mid_band_slot_count"] = len(all_candidate_slots)
             detection_debug["mapped_clean_count"] = mapped_clean
             detection_debug["mapped_fallback_count"] = mapped_fallback
             detection_debug["mapped_empty_count"] = mapped_empty
@@ -2500,6 +2802,7 @@ def render_full_pallet_pdf(
             token_first_detection_debug: Dict[str, object] = {}
             mid_band_layout_debug: Dict[str, object] = {}
             mid_band_layout_assignments: List[dict] = []
+            mid_band_selection_debug: Dict[str, object] = {}
             missing_main_images: List[str] = []
             missing_bonus_images: List[str] = []
             main_render_source = (
@@ -2648,6 +2951,7 @@ def render_full_pallet_pdf(
                     position_fallback_debug_rows=position_fallback_mid_slot_debug,
                     layout_debug=mid_band_layout_debug,
                     layout_assignment_rows=mid_band_layout_assignments,
+                    selection_debug=mid_band_selection_debug,
                 )
             elif token_first_mid_band_ok and mid_band is not None:
                 (
@@ -2672,6 +2976,7 @@ def render_full_pallet_pdf(
                     detection_debug=token_first_detection_debug,
                     layout_debug=mid_band_layout_debug,
                     layout_assignment_rows=mid_band_layout_assignments,
+                    selection_debug=mid_band_selection_debug,
                 )
             else:
                 (
@@ -2792,6 +3097,24 @@ def render_full_pallet_pdf(
 
             bonus_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(below_bonus_rows)})
             bonus_slots_total = sum(1 for c in pdata.cells if c.row in set(below_bonus_rows))
+            mid_band_profile_comparison = (
+                _build_mid_band_profile_comparison(pdata, main_slots)
+                if main_slots
+                else {
+                    "side": pdata.side_letter,
+                    "profile_name": get_mid_band_physical_profile(pdata.side_letter).get("profile_name"),
+                    "detected_candidate_count": 0,
+                    "detected_group_counts": {},
+                    "expected_group_counts": get_mid_band_physical_profile(pdata.side_letter).get(
+                        "expected_max_per_group", {}
+                    ),
+                    "overage_per_group": {},
+                    "shortage_per_group": {},
+                    "candidate_upcs_by_group": {},
+                    "retained_if_expected_max_enforced": {},
+                    "omitted_if_expected_max_enforced": {},
+                }
+            )
 
             if debug:
                 st.write(
@@ -2828,6 +3151,8 @@ def render_full_pallet_pdf(
                             "token_first_rows": int(main_plan.get("rows", 0)) if token_first_mid_band_ok else 0,
                             "token_first_codes": main_last5_codes if token_first_mid_band_ok else [],
                             "token_first_unresolved_slots": [r.get("slot_id") for r in unresolved_mid_slot_debug] if token_first_mid_band_ok else [],
+                            "physical_profile_comparison": mid_band_profile_comparison,
+                            "display_selection_debug": mid_band_selection_debug,
                             "layout_debug": mid_band_layout_debug,
                         },
                         "grid_detected": {
@@ -2893,6 +3218,55 @@ def render_full_pallet_pdf(
                         },
                     }
                 )
+                st.write(
+                    {
+                        "FULL_PALLET_mid_band_physical_profile_comparison": {
+                            "side": mid_band_profile_comparison.get("side"),
+                            "profile_name": mid_band_profile_comparison.get("profile_name"),
+                            "detected_candidate_count": mid_band_profile_comparison.get("detected_candidate_count"),
+                            "detected_group_counts": mid_band_profile_comparison.get("detected_group_counts"),
+                            "expected_group_counts": mid_band_profile_comparison.get("expected_group_counts"),
+                            "overage_per_group": mid_band_profile_comparison.get("overage_per_group"),
+                            "shortage_per_group": mid_band_profile_comparison.get("shortage_per_group"),
+                            "candidate_upcs_by_group": mid_band_profile_comparison.get("candidate_upcs_by_group"),
+                            "selected_upcs_by_group": dict(
+                                mid_band_profile_comparison.get("display_selection_debug", {})
+                            ).get("selected_upcs_by_group"),
+                            "selected_slot_ids_by_group": dict(
+                                mid_band_profile_comparison.get("display_selection_debug", {})
+                            ).get("selected_slot_ids_by_group"),
+                            "omitted_upcs_by_group": dict(
+                                mid_band_profile_comparison.get("display_selection_debug", {})
+                            ).get("omitted_upcs_by_group"),
+                            "omitted_slot_ids_by_group": dict(
+                                mid_band_profile_comparison.get("display_selection_debug", {})
+                            ).get("omitted_slot_ids_by_group"),
+                            "omit_reasons_by_slot": dict(
+                                mid_band_profile_comparison.get("display_selection_debug", {})
+                            ).get("omit_reasons_by_slot"),
+                            "render_layout_hints": mid_band_profile_comparison.get("render_layout_hints"),
+                        }
+                    }
+                )
+                retained_profile_rows = [
+                    {k: v for k, v in {**row, "profile_action": "retain"}.items() if k != "slot"}
+                    for group_rows in dict(
+                        mid_band_profile_comparison.get("retained_if_expected_max_enforced", {})
+                    ).values()
+                    for row in group_rows
+                ]
+                omitted_profile_rows = [
+                    {k: v for k, v in {**row, "profile_action": "omit"}.items() if k != "slot"}
+                    for group_rows in dict(
+                        mid_band_profile_comparison.get("omitted_if_expected_max_enforced", {})
+                    ).values()
+                    for row in group_rows
+                ]
+                if retained_profile_rows or omitted_profile_rows:
+                    st.dataframe(
+                        pd.DataFrame(retained_profile_rows + omitted_profile_rows),
+                        use_container_width=True,
+                    )
                 if mid_band_layout_debug:
                     st.write(
                         {
