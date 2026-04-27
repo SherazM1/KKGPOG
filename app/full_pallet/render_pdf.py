@@ -882,55 +882,141 @@ def render_full_pallet_pdf(
         tw = pdfmetrics.stringWidth(cpp_str, BODY_BOLD_FONT, cpp_fs)
         c.drawString(ix + (iw - tw) / 2, iy + (cpp_h - cpp_fs) / 2, cpp_str)
 
-    def _trim_mid_band_image_margins(img: Optional[Image.Image]) -> Tuple[Optional[Image.Image], Optional[List[int]], List[str]]:
+    def _prepare_mid_band_image_draw(
+        img: Optional[Image.Image],
+        source_crop_bbox: Optional[Tuple[float, float, float, float]],
+        card_bbox: Tuple[float, float, float, float],
+        image_area_bbox: Tuple[float, float, float, float],
+        *,
+        side: str,
+        final_index: int,
+        row: int,
+        col: int,
+        upc12: str,
+    ) -> Dict[str, object]:
+        card_x0, card_y0, card_x1, card_y1 = card_bbox
+        area_x0, area_y0, area_x1, area_y1 = image_area_bbox
+        area_w = max(1.0, area_x1 - area_x0)
+        area_h = max(1.0, area_y1 - area_y0)
+        notes: List[str] = []
+        proposed_trim_bbox: Optional[List[int]] = None
+        original_size: Optional[List[int]] = None
+        thin_crop_detected = False
+        excessive_whitespace_detected = False
+        image_draw_bbox: Optional[List[float]] = None
+
         if img is None:
-            return None, None, ["missing_image"]
+            notes.append("missing_image")
+            return {
+                "side": side,
+                "final_index": final_index,
+                "row": row,
+                "col": col,
+                "upc12": upc12,
+                "source_crop_bbox": list(source_crop_bbox) if source_crop_bbox else None,
+                "original_crop_size": original_size,
+                "proposed_trimmed_crop_bbox": proposed_trim_bbox,
+                "trim_applied": False,
+                "image_fit_mode": "contain",
+                "card_bbox": [round(card_x0, 2), round(card_y0, 2), round(card_x1, 2), round(card_y1, 2)],
+                "image_area_bbox": [round(area_x0, 2), round(area_y0, 2), round(area_x1, 2), round(area_y1, 2)],
+                "proposed_image_draw_bbox": image_draw_bbox,
+                "thin_crop_detected": thin_crop_detected,
+                "excessive_whitespace_detected": excessive_whitespace_detected,
+                "overflow_or_bleed_detected": False,
+                "normalization_notes": notes,
+            }
+
         try:
             src = img.convert("RGB")
             arr = np.asarray(src)
             h_px, w_px = arr.shape[:2]
+            original_size = [int(w_px), int(h_px)]
+            aspect = w_px / max(1, h_px)
+            thin_crop_detected = bool(aspect < 0.42 or aspect > 2.85)
+            if thin_crop_detected:
+                notes.append("thin_or_strip_like_crop_detected")
+
             if w_px < 18 or h_px < 18:
-                return src, None, ["trim_skipped_tiny_image"]
+                notes.append("trim_plan_skipped_tiny_image")
+            else:
+                edge = max(2, min(10, int(min(w_px, h_px) * 0.04)))
+                samples = np.concatenate(
+                    [
+                        arr[:edge, :, :].reshape(-1, 3),
+                        arr[-edge:, :, :].reshape(-1, 3),
+                        arr[:, :edge, :].reshape(-1, 3),
+                        arr[:, -edge:, :].reshape(-1, 3),
+                    ],
+                    axis=0,
+                )
+                bg = np.median(samples, axis=0)
+                diff = np.max(np.abs(arr.astype(np.int16) - bg.astype(np.int16)), axis=2)
+                not_bg = diff > 18
+                not_near_white = np.min(arr, axis=2) < 246
+                content = not_bg & not_near_white
+                ys, xs = np.where(content)
+                if len(xs) == 0 or len(ys) == 0:
+                    notes.append("trim_plan_skipped_no_content_mask")
+                else:
+                    left = int(xs.min())
+                    right = int(xs.max()) + 1
+                    top = int(ys.min())
+                    bottom = int(ys.max()) + 1
+                    max_trim_x = int(w_px * 0.18)
+                    max_trim_y = int(h_px * 0.18)
+                    left = min(left, max_trim_x)
+                    top = min(top, max_trim_y)
+                    right = max(right, w_px - max_trim_x)
+                    bottom = max(bottom, h_px - max_trim_y)
+                    trim_x = left + max(0, w_px - right)
+                    trim_y = top + max(0, h_px - bottom)
+                    excessive_whitespace_detected = bool(trim_x > w_px * 0.16 or trim_y > h_px * 0.16)
+                    if excessive_whitespace_detected:
+                        notes.append("excessive_outer_whitespace_detected")
+                    if right <= left or bottom <= top:
+                        notes.append("trim_plan_skipped_invalid_bbox")
+                    elif (right - left) < w_px * 0.45 or (bottom - top) < h_px * 0.45:
+                        notes.append("trim_plan_skipped_aggressive_mask")
+                    elif (left, top, right, bottom) != (0, 0, w_px, h_px):
+                        proposed_trim_bbox = [left, top, right, bottom]
+                        notes.append("conservative_trim_candidate_detected")
 
-            edge = max(2, min(10, int(min(w_px, h_px) * 0.04)))
-            samples = np.concatenate(
-                [
-                    arr[:edge, :, :].reshape(-1, 3),
-                    arr[-edge:, :, :].reshape(-1, 3),
-                    arr[:, :edge, :].reshape(-1, 3),
-                    arr[:, -edge:, :].reshape(-1, 3),
-                ],
-                axis=0,
+            fit = min(area_w / max(1, w_px), area_h / max(1, h_px))
+            dw = max(1.0, w_px * fit)
+            dh = max(1.0, h_px * fit)
+            dx = area_x0 + (area_w - dw) / 2.0
+            dy = area_y0 + (area_h - dh) / 2.0
+            image_draw_bbox = [round(dx, 2), round(dy, 2), round(dx + dw, 2), round(dy + dh, 2)]
+            overflow = (
+                image_draw_bbox[0] < card_x0 - 0.001
+                or image_draw_bbox[1] < card_y0 - 0.001
+                or image_draw_bbox[2] > card_x1 + 0.001
+                or image_draw_bbox[3] > card_y1 + 0.001
             )
-            bg = np.median(samples, axis=0)
-            diff = np.max(np.abs(arr.astype(np.int16) - bg.astype(np.int16)), axis=2)
-            not_bg = diff > 18
-            not_near_white = np.min(arr, axis=2) < 246
-            content = not_bg & not_near_white
-            ys, xs = np.where(content)
-            if len(xs) == 0 or len(ys) == 0:
-                return src, None, ["trim_skipped_no_content_mask"]
-
-            left = int(xs.min())
-            right = int(xs.max()) + 1
-            top = int(ys.min())
-            bottom = int(ys.max()) + 1
-            max_trim_x = int(w_px * 0.18)
-            max_trim_y = int(h_px * 0.18)
-            left = min(left, max_trim_x)
-            top = min(top, max_trim_y)
-            right = max(right, w_px - max_trim_x)
-            bottom = max(bottom, h_px - max_trim_y)
-            if right <= left or bottom <= top:
-                return src, None, ["trim_skipped_invalid_bbox"]
-            if (left, top, right, bottom) == (0, 0, w_px, h_px):
-                return src, None, []
-            if (right - left) < w_px * 0.45 or (bottom - top) < h_px * 0.45:
-                return src, None, ["trim_skipped_aggressive_mask"]
-
-            return src.crop((left, top, right, bottom)), [left, top, right, bottom], ["outer_margin_trim"]
         except Exception:
-            return img, None, ["trim_error"]
+            notes.append("normalization_plan_error")
+            overflow = False
+
+        return {
+            "side": side,
+            "final_index": final_index,
+            "row": row,
+            "col": col,
+            "upc12": upc12,
+            "source_crop_bbox": list(source_crop_bbox) if source_crop_bbox else None,
+            "original_crop_size": original_size,
+            "proposed_trimmed_crop_bbox": proposed_trim_bbox,
+            "trim_applied": False,
+            "image_fit_mode": "contain",
+            "card_bbox": [round(card_x0, 2), round(card_y0, 2), round(card_x1, 2), round(card_y1, 2)],
+            "image_area_bbox": [round(area_x0, 2), round(area_y0, 2), round(area_x1, 2), round(area_y1, 2)],
+            "proposed_image_draw_bbox": image_draw_bbox,
+            "thin_crop_detected": thin_crop_detected,
+            "excessive_whitespace_detected": excessive_whitespace_detected,
+            "overflow_or_bleed_detected": bool(overflow),
+            "normalization_notes": notes,
+        }
 
     def _draw_mid_band_card(
         c: canvas.Canvas,
@@ -960,30 +1046,32 @@ def render_full_pallet_pdf(
         img_x = ix
         img_y = iy + text_h + text_gap
         image_draw_bbox: Optional[List[float]] = None
-        flags: List[str] = []
 
-        cleaned_img, trim_bbox, trim_flags = _trim_mid_band_image_margins(img)
-        flags.extend(trim_flags)
-        if cleaned_img is not None and iw > 6 and img_h > 6:
-            sw, sh = cleaned_img.size
-            aspect = sw / max(1, sh)
-            if aspect < 0.42 or aspect > 2.75:
-                flags.append("unusual_aspect_contain_fit")
-            fit = min(iw / max(1, sw), img_h / max(1, sh))
-            dw = max(1.0, sw * fit)
-            dh = max(1.0, sh * fit)
-            dx = img_x + (iw - dw) / 2.0
-            dy = img_y + (img_h - dh) / 2.0
+        card_bbox = (x, y, x + w, y + h)
+        image_area_bbox = (img_x, img_y, img_x + iw, img_y + img_h)
+        draw_plan = _prepare_mid_band_image_draw(
+            img,
+            source_crop_bbox,
+            card_bbox,
+            image_area_bbox,
+            side=side,
+            final_index=final_index,
+            row=row,
+            col=col,
+            upc12=upc12,
+        )
+        image_draw_bbox = draw_plan.get("proposed_image_draw_bbox")
+        if img is not None and image_draw_bbox is not None:
+            dx0, dy0, dx1, dy1 = [float(v) for v in image_draw_bbox]
             c.drawImage(
-                ImageReader(cleaned_img),
-                dx,
-                dy,
-                dw,
-                dh,
+                ImageReader(img),
+                dx0,
+                dy0,
+                max(1.0, dx1 - dx0),
+                max(1.0, dy1 - dy0),
                 preserveAspectRatio=True,
                 mask="auto",
             )
-            image_draw_bbox = [round(dx, 2), round(dy, 2), round(dx + dw, 2), round(dy + dh, 2)]
 
         cpp_str = f"CPP: {cpp}" if cpp is not None else "CPP:"
         upc = (upc12 or "").strip()
@@ -1011,31 +1099,9 @@ def render_full_pallet_pdf(
         c.drawString(ix + (iw - tw) / 2, iy + (cpp_h - cpp_fs) / 2, cpp_str)
 
         text_bbox = [round(ix, 2), round(iy, 2), round(ix + iw, 2), round(iy + text_h, 2)]
-        overflow = False
-        if image_draw_bbox is not None:
-            overflow = (
-                image_draw_bbox[0] < x - 0.001
-                or image_draw_bbox[1] < y - 0.001
-                or image_draw_bbox[2] > x + w + 0.001
-                or image_draw_bbox[3] > y + h + 0.001
-                or image_draw_bbox[1] < text_bbox[3] - 0.001
-            )
-
-        return {
-            "side": side,
-            "final_index": final_index,
-            "row": row,
-            "col": col,
-            "upc12": upc12,
-            "source_crop_bbox": list(source_crop_bbox) if source_crop_bbox else None,
-            "trimmed_crop_bbox": trim_bbox,
-            "image_fit_mode": "contain",
-            "card_bbox": [round(x, 2), round(y, 2), round(x + w, 2), round(y + h, 2)],
-            "image_draw_bbox": image_draw_bbox,
-            "text_bbox": text_bbox,
-            "overflow_or_bleed_detected": bool(overflow),
-            "normalization_flags": flags,
-        }
+        draw_plan["text_bbox"] = text_bbox
+        draw_plan["image_draw_bbox"] = draw_plan.get("proposed_image_draw_bbox")
+        return draw_plan
 
     def _section_shape_policy(section_kind: str) -> Dict[str, float]:
         if section_kind == "main":
@@ -3493,18 +3559,34 @@ def render_full_pallet_pdf(
             bonus_slots_total = sum(1 for c in pdata.cells if c.row in set(below_bonus_rows))
             mid_band_normalization_summary = {
                 "side": pdata.side_letter,
-                "rendered_count": len(mid_band_normalization_debug_rows),
-                "trim_cleanup_count": sum(
-                    1 for r in mid_band_normalization_debug_rows if r.get("trimmed_crop_bbox") is not None
+                "rendered_mid_band_count": len(mid_band_normalization_debug_rows),
+                "thin_crop_detected_count": sum(
+                    1 for r in mid_band_normalization_debug_rows if bool(r.get("thin_crop_detected"))
                 ),
-                "trim_cleanup_indices": [
-                    r.get("final_index")
-                    for r in mid_band_normalization_debug_rows
-                    if r.get("trimmed_crop_bbox") is not None
-                ],
-                "overflow_or_bleed_count": sum(
+                "excessive_whitespace_detected_count": sum(
+                    1 for r in mid_band_normalization_debug_rows if bool(r.get("excessive_whitespace_detected"))
+                ),
+                "proposed_trim_count": sum(
+                    1 for r in mid_band_normalization_debug_rows if r.get("proposed_trimmed_crop_bbox") is not None
+                ),
+                "overflow_or_bleed_warning_count": sum(
                     1 for r in mid_band_normalization_debug_rows if bool(r.get("overflow_or_bleed_detected"))
                 ),
+                "thin_crop_detected_indices": [
+                    r.get("final_index")
+                    for r in mid_band_normalization_debug_rows
+                    if bool(r.get("thin_crop_detected"))
+                ],
+                "excessive_whitespace_detected_indices": [
+                    r.get("final_index")
+                    for r in mid_band_normalization_debug_rows
+                    if bool(r.get("excessive_whitespace_detected"))
+                ],
+                "proposed_trim_indices": [
+                    r.get("final_index")
+                    for r in mid_band_normalization_debug_rows
+                    if r.get("proposed_trimmed_crop_bbox") is not None
+                ],
                 "overflow_or_bleed_indices": [
                     r.get("final_index")
                     for r in mid_band_normalization_debug_rows
