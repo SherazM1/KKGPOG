@@ -125,62 +125,168 @@ def select_mid_band_cards_for_display(
     candidates: List[dict],
     profile: Dict[str, object],
 ) -> SelectionResult:
-    groups = [str(g) for g in profile.get("physical_groups", ["left", "center", "right"])]
-    group_rank = {g: i for i, g in enumerate(groups)}
-    expected_counts = {
-        str(k): int(v)
-        for k, v in dict(profile.get("expected_max_per_group", {})).items()
-        if v is not None
-    }
+    layout_hints = dict(profile.get("render_layout_hints", {}) or {})
+    row_grouping = list(layout_hints.get("row_grouping") or [[2, 4, 2], [2, 4, 2], [2, 4, 2]])
+    groups = [str(g) for g in layout_hints.get("group_order") or profile.get("physical_groups", ["left", "center", "right"])]
+    row_capacities = [int(sum(row)) for row in row_grouping]
+    expected_selected_count = int(sum(row_capacities))
+    target_row_count = len(row_capacities)
 
-    def _group_for(candidate: dict) -> str:
+    def _slot_id(candidate: dict) -> str:
         slot = candidate.get("slot")
-        return str(candidate.get("group") or getattr(slot, "block_name", "") or "unknown")
+        return str(candidate.get("slot_id") or getattr(slot, "slot_id", ""))
 
-    def _visual_key(candidate: dict) -> Tuple[int, int, int, int]:
+    def _slot_value(candidate: dict, key: str, default: int = 0) -> int:
         slot = candidate.get("slot")
-        group = _group_for(candidate)
-        return (
-            group_rank.get(group, 10**6),
-            int(candidate.get("row_index", getattr(slot, "row_index", 0))),
-            int(candidate.get("slot_in_row", getattr(slot, "slot_in_row", 0))),
-            int(candidate.get("slot_order", getattr(slot, "slot_order", 0))),
+        return int(candidate.get(key, getattr(slot, key, default)))
+
+    def _center(candidate: dict) -> Tuple[float, float]:
+        slot = candidate.get("slot")
+        bbox = getattr(slot, "bbox", None)
+        if bbox:
+            x0, y0, x1, y1 = bbox
+            return (float(x0 + x1) / 2.0, float(y0 + y1) / 2.0)
+        return (float(_slot_value(candidate, "slot_in_row")), float(_slot_value(candidate, "row_index")))
+
+    def _group_for_col(row_pattern: List[int], col_index: int) -> str:
+        running = 0
+        for idx, count in enumerate(row_pattern):
+            running += int(count)
+            if col_index < running:
+                return groups[idx] if idx < len(groups) else f"group_{idx + 1}"
+        return groups[-1] if groups else "unknown"
+
+    def _visual_key(candidate: dict) -> Tuple[float, float, int]:
+        x, y = _center(candidate)
+        return (y, x, _slot_value(candidate, "slot_order"))
+
+    ordered_candidates = sorted(candidates, key=_visual_key)
+    natural_rows: List[List[dict]] = []
+    if ordered_candidates:
+        y_values = [_center(c)[1] for c in ordered_candidates]
+        y_diffs = [
+            y_values[i + 1] - y_values[i]
+            for i in range(len(y_values) - 1)
+            if (y_values[i + 1] - y_values[i]) > 0.001
+        ]
+        y_tol = max(8.0, (float(np.median(y_diffs)) * 0.55) if y_diffs else 8.0)
+        for candidate in ordered_candidates:
+            _x, y = _center(candidate)
+            if not natural_rows:
+                natural_rows.append([candidate])
+                continue
+            last_row = natural_rows[-1]
+            last_y = float(np.mean([_center(c)[1] for c in last_row]))
+            if abs(y - last_y) <= y_tol:
+                last_row.append(candidate)
+            else:
+                natural_rows.append([candidate])
+
+    natural_rows = [sorted(row, key=lambda c: (_center(c)[0], _slot_value(c, "slot_order"))) for row in natural_rows]
+    if len(natural_rows) > target_row_count:
+        merged_rows: List[List[dict]] = [[] for _ in range(target_row_count)]
+        for idx, row in enumerate(natural_rows):
+            target_idx = min(target_row_count - 1, int(round(idx * (target_row_count - 1) / max(1, len(natural_rows) - 1))))
+            merged_rows[target_idx].extend(row)
+        natural_rows = [
+            sorted(row, key=lambda c: (_center(c)[0], _slot_value(c, "slot_order")))
+            for row in merged_rows
+        ]
+    while len(natural_rows) < target_row_count:
+        natural_rows.append([])
+
+    row_clusters_debug = []
+    for row_idx, row in enumerate(natural_rows[:target_row_count]):
+        row_clusters_debug.append(
+            {
+                "detected_row": row_idx,
+                "candidate_count": len(row),
+                "slot_ids": [_slot_id(c) for c in row],
+                "source_row_indices": sorted({_slot_value(c, "row_index") for c in row}),
+            }
         )
 
-    candidates_by_group: Dict[str, List[dict]] = {g: [] for g in groups}
-    for candidate in sorted(candidates, key=_visual_key):
-        group = _group_for(candidate)
-        if group not in candidates_by_group:
-            candidates_by_group[group] = []
-        candidates_by_group[group].append(candidate)
-
-    selected_by_group: Dict[str, List[dict]] = {}
-    omitted_by_group: Dict[str, List[dict]] = {}
+    selected_by_group: Dict[str, List[dict]] = {g: [] for g in groups}
+    omitted_by_group: Dict[str, List[dict]] = {g: [] for g in groups}
     selected_cards: List[dict] = []
     omitted_cards: List[dict] = []
+    overflow_pool: List[dict] = []
+    selected_rows: List[List[dict]] = [[] for _ in range(target_row_count)]
 
-    for group, group_candidates in candidates_by_group.items():
-        expected = expected_counts.get(group)
-        if expected is None:
-            selected = list(group_candidates)
-            omitted: List[dict] = []
-        else:
-            selected = group_candidates[:expected]
-            omitted = [
-                {**candidate, "omit_reason": "group_overflow"}
-                for candidate in group_candidates[expected:]
-            ]
+    def _assign_selected(candidate: dict, display_row: int, display_col: int) -> dict:
+        row_pattern = row_grouping[display_row] if display_row < len(row_grouping) else row_grouping[-1]
+        display_group = _group_for_col([int(v) for v in row_pattern], display_col)
+        return (
+            {
+                **candidate,
+                "selected_row": display_row,
+                "selected_col": display_col,
+                "selected_group": display_group,
+                "group": display_group,
+            }
+        )
 
-        selected_by_group[group] = selected
-        omitted_by_group[group] = omitted
-        selected_cards.extend(selected)
-        omitted_cards.extend(omitted)
+    for row_idx, row in enumerate(natural_rows[:target_row_count]):
+        row_capacity = row_capacities[row_idx]
+        for source_col, candidate in enumerate(row):
+            if len(selected_rows[row_idx]) < row_capacity:
+                selected = _assign_selected(candidate, row_idx, len(selected_rows[row_idx]))
+                selected_rows[row_idx].append(selected)
+            else:
+                row_pattern = row_grouping[row_idx] if row_idx < len(row_grouping) else row_grouping[-1]
+                overflow_pool.append(
+                    {
+                        **candidate,
+                        "source_detected_row": row_idx,
+                        "source_detected_col": source_col,
+                        "source_group": _group_for_col([int(v) for v in row_pattern], min(source_col, row_capacity - 1)),
+                    }
+                )
+
+    remaining_overflow: List[dict] = []
+    for candidate in overflow_pool:
+        target_row = next((idx for idx, row in enumerate(selected_rows) if len(row) < row_capacities[idx]), None)
+        if target_row is None:
+            remaining_overflow.append(candidate)
+            continue
+        selected = _assign_selected(candidate, target_row, len(selected_rows[target_row]))
+        selected["filled_shortage_from_overflow"] = True
+        selected_rows[target_row].append(selected)
+
+    for row_idx, row in enumerate(selected_rows):
+        for selected in row:
+            group = str(selected.get("selected_group", selected.get("group", "unknown")))
+            selected_by_group.setdefault(group, []).append(selected)
+            selected_cards.append(selected)
+
+    for candidate in remaining_overflow:
+        group = str(candidate.get("source_group") or candidate.get("group") or "unknown")
+        omitted = {**candidate, "group": group, "omit_reason": "group_overflow"}
+        omitted_by_group.setdefault(group, []).append(omitted)
+        omitted_cards.append(omitted)
 
     def _ids(rows: List[dict]) -> List[str]:
-        return [str(r.get("slot_id") or getattr(r.get("slot"), "slot_id", "")) for r in rows]
+        return [_slot_id(r) for r in rows]
 
     def _upcs(rows: List[dict]) -> List[Optional[str]]:
         return [r.get("upc12") for r in rows]
+
+    selected_row_col_assignment = [
+        {
+            "slot_id": _slot_id(row),
+            "selected_row": row.get("selected_row"),
+            "selected_col": row.get("selected_col"),
+            "selected_group": row.get("selected_group"),
+            "source_row_index": _slot_value(row, "row_index"),
+            "source_slot_in_row": _slot_value(row, "slot_in_row"),
+        }
+        for row in selected_cards
+    ]
+    selected_group_assignment_per_row: Dict[int, Dict[str, List[str]]] = {}
+    for row in selected_cards:
+        display_row = int(row.get("selected_row", 0))
+        display_group = str(row.get("selected_group", "unknown"))
+        selected_group_assignment_per_row.setdefault(display_row, {}).setdefault(display_group, []).append(_slot_id(row))
 
     debug_summary = {
         "side": side_letter,
@@ -188,6 +294,10 @@ def select_mid_band_cards_for_display(
         "candidate_count": len(candidates),
         "selected_count": len(selected_cards),
         "omitted_count": len(omitted_cards),
+        "expected_selected_count": expected_selected_count,
+        "row_clusters_detected": row_clusters_debug,
+        "selected_row_col_assignment": selected_row_col_assignment,
+        "selected_group_assignment_per_row": selected_group_assignment_per_row,
         "selected_slot_ids_by_group": {g: _ids(rows) for g, rows in selected_by_group.items()},
         "selected_upcs_by_group": {g: _upcs(rows) for g, rows in selected_by_group.items()},
         "omitted_slot_ids_by_group": {g: _ids(rows) for g, rows in omitted_by_group.items()},
@@ -196,6 +306,8 @@ def select_mid_band_cards_for_display(
             str(row.get("slot_id") or getattr(row.get("slot"), "slot_id", "")): row.get("omit_reason")
             for row in omitted_cards
         },
+        "shortage_after_row_aware_selection": max(0, expected_selected_count - len(selected_cards)),
+        "overage_after_row_aware_selection": len(omitted_cards),
     }
 
     return SelectionResult(
@@ -1515,14 +1627,19 @@ def render_full_pallet_pdf(
                 }
             )
 
-        detected_counts = {g: len(candidates_by_group.get(g, [])) for g in candidates_by_group.keys()}
         overage: Dict[str, int] = {}
         shortage: Dict[str, int] = {}
         candidate_upcs_by_group: Dict[str, List[Optional[str]]] = {}
         candidate_records = [candidate for rows in candidates_by_group.values() for candidate in rows]
         selection = select_mid_band_cards_for_display(p.side_letter, candidate_records, profile)
+        row_aware_candidates_by_group: Dict[str, List[dict]] = {g: [] for g in groups}
+        for group, rows in selection.selected_by_group.items():
+            row_aware_candidates_by_group.setdefault(group, []).extend(rows)
+        for group, rows in selection.omitted_by_group.items():
+            row_aware_candidates_by_group.setdefault(group, []).extend(rows)
+        detected_counts = {g: len(row_aware_candidates_by_group.get(g, [])) for g in row_aware_candidates_by_group.keys()}
 
-        for group, candidates in candidates_by_group.items():
+        for group, candidates in row_aware_candidates_by_group.items():
             expected = expected_counts.get(group)
             candidate_upcs_by_group[group] = [c.get("upc12") for c in candidates]
             if expected is None:
@@ -3229,6 +3346,18 @@ def render_full_pallet_pdf(
                             "overage_per_group": mid_band_profile_comparison.get("overage_per_group"),
                             "shortage_per_group": mid_band_profile_comparison.get("shortage_per_group"),
                             "candidate_upcs_by_group": mid_band_profile_comparison.get("candidate_upcs_by_group"),
+                            "expected_selected_count": dict(
+                                mid_band_profile_comparison.get("display_selection_debug", {})
+                            ).get("expected_selected_count"),
+                            "row_clusters_detected": dict(
+                                mid_band_profile_comparison.get("display_selection_debug", {})
+                            ).get("row_clusters_detected"),
+                            "selected_row_col_assignment": dict(
+                                mid_band_profile_comparison.get("display_selection_debug", {})
+                            ).get("selected_row_col_assignment"),
+                            "selected_group_assignment_per_row": dict(
+                                mid_band_profile_comparison.get("display_selection_debug", {})
+                            ).get("selected_group_assignment_per_row"),
                             "selected_upcs_by_group": dict(
                                 mid_band_profile_comparison.get("display_selection_debug", {})
                             ).get("selected_upcs_by_group"),
@@ -3244,6 +3373,12 @@ def render_full_pallet_pdf(
                             "omit_reasons_by_slot": dict(
                                 mid_band_profile_comparison.get("display_selection_debug", {})
                             ).get("omit_reasons_by_slot"),
+                            "shortage_after_row_aware_selection": dict(
+                                mid_band_profile_comparison.get("display_selection_debug", {})
+                            ).get("shortage_after_row_aware_selection"),
+                            "overage_after_row_aware_selection": dict(
+                                mid_band_profile_comparison.get("display_selection_debug", {})
+                            ).get("overage_after_row_aware_selection"),
                             "render_layout_hints": mid_band_profile_comparison.get("render_layout_hints"),
                         }
                     }
