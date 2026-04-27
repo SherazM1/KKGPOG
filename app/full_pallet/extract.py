@@ -40,6 +40,15 @@ def _bbox_intersects(a: Tuple[float, float, float, float], b: Tuple[float, float
     return not (ax1 < bx0 or bx1 < ax0 or ay1 < by0 or by1 < ay0)
 
 
+def _word_bbox(w: dict) -> Tuple[float, float, float, float]:
+    return (
+        float(w.get("x0", 0.0)),
+        float(w.get("top", 0.0)),
+        float(w.get("x1", 0.0)),
+        float(w.get("bottom", 0.0)),
+    )
+
+
 def _inset_bbox(
     bbox: Tuple[float, float, float, float],
     inset_x: float,
@@ -255,6 +264,80 @@ def _build_mid_band_template_slots(
     return rows
 
 
+def _collect_mid_band_product_tokens(
+    page: pdfplumber.page.Page,
+    words: List[dict],
+    bonus_top: Optional[float],
+    page_width: float,
+    page_height: float,
+) -> List[dict]:
+    _ = page
+    holder_words = [
+        w
+        for w in words
+        if _wt(w) in {"WM", "GIFTCARD", "GIFTCAR", "PKG"}
+        and float(w.get("top", 0.0)) < page_height * 0.35
+    ]
+    holder_bottom = (
+        max(float(w.get("bottom", 0.0)) for w in holder_words) + 8.0
+        if holder_words
+        else page_height * 0.31
+    )
+    zone_top = max(0.0, holder_bottom + 6.0)
+    zone_bottom = min(page_height, (bonus_top - 8.0) if bonus_top is not None else page_height * 0.84)
+    if zone_bottom <= zone_top:
+        return []
+
+    excluded_terms = {
+        "MARKETING",
+        "MESSAGE",
+        "PANEL",
+        "FRAUD",
+        "SIGNAGE",
+        "WM",
+        "GIFTCARD",
+        "GIFTCAR",
+        "PKG",
+        "BONUS",
+    }
+    excluded_words = [w for w in words if _wt(w) in excluded_terms]
+    excluded_bboxes: List[Tuple[float, float, float, float]] = []
+    for grp in _group_nearby(excluded_words, x_tol=35, y_tol=18):
+        gx0 = min(float(w.get("x0", 0.0)) for w in grp) - 6.0
+        gy0 = min(float(w.get("top", 0.0)) for w in grp) - 5.0
+        gx1 = max(float(w.get("x1", 0.0)) for w in grp) + 6.0
+        gy1 = max(float(w.get("bottom", 0.0)) for w in grp) + 5.0
+        excluded_bboxes.append((max(0.0, gx0), max(0.0, gy0), min(page_width, gx1), min(page_height, gy1)))
+
+    if holder_words:
+        h_top = min(float(w.get("top", 0.0)) for w in holder_words) - 3.0
+        h_bottom = max(float(w.get("bottom", 0.0)) for w in holder_words) + 8.0
+        excluded_bboxes.append((0.0, max(0.0, h_top), page_width, min(page_height, h_bottom)))
+
+    picked: List[dict] = []
+    for w in words:
+        txt = str(w.get("text", "")).strip()
+        if not re.fullmatch(r"\d{5}", txt):
+            continue
+        wx, wy = _word_center(w)
+        wt = float(w.get("top", 0.0))
+        wb = float(w.get("bottom", 0.0))
+        if not (zone_top <= wy <= zone_bottom):
+            continue
+        if not (zone_top <= wt and wb <= zone_bottom + 4.0):
+            continue
+        if bonus_top is not None and wy >= bonus_top - 8.0:
+            continue
+        if wx < page_width * 0.03 or wx > page_width * 0.97:
+            continue
+        if any(_bbox_contains_word_center(b, w) for b in excluded_bboxes):
+            continue
+        picked.append(w)
+
+    picked.sort(key=lambda w: (_word_center(w)[1], _word_center(w)[0]))
+    return picked
+
+
 def _collect_mid_band_five_digit_words(
     words: List[dict],
     anchor_bbox: Tuple[float, float, float, float],
@@ -342,6 +425,121 @@ def _extract_mid_band_above_bonus(
     pw, ph = float(page.width), float(page.height)
     bonus_words = [w for w in words if _wt(w) == "BONUS"]
     bonus_top = min((float(w.get("top", 0.0)) for w in bonus_words), default=(bonus_y - 10.0 if bonus_y else None))
+
+    token_words = _collect_mid_band_product_tokens(
+        page=page,
+        words=words,
+        bonus_top=bonus_top,
+        page_width=pw,
+        page_height=ph,
+    )
+    if len(token_words) >= 8:
+        token_xs = [float((_word_center(w)[0])) for w in token_words]
+        token_ys = [float((_word_center(w)[1])) for w in token_words]
+        y_centers = cluster_positions(token_ys, tol=max(10.0, ph * 0.013))
+        if len(y_centers) == 0:
+            y_centers = np.array([float(np.mean(token_ys))], dtype=float)
+
+        row_bins: Dict[int, List[dict]] = {}
+        for w, yc in zip(token_words, token_ys):
+            row_idx_raw = int(np.argmin(np.abs(y_centers - yc)))
+            row_bins.setdefault(row_idx_raw, []).append(w)
+
+        sorted_row_keys = sorted(row_bins.keys(), key=lambda rid: float(np.mean([_word_center(w)[1] for w in row_bins[rid]])))
+        q1 = float(np.quantile(token_xs, 1.0 / 3.0)) if token_xs else pw * 0.33
+        q2 = float(np.quantile(token_xs, 2.0 / 3.0)) if token_xs else pw * 0.66
+
+        row_slots: List[FullPalletMidBandRow] = []
+        slot_order = 0
+        for row_index, row_key in enumerate(sorted_row_keys):
+            row_tokens = sorted(row_bins[row_key], key=lambda w: _word_center(w)[0])
+            slots: List[FullPalletMidBandSlot] = []
+            block_counts = {"left": 0, "center": 0, "right": 0}
+
+            for slot_in_row, token_w in enumerate(row_tokens):
+                tx0, ty0, tx1, ty1 = _word_bbox(token_w)
+                tw = max(1.0, tx1 - tx0)
+                th = max(1.0, ty1 - ty0)
+                tcx, tcy = _word_center(token_w)
+
+                source_bbox = (
+                    max(0.0, tcx - max(54.0, tw * 3.0)),
+                    max(0.0, tcy - max(20.0, th * 2.2)),
+                    min(pw, tcx + max(54.0, tw * 3.0)),
+                    min(ph, tcy + max(22.0, th * 2.8)),
+                )
+                nearby_words = _collect_words_in_zone(words, source_bbox)
+                raw_text = _words_to_text(nearby_words) or str(token_w.get("text", "")).strip()
+                parsed_name, _parsed_last5, qty = parse_label_cell_text(raw_text)
+                last5 = _to_last5(str(token_w.get("text", "")).strip())
+
+                if tcx <= q1:
+                    block_name = "left"
+                elif tcx >= q2:
+                    block_name = "right"
+                else:
+                    block_name = "center"
+                block_pos_index = block_counts[block_name]
+                block_counts[block_name] += 1
+
+                slot_id = f"{side_letter}-MB-R{row_index + 1}-S{slot_in_row + 1}"
+                accepted_tokens = [str(w.get("text", "")).strip() for w in nearby_words]
+                if last5 and last5 not in accepted_tokens:
+                    accepted_tokens.append(last5)
+                slots.append(
+                    FullPalletMidBandSlot(
+                        slot_id=slot_id,
+                        side_letter=side_letter,
+                        row_index=row_index,
+                        block_name=block_name,
+                        block_pos_index=block_pos_index,
+                        slot_order=slot_order,
+                        slot_in_row=slot_in_row,
+                        bbox=(tx0, ty0, tx1, ty1),
+                        raw_label_text=raw_text,
+                        parsed_name=parsed_name,
+                        last5=last5,
+                        qty=qty,
+                        extraction_bbox=source_bbox,
+                        accepted_words=accepted_tokens,
+                        rejected_nearby_word_count=0,
+                    )
+                )
+                slot_order += 1
+
+            row_slots.append(FullPalletMidBandRow(row_index=row_index, slots=slots))
+
+        row_slot_counts = [len(r.slots) for r in row_slots]
+        row_block_grouping = [
+            [
+                len([s for s in r.slots if s.block_name == "left"]),
+                len([s for s in r.slots if s.block_name == "center"]),
+                len([s for s in r.slots if s.block_name == "right"]),
+            ]
+            for r in row_slots
+        ]
+        slot_count = sum(row_slot_counts)
+        shape_valid = (
+            len(row_slots) == 3
+            and row_slot_counts == [8, 8, 8]
+            and row_block_grouping == [[2, 4, 2], [2, 4, 2], [2, 4, 2]]
+            and slot_count == 24
+        )
+        anchor_bbox = (
+            max(0.0, min(float(w.get("x0", 0.0)) for w in token_words) - 8.0),
+            max(0.0, min(float(w.get("top", 0.0)) for w in token_words) - 10.0),
+            min(pw, max(float(w.get("x1", 0.0)) for w in token_words) + 8.0),
+            min(ph, max(float(w.get("bottom", 0.0)) for w in token_words) + 10.0),
+        )
+        return FullPalletMidBandSection(
+            section_id="mid_band_above_bonus_token_first",
+            rows=row_slots,
+            slot_count=slot_count,
+            row_slot_counts=row_slot_counts,
+            row_block_grouping=row_block_grouping,
+            shape_valid=shape_valid,
+            anchor_bbox=anchor_bbox,
+        )
 
     anchors = _compute_mid_band_anchor_bounds(words, pw, ph, bonus_top)
     if anchors is None:
