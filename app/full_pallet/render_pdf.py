@@ -1187,6 +1187,59 @@ def render_full_pallet_pdf(
             mapping[slot.slot_id] = source_cells[idx] if idx < len(source_cells) else None
         return mapping
 
+    def _validate_mid_band_mapped_cell_bbox(
+        mapped_bbox: Optional[Tuple[float, float, float, float]],
+        fallback_bbox: Optional[Tuple[float, float, float, float]],
+        strict_side_guardrails: bool,
+    ) -> Tuple[bool, List[str]]:
+        if mapped_bbox is None:
+            return False, ["missing_mapped_bbox"]
+        mx0, my0, mx1, my1 = mapped_bbox
+        mw = max(0.0, float(mx1 - mx0))
+        mh = max(0.0, float(my1 - my0))
+        reasons: List[str] = []
+
+        if mw < 16.0 or mh < 16.0:
+            reasons.append("tiny_bbox")
+
+        aspect = (mw / mh) if mh > 0.0 else 99.0
+        if aspect > 3.6 or aspect < 0.28:
+            reasons.append("strip_aspect")
+
+        if fallback_bbox is not None:
+            fx0, fy0, fx1, fy1 = fallback_bbox
+            fw = max(1.0, float(fx1 - fx0))
+            fh = max(1.0, float(fy1 - fy0))
+            fcx = (float(fx0) + float(fx1)) / 2.0
+            fcy = (float(fy0) + float(fy1)) / 2.0
+            mcx = (float(mx0) + float(mx1)) / 2.0
+            mcy = (float(my0) + float(my1)) / 2.0
+            d = ((mcx - fcx) ** 2 + (mcy - fcy) ** 2) ** 0.5
+            if strict_side_guardrails and d > max(44.0, fw * 1.7, fh * 1.7):
+                reasons.append("off_expected_slot_geometry")
+
+            area_ratio = (mw * mh) / max(1.0, fw * fh)
+            if strict_side_guardrails:
+                if mw > fw * 1.95:
+                    reasons.append("too_wide_for_single_card")
+                if mh > fh * 1.95:
+                    reasons.append("too_tall_for_single_card")
+                if mw < fw * 0.55:
+                    reasons.append("too_narrow_for_single_card")
+                if mh < fh * 0.55:
+                    reasons.append("too_short_for_single_card")
+                if area_ratio > 2.8:
+                    reasons.append("likely_multi_card_group")
+                if area_ratio < 0.35:
+                    reasons.append("likely_partial_strip")
+            else:
+                if area_ratio > 4.5:
+                    reasons.append("oversized_area")
+                if area_ratio < 0.22:
+                    reasons.append("undersized_area")
+
+        return len(reasons) == 0, reasons
+
     def _resolve_mid_band_slot(
         page: FullPalletPage,
         slot: FullPalletMidBandSlot,
@@ -1416,12 +1469,14 @@ def render_full_pallet_pdf(
         )
         source_cells = _detect_mid_band_image_cells(img_page, region_bbox) if img_page is not None else []
         slot_to_cell = _map_mid_band_slots_to_image_cells(all_slots, source_cells)
+        strict_side_guardrails = str(p.side_letter or "").upper() in {"B", "D"}
         if detection_debug is not None:
             detection_debug["side"] = p.side_letter
             detection_debug["image_page_index"] = p.page_index
             detection_debug["mid_band_region_bbox_used"] = list(region_bbox)
             detection_debug["source_image_cell_count"] = len(source_cells)
             detection_debug["ordered_source_cell_ids"] = [str(c.get("cell_id", "")) for c in source_cells]
+            detection_debug["strict_side_guardrails"] = strict_side_guardrails
 
         mapped_clean = 0
         mapped_fallback = 0
@@ -1491,11 +1546,44 @@ def render_full_pallet_pdf(
                 unmatched_cells += 1
 
             mapped_cell = slot_to_cell.get(slot.slot_id)
+            candidate_crop_count = 1  # always include slot-geometry fallback candidate
+            rejected_crop_reasons: List[str] = []
+            constrained_by_slot_geometry = False
+            fallback_reason = ""
+            image_crop_bbox_used, _legacy_source, _legacy_grid = _derive_token_first_image_bbox(
+                slot=slot,
+                section=section,
+                page_width=page_width,
+                page_height=page_height,
+            )
+
             if mapped_cell is not None:
-                image_crop_bbox_used = tuple(mapped_cell.get("bbox", slot.bbox))
-                image_crop_source = "image_cell_match"
-                used_slot_grid_crop_path = True
-                mapped_clean += 1
+                candidate_crop_count += 1
+                mapped_bbox = tuple(mapped_cell.get("bbox", slot.bbox))
+                mapped_ok, reject_reasons = _validate_mid_band_mapped_cell_bbox(
+                    mapped_bbox=mapped_bbox,
+                    fallback_bbox=image_crop_bbox_used,
+                    strict_side_guardrails=strict_side_guardrails,
+                )
+                if mapped_ok:
+                    image_crop_bbox_used = mapped_bbox
+                    image_crop_source = "image_cell_match"
+                    used_slot_grid_crop_path = False
+                    mapped_clean += 1
+                else:
+                    rejected_crop_reasons = reject_reasons
+                    image_crop_source = "fallback_token_crop"
+                    used_slot_grid_crop_path = bool(_legacy_grid)
+                    constrained_by_slot_geometry = True
+                    fallback_reason = "rejected_image_cell_candidate"
+                    mapped_fallback += 1
+            elif image_crop_bbox_used:
+                image_crop_source = "fallback_token_crop"
+                used_slot_grid_crop_path = bool(_legacy_grid)
+                constrained_by_slot_geometry = True
+                fallback_reason = "no_source_image_cell_for_slot"
+                rejected_crop_reasons = ["no_source_image_cell_for_slot"]
+                mapped_fallback += 1
             else:
                 image_crop_bbox_used, _legacy_source, _legacy_grid = _derive_token_first_image_bbox(
                     slot=slot,
@@ -1505,11 +1593,15 @@ def render_full_pallet_pdf(
                 )
                 if image_crop_bbox_used:
                     image_crop_source = "fallback_token_crop"
-                    used_slot_grid_crop_path = False
+                    used_slot_grid_crop_path = bool(_legacy_grid)
+                    constrained_by_slot_geometry = True
+                    fallback_reason = "legacy_fallback_crop"
                     mapped_fallback += 1
                 else:
                     image_crop_source = "fallback_none"
                     used_slot_grid_crop_path = False
+                    constrained_by_slot_geometry = False
+                    fallback_reason = "no_crop_candidate"
                     mapped_empty += 1
             crop_error: Optional[str] = None
             try:
@@ -1547,6 +1639,10 @@ def render_full_pallet_pdf(
                         "extraction_bbox": list(slot.extraction_bbox) if slot.extraction_bbox else None,
                         "image_crop_bbox_used": list(image_crop_bbox_used) if image_crop_bbox_used else None,
                         "image_crop_source": image_crop_source,
+                        "candidate_crop_count": candidate_crop_count,
+                        "rejected_crop_reasons": rejected_crop_reasons,
+                        "constrained_by_label_slot_geometry": bool(constrained_by_slot_geometry),
+                        "fallback_reason": fallback_reason,
                         "used_slot_grid_crop_path": bool(used_slot_grid_crop_path),
                         "crop_path_used": image_crop_source,
                         "derived_bbox_width": bw,
@@ -1576,10 +1672,14 @@ def render_full_pallet_pdf(
                         "chosen_source_image_cell_id": (mapped_cell.get("cell_id") if mapped_cell else None),
                         "chosen_crop_bbox": list(image_crop_bbox_used) if image_crop_bbox_used else None,
                         "crop_source_type": image_crop_source,
+                        "candidate_crop_count": candidate_crop_count,
+                        "rejected_crop_reasons": rejected_crop_reasons,
+                        "constrained_by_label_slot_geometry": bool(constrained_by_slot_geometry),
+                        "fallback_reason": fallback_reason,
                         "mismatch_note": (
                             "no_source_image_cell_detected_for_slot"
                             if mapped_cell is None
-                            else ""
+                            else ("rejected_image_cell_candidate" if rejected_crop_reasons else "")
                         ),
                     }
                 )
@@ -2718,6 +2818,7 @@ def render_full_pallet_pdf(
                                 "mid_band_region_bbox_used": token_first_detection_debug.get("mid_band_region_bbox_used"),
                                 "source_image_cell_count": token_first_detection_debug.get("source_image_cell_count", 0),
                                 "ordered_source_cell_ids": token_first_detection_debug.get("ordered_source_cell_ids", []),
+                                "strict_side_guardrails": bool(token_first_detection_debug.get("strict_side_guardrails")),
                             },
                             "token_first_mapping_summary": {
                                 "side": pdata.side_letter,
