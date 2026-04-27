@@ -1056,6 +1056,7 @@ def render_full_pallet_pdf(
         content_x0: float,
         unresolved_debug_rows: Optional[List[dict]] = None,
         position_fallback_debug_rows: Optional[List[dict]] = None,
+        crop_debug_rows: Optional[List[dict]] = None,
     ) -> Tuple[int, int, bool, float, int, int]:
         nonlocal rightmost_used, matched_cells, unmatched_cells
 
@@ -1147,19 +1148,53 @@ def render_full_pallet_pdf(
                     )
                 unmatched_cells += 1
 
+            image_crop_bbox_used = slot.bbox
+            image_crop_source = "slot.bbox"
+            crop_error: Optional[str] = None
             try:
                 img = crop_image_cell(
                     images_doc,
                     p.page_index,
-                    slot.bbox,
+                    image_crop_bbox_used,
                     zoom=float(plan["crop_zoom"]),
                     inset=float(plan["crop_inset"]),
                 )
-            except Exception:
+            except Exception as exc:
                 img = None
+                crop_error = str(exc)
 
             if img is None:
                 missing_image_slots.append(slot.slot_id)
+
+            if debug and crop_debug_rows is not None:
+                bw = float(image_crop_bbox_used[2] - image_crop_bbox_used[0]) if image_crop_bbox_used else 0.0
+                bh = float(image_crop_bbox_used[3] - image_crop_bbox_used[1]) if image_crop_bbox_used else 0.0
+                crop_debug_rows.append(
+                    {
+                        "side": p.side_letter,
+                        "page_index": p.page_index,
+                        "slot_id": slot.slot_id,
+                        "row_index": slot.row_index,
+                        "slot_in_row": slot.slot_in_row,
+                        "slot_order": slot.slot_order,
+                        "last5": _to_last5(slot.last5),
+                        "resolved_upc12": upc12,
+                        "resolved_display_name": disp_name,
+                        "resolved_cpp": cpp,
+                        "slot_bbox": list(slot.bbox) if slot.bbox else None,
+                        "extraction_bbox": list(slot.extraction_bbox) if slot.extraction_bbox else None,
+                        "image_crop_bbox_used": list(image_crop_bbox_used) if image_crop_bbox_used else None,
+                        "image_crop_source": image_crop_source,
+                        "crop_zoom": float(plan["crop_zoom"]),
+                        "crop_inset": float(plan["crop_inset"]),
+                        "crop_success": bool(img is not None),
+                        "crop_image_width": int(getattr(img, "width")) if img is not None and hasattr(img, "width") else None,
+                        "crop_image_height": int(getattr(img, "height")) if img is not None and hasattr(img, "height") else None,
+                        "tiny_bbox": bool(bw < 16.0 or bh < 16.0),
+                        "large_bbox": bool(bw > 140.0 or bh > 90.0),
+                        "crop_error": crop_error,
+                    }
+                )
 
             if x < content_x0 - 0.001 or (x + card_w) > (content_x0 + content_w + 0.001):
                 overflow = True
@@ -1855,6 +1890,7 @@ def render_full_pallet_pdf(
             unresolved_bonus: List[str] = []
             unresolved_mid_slot_debug: List[dict] = []
             position_fallback_mid_slot_debug: List[dict] = []
+            token_first_crop_debug_rows: List[dict] = []
             missing_main_images: List[str] = []
             missing_bonus_images: List[str] = []
             main_render_source = (
@@ -2020,6 +2056,7 @@ def render_full_pallet_pdf(
                     cx0,
                     unresolved_debug_rows=unresolved_mid_slot_debug,
                     position_fallback_debug_rows=position_fallback_mid_slot_debug,
+                    crop_debug_rows=token_first_crop_debug_rows,
                 )
             else:
                 (
@@ -2240,6 +2277,28 @@ def render_full_pallet_pdf(
                         },
                     }
                 )
+                if token_first_mid_band_ok:
+                    crop_success_count = sum(1 for r in token_first_crop_debug_rows if bool(r.get("crop_success")))
+                    crop_failure_count = len(token_first_crop_debug_rows) - crop_success_count
+                    tiny_bbox_count = sum(1 for r in token_first_crop_debug_rows if bool(r.get("tiny_bbox")))
+                    large_bbox_count = sum(1 for r in token_first_crop_debug_rows if bool(r.get("large_bbox")))
+                    widths = [float(r["crop_image_width"]) for r in token_first_crop_debug_rows if r.get("crop_image_width") is not None]
+                    heights = [float(r["crop_image_height"]) for r in token_first_crop_debug_rows if r.get("crop_image_height") is not None]
+                    avg_crop_width = round(float(np.mean(widths)), 2) if widths else None
+                    avg_crop_height = round(float(np.mean(heights)), 2) if heights else None
+                    st.write(f"FULL_PALLET token-first mid-band crop debug - Side {pdata.side_letter}")
+                    st.write(
+                        {
+                            "token_first_slot_count": len(token_first_crop_debug_rows),
+                            "crop_success_count": crop_success_count,
+                            "crop_failure_count": crop_failure_count,
+                            "tiny_bbox_count": tiny_bbox_count,
+                            "large_bbox_count": large_bbox_count,
+                            "avg_crop_width": avg_crop_width,
+                            "avg_crop_height": avg_crop_height,
+                        }
+                    )
+                    st.dataframe(pd.DataFrame(token_first_crop_debug_rows), use_container_width=True)
 
             c.showPage()
 
