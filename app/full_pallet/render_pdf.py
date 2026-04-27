@@ -1060,6 +1060,133 @@ def render_full_pallet_pdf(
         fb = _derive_token_first_fallback_image_bbox(slot, section, page_width, page_height)
         return fb, "derived_token_cell_bbox_fallback", False
 
+    def _compute_mid_band_image_region_bbox(
+        p: FullPalletPage,
+        section: FullPalletMidBandSection,
+        page_width: float,
+        page_height: float,
+    ) -> Tuple[float, float, float, float]:
+        slots = [s for r in section.rows for s in r.slots if s.bbox]
+        if section.anchor_bbox is not None:
+            ax0, ay0, ax1, ay1 = section.anchor_bbox
+            x0 = max(0.0, float(ax0) - 24.0)
+            y0 = max(0.0, float(ay0) - 12.0)
+            x1 = min(page_width, float(ax1) + 24.0)
+            y1 = min(page_height, float(ay1) + 14.0)
+        elif slots:
+            x0 = max(0.0, min(float(s.bbox[0]) for s in slots) - 18.0)
+            y0 = max(0.0, min(float(s.bbox[1]) for s in slots) - 14.0)
+            x1 = min(page_width, max(float(s.bbox[2]) for s in slots) + 18.0)
+            y1 = min(page_height, max(float(s.bbox[3]) for s in slots) + 14.0)
+        else:
+            x0, y0, x1, y1 = 0.0, 0.0, page_width, page_height
+
+        bonus_y = _marker_y(p, "bonus_strip")
+        if bonus_y is not None:
+            y1 = min(y1, float(bonus_y) - 8.0)
+        if y1 <= y0 + 1.0:
+            y0 = max(0.0, y0 - 20.0)
+            y1 = min(page_height, y0 + 120.0)
+        return (float(x0), float(y0), float(x1), float(y1))
+
+    def _detect_mid_band_image_cells(
+        image_page: fitz.Page,
+        region_bbox: Tuple[float, float, float, float],
+    ) -> List[dict]:
+        rx0, ry0, rx1, ry1 = region_bbox
+
+        def _intersect_area(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> float:
+            ax0, ay0, ax1, ay1 = a
+            bx0, by0, bx1, by1 = b
+            ix0 = max(ax0, bx0)
+            iy0 = max(ay0, by0)
+            ix1 = min(ax1, bx1)
+            iy1 = min(ay1, by1)
+            if ix1 <= ix0 or iy1 <= iy0:
+                return 0.0
+            return float((ix1 - ix0) * (iy1 - iy0))
+
+        blocks = image_page.get_text("dict").get("blocks", []) or []
+        candidates: List[dict] = []
+        for blk in blocks:
+            if int(blk.get("type", -1)) != 1:
+                continue
+            bb = blk.get("bbox")
+            if not bb or len(bb) != 4:
+                continue
+            bx0, by0, bx1, by1 = map(float, bb)
+            bw = bx1 - bx0
+            bh = by1 - by0
+            if bw < 20.0 or bh < 20.0:
+                continue
+            cell_bbox = (bx0, by0, bx1, by1)
+            ia = _intersect_area(cell_bbox, region_bbox)
+            if ia <= 0.0:
+                continue
+            ca = max(1.0, bw * bh)
+            ra = max(1.0, (rx1 - rx0) * (ry1 - ry0))
+            if (ia / ca) < 0.25 and (ia / ra) < 0.005:
+                continue
+            cx = (bx0 + bx1) / 2.0
+            cy = (by0 + by1) / 2.0
+            candidates.append(
+                {
+                    "bbox": cell_bbox,
+                    "cx": cx,
+                    "cy": cy,
+                    "w": bw,
+                    "h": bh,
+                }
+            )
+
+        if not candidates:
+            return []
+
+        candidates.sort(key=lambda c: (c["cy"], c["cx"]))
+        hs = sorted([float(c["h"]) for c in candidates if c.get("h") is not None])
+        median_h = float(np.median(hs)) if hs else 24.0
+        row_tol = max(12.0, median_h * 0.60)
+
+        rows: List[List[dict]] = []
+        for c in candidates:
+            if not rows:
+                rows.append([c])
+                continue
+            last_row = rows[-1]
+            last_cy = float(np.mean([r["cy"] for r in last_row]))
+            if abs(float(c["cy"]) - last_cy) <= row_tol:
+                last_row.append(c)
+            else:
+                rows.append([c])
+
+        ordered: List[dict] = []
+        for ridx, row in enumerate(rows):
+            row_sorted = sorted(row, key=lambda x: x["cx"])
+            for sidx, c in enumerate(row_sorted):
+                ordered.append(
+                    {
+                        "source_row_index": ridx,
+                        "source_slot_index": sidx,
+                        "cell_id": f"R{ridx + 1}S{sidx + 1}",
+                        "bbox": c["bbox"],
+                        "cx": c["cx"],
+                        "cy": c["cy"],
+                        "w": c["w"],
+                        "h": c["h"],
+                    }
+                )
+        return ordered
+
+    def _map_mid_band_slots_to_image_cells(
+        slots: List[FullPalletMidBandSlot],
+        source_cells: List[dict],
+    ) -> Dict[str, Optional[dict]]:
+        ordered_slots = sorted(slots, key=lambda s: (int(s.row_index), int(s.slot_in_row), int(s.slot_order)))
+        mapping: Dict[str, Optional[dict]] = {}
+        for idx, slot in enumerate(ordered_slots):
+            mapping[slot.slot_id] = source_cells[idx] if idx < len(source_cells) else None
+        return mapping
+
     def _resolve_mid_band_slot(
         page: FullPalletPage,
         slot: FullPalletMidBandSlot,
@@ -1243,6 +1370,8 @@ def render_full_pallet_pdf(
         unresolved_debug_rows: Optional[List[dict]] = None,
         position_fallback_debug_rows: Optional[List[dict]] = None,
         crop_debug_rows: Optional[List[dict]] = None,
+        mapping_debug_rows: Optional[List[dict]] = None,
+        detection_debug: Optional[Dict[str, object]] = None,
     ) -> Tuple[int, int, bool, float, int, int]:
         nonlocal rightmost_used, matched_cells, unmatched_cells
 
@@ -1277,6 +1406,26 @@ def render_full_pallet_pdf(
         except Exception:
             page_width = float(PAGE_W)
             page_height = float(BASE_PAGE_H)
+            img_page = None
+
+        region_bbox = _compute_mid_band_image_region_bbox(
+            p=p,
+            section=section,
+            page_width=page_width,
+            page_height=page_height,
+        )
+        source_cells = _detect_mid_band_image_cells(img_page, region_bbox) if img_page is not None else []
+        slot_to_cell = _map_mid_band_slots_to_image_cells(all_slots, source_cells)
+        if detection_debug is not None:
+            detection_debug["side"] = p.side_letter
+            detection_debug["image_page_index"] = p.page_index
+            detection_debug["mid_band_region_bbox_used"] = list(region_bbox)
+            detection_debug["source_image_cell_count"] = len(source_cells)
+            detection_debug["ordered_source_cell_ids"] = [str(c.get("cell_id", "")) for c in source_cells]
+
+        mapped_clean = 0
+        mapped_fallback = 0
+        mapped_empty = 0
 
         for idx, slot in enumerate(all_slots):
             ri = idx // cols
@@ -1341,12 +1490,27 @@ def render_full_pallet_pdf(
                     )
                 unmatched_cells += 1
 
-            image_crop_bbox_used, image_crop_source, used_slot_grid_crop_path = _derive_token_first_image_bbox(
-                slot=slot,
-                section=section,
-                page_width=page_width,
-                page_height=page_height,
-            )
+            mapped_cell = slot_to_cell.get(slot.slot_id)
+            if mapped_cell is not None:
+                image_crop_bbox_used = tuple(mapped_cell.get("bbox", slot.bbox))
+                image_crop_source = "image_cell_match"
+                used_slot_grid_crop_path = True
+                mapped_clean += 1
+            else:
+                image_crop_bbox_used, _legacy_source, _legacy_grid = _derive_token_first_image_bbox(
+                    slot=slot,
+                    section=section,
+                    page_width=page_width,
+                    page_height=page_height,
+                )
+                if image_crop_bbox_used:
+                    image_crop_source = "fallback_token_crop"
+                    used_slot_grid_crop_path = False
+                    mapped_fallback += 1
+                else:
+                    image_crop_source = "fallback_none"
+                    used_slot_grid_crop_path = False
+                    mapped_empty += 1
             crop_error: Optional[str] = None
             try:
                 img = crop_image_cell(
@@ -1384,7 +1548,7 @@ def render_full_pallet_pdf(
                         "image_crop_bbox_used": list(image_crop_bbox_used) if image_crop_bbox_used else None,
                         "image_crop_source": image_crop_source,
                         "used_slot_grid_crop_path": bool(used_slot_grid_crop_path),
-                        "crop_path_used": "slot_grid" if used_slot_grid_crop_path else "fallback",
+                        "crop_path_used": image_crop_source,
                         "derived_bbox_width": bw,
                         "derived_bbox_height": bh,
                         "crop_zoom": float(plan["crop_zoom"]),
@@ -1395,6 +1559,28 @@ def render_full_pallet_pdf(
                         "tiny_bbox": bool(bw < 16.0 or bh < 16.0),
                         "large_bbox": bool(bw > 140.0 or bh > 90.0),
                         "crop_error": crop_error,
+                    }
+                )
+            if debug and mapping_debug_rows is not None:
+                mapping_debug_rows.append(
+                    {
+                        "side": p.side_letter,
+                        "slot_id": slot.slot_id,
+                        "row_index": slot.row_index,
+                        "slot_in_row": slot.slot_in_row,
+                        "slot_order": slot.slot_order,
+                        "resolved_last5": _to_last5(slot.last5),
+                        "resolved_upc12": upc12,
+                        "resolved_name": disp_name,
+                        "chosen_image_source_page": p.page_index,
+                        "chosen_source_image_cell_id": (mapped_cell.get("cell_id") if mapped_cell else None),
+                        "chosen_crop_bbox": list(image_crop_bbox_used) if image_crop_bbox_used else None,
+                        "crop_source_type": image_crop_source,
+                        "mismatch_note": (
+                            "no_source_image_cell_detected_for_slot"
+                            if mapped_cell is None
+                            else ""
+                        ),
                     }
                 )
 
@@ -1413,6 +1599,12 @@ def render_full_pallet_pdf(
                 c.drawString(x + 2, y + card_h - 8, slot.slot_id)
 
             slots_drawn += 1
+
+        if detection_debug is not None:
+            detection_debug["resolved_mid_band_slot_count"] = len(all_slots)
+            detection_debug["mapped_clean_count"] = mapped_clean
+            detection_debug["mapped_fallback_count"] = mapped_fallback
+            detection_debug["mapped_empty_count"] = mapped_empty
 
         sec_bottom = grid_top - rows * card_h - max(0, rows - 1) * row_gutter
         return cols, rows, overflow, sec_bottom, slots_drawn, cols
@@ -2093,6 +2285,8 @@ def render_full_pallet_pdf(
             unresolved_mid_slot_debug: List[dict] = []
             position_fallback_mid_slot_debug: List[dict] = []
             token_first_crop_debug_rows: List[dict] = []
+            token_first_mapping_debug_rows: List[dict] = []
+            token_first_detection_debug: Dict[str, object] = {}
             missing_main_images: List[str] = []
             missing_bonus_images: List[str] = []
             main_render_source = (
@@ -2259,6 +2453,8 @@ def render_full_pallet_pdf(
                     unresolved_debug_rows=unresolved_mid_slot_debug,
                     position_fallback_debug_rows=position_fallback_mid_slot_debug,
                     crop_debug_rows=token_first_crop_debug_rows,
+                    mapping_debug_rows=token_first_mapping_debug_rows,
+                    detection_debug=token_first_detection_debug,
                 )
             else:
                 (
@@ -2482,8 +2678,17 @@ def render_full_pallet_pdf(
                 if token_first_mid_band_ok:
                     crop_success_count = sum(1 for r in token_first_crop_debug_rows if bool(r.get("crop_success")))
                     crop_failure_count = len(token_first_crop_debug_rows) - crop_success_count
-                    slot_grid_crop_count = sum(1 for r in token_first_crop_debug_rows if bool(r.get("used_slot_grid_crop_path")))
-                    fallback_crop_count = len(token_first_crop_debug_rows) - slot_grid_crop_count
+                    image_cell_match_count = sum(
+                        1 for r in token_first_crop_debug_rows if str(r.get("image_crop_source", "")) == "image_cell_match"
+                    )
+                    fallback_crop_count = sum(
+                        1
+                        for r in token_first_crop_debug_rows
+                        if str(r.get("image_crop_source", "")).startswith("fallback_")
+                    )
+                    empty_crop_count = sum(
+                        1 for r in token_first_crop_debug_rows if str(r.get("image_crop_source", "")) == "fallback_none"
+                    )
                     tiny_bbox_count = sum(1 for r in token_first_crop_debug_rows if bool(r.get("tiny_bbox")))
                     large_bbox_count = sum(1 for r in token_first_crop_debug_rows if bool(r.get("large_bbox")))
                     widths = [float(r["crop_image_width"]) for r in token_first_crop_debug_rows if r.get("crop_image_width") is not None]
@@ -2494,8 +2699,9 @@ def render_full_pallet_pdf(
                     st.write(
                         {
                             "token_first_slot_count": len(token_first_crop_debug_rows),
-                            "new_crop_path_count": slot_grid_crop_count,
+                            "new_crop_path_count": image_cell_match_count,
                             "fallback_crop_path_count": fallback_crop_count,
+                            "empty_crop_path_count": empty_crop_count,
                             "crop_success_count": crop_success_count,
                             "crop_failure_count": crop_failure_count,
                             "tiny_bbox_count": tiny_bbox_count,
@@ -2504,7 +2710,28 @@ def render_full_pallet_pdf(
                             "avg_crop_height": avg_crop_height,
                         }
                     )
+                    st.write(
+                        {
+                            "token_first_detection_summary": {
+                                "side": token_first_detection_debug.get("side", pdata.side_letter),
+                                "image_page_index": token_first_detection_debug.get("image_page_index", pdata.page_index),
+                                "mid_band_region_bbox_used": token_first_detection_debug.get("mid_band_region_bbox_used"),
+                                "source_image_cell_count": token_first_detection_debug.get("source_image_cell_count", 0),
+                                "ordered_source_cell_ids": token_first_detection_debug.get("ordered_source_cell_ids", []),
+                            },
+                            "token_first_mapping_summary": {
+                                "side": pdata.side_letter,
+                                "resolved_mid_band_slot_count": token_first_detection_debug.get("resolved_mid_band_slot_count", len(token_first_mapping_debug_rows)),
+                                "source_image_cell_count": token_first_detection_debug.get("source_image_cell_count", 0),
+                                "mapped_cleanly": token_first_detection_debug.get("mapped_clean_count", 0),
+                                "using_fallback": token_first_detection_debug.get("mapped_fallback_count", 0),
+                                "empty_unrendered": token_first_detection_debug.get("mapped_empty_count", 0),
+                            },
+                        }
+                    )
                     st.dataframe(pd.DataFrame(token_first_crop_debug_rows), use_container_width=True)
+                    if token_first_mapping_debug_rows:
+                        st.dataframe(pd.DataFrame(token_first_mapping_debug_rows), use_container_width=True)
 
             c.showPage()
 
