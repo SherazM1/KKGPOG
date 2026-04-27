@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 
 import fitz
 import numpy as np
+import pandas as pd
 import streamlit as st
 from PIL import Image
 from reportlab.lib.utils import ImageReader
@@ -1495,6 +1496,64 @@ def render_full_pallet_pdf(
                         },
                     }
                 )
+
+                mid_rows: List[dict] = []
+                fallback_path_counts: Dict[str, int] = {}
+                slots_with_last5 = 0
+                slots_resolved = 0
+
+                for slot in mid_slots_dbg:
+                    resolved_row, resolve_trace = _resolve_mid_band_slot(pdata, slot)
+                    slot_last5 = _to_last5(slot.last5)
+                    if slot_last5:
+                        slots_with_last5 += 1
+                    if resolved_row is not None:
+                        slots_resolved += 1
+
+                    fallback_path = str(resolve_trace.get("fallback_path", "") or "")
+                    fallback_path_counts[fallback_path] = fallback_path_counts.get(fallback_path, 0) + 1
+
+                    mid_rows.append(
+                        {
+                            "side": pdata.side_letter,
+                            "page_index": pdata.page_index,
+                            "slot_id": slot.slot_id,
+                            "row_index": slot.row_index,
+                            "slot_in_row": slot.slot_in_row,
+                            "block_name": slot.block_name,
+                            "bbox": list(slot.bbox) if slot.bbox else None,
+                            "extraction_bbox": list(slot.extraction_bbox) if slot.extraction_bbox else None,
+                            "accepted_words": slot.accepted_words or [],
+                            "rejected_nearby_word_count": int(slot.rejected_nearby_word_count or 0),
+                            "raw_label_text": slot.raw_label_text,
+                            "parsed_name": slot.parsed_name,
+                            "slot_last5": slot_last5,
+                            "resolve_fallback_path": fallback_path,
+                            "resolved_upc12": resolved_row.upc12 if resolved_row else None,
+                            "resolved_display_name": resolved_row.display_name if resolved_row else None,
+                            "resolved_cpp": resolved_row.cpp_qty if resolved_row else None,
+                            "label_hint_last5_candidates": resolve_trace.get("label_hint_last5_candidates", []),
+                            "label_hint_upc_candidates": resolve_trace.get("label_hint_upc_candidates", []),
+                            "excel_lookup_succeeded": bool(resolve_trace.get("excel_lookup_succeeded", resolved_row is not None)),
+                        }
+                    )
+
+                total_slots = len(mid_slots_dbg)
+                slots_missing_last5 = total_slots - slots_with_last5
+                slots_unresolved = total_slots - slots_resolved
+
+                st.write(f"FULL_PALLET mid-band slot debug - Side {pdata.side_letter}")
+                st.write(
+                    {
+                        "total_slots": total_slots,
+                        "slots_with_last5": slots_with_last5,
+                        "slots_missing_last5": slots_missing_last5,
+                        "slots_resolved": slots_resolved,
+                        "slots_unresolved": slots_unresolved,
+                        "fallback_path_counts": fallback_path_counts,
+                    }
+                )
+                st.dataframe(pd.DataFrame(mid_rows), use_container_width=True)
 
             side_ppt = (
                 ppt_cards.get(pdata.side_letter, PptSideCards(pdata.side_letter, [], []))
