@@ -255,6 +255,84 @@ def _build_mid_band_template_slots(
     return rows
 
 
+def _collect_mid_band_five_digit_words(
+    words: List[dict],
+    anchor_bbox: Tuple[float, float, float, float],
+    bonus_top: Optional[float],
+    page_width: float,
+    page_height: float,
+) -> List[dict]:
+    ax0, atop, ax1, abottom = anchor_bbox
+    zone_top = max(0.0, atop - 20.0)
+    zone_bottom = min(page_height, abottom + 20.0)
+    zone_left = max(0.0, ax0 - 24.0)
+    zone_right = min(page_width, ax1 + 24.0)
+
+    picked: List[dict] = []
+    for w in words:
+        txt = str(w.get("text", "")).strip()
+        if not re.fullmatch(r"\d{5}", txt):
+            continue
+        wx = (float(w.get("x0", 0.0)) + float(w.get("x1", 0.0))) / 2.0
+        wy = (float(w.get("top", 0.0)) + float(w.get("bottom", 0.0))) / 2.0
+        if not (zone_left <= wx <= zone_right):
+            continue
+        if not (zone_top <= float(w.get("top", 0.0)) and float(w.get("bottom", 0.0)) <= zone_bottom):
+            continue
+        if bonus_top is not None and wy >= bonus_top - 8.0:
+            continue
+        picked.append(w)
+
+    picked.sort(key=lambda w: (_word_center(w)[1], _word_center(w)[0]))
+    return picked
+
+
+def _assign_mid_band_tokens_to_slots(
+    five_words: List[dict],
+    template_rows: List[List[Tuple[float, float, float, float]]],
+) -> Dict[Tuple[int, int], dict]:
+    slot_meta: List[dict] = []
+    for row_index, row_boxes in enumerate(template_rows):
+        for slot_in_row, bbox in enumerate(row_boxes):
+            sx0, sy0, sx1, sy1 = bbox
+            sw = max(1.0, sx1 - sx0)
+            sh = max(1.0, sy1 - sy0)
+            slot_meta.append(
+                {
+                    "key": (row_index, slot_in_row),
+                    "cx": (sx0 + sx1) / 2.0,
+                    "cy": (sy0 + sy1) / 2.0,
+                    "x_tol": max(sw * 0.75, 18.0),
+                    "y_tol": max(sh * 0.75, 18.0),
+                }
+            )
+
+    candidates: List[Tuple[float, int, Tuple[int, int]]] = []
+    for token_idx, w in enumerate(five_words):
+        wx, wy = _word_center(w)
+        for sm in slot_meta:
+            dx = abs(wx - float(sm["cx"]))
+            dy = abs(wy - float(sm["cy"]))
+            x_tol = float(sm["x_tol"])
+            y_tol = float(sm["y_tol"])
+            if dx > x_tol or dy > y_tol:
+                continue
+            norm_dist = ((dx / x_tol) ** 2 + (dy / y_tol) ** 2) ** 0.5
+            candidates.append((norm_dist, token_idx, sm["key"]))
+
+    candidates.sort(key=lambda t: t[0])
+    token_used: set = set()
+    slot_used: set = set()
+    assigned: Dict[Tuple[int, int], dict] = {}
+    for _dist, token_idx, slot_key in candidates:
+        if token_idx in token_used or slot_key in slot_used:
+            continue
+        assigned[slot_key] = five_words[token_idx]
+        token_used.add(token_idx)
+        slot_used.add(slot_key)
+    return assigned
+
+
 def _extract_mid_band_above_bonus(
     page: pdfplumber.page.Page,
     words: List[dict],
@@ -273,6 +351,15 @@ def _extract_mid_band_above_bonus(
     template_rows = _build_mid_band_template_slots(ax0, atop, ax1, abottom)
     if template_rows is None:
         return None
+
+    mid_five_words = _collect_mid_band_five_digit_words(
+        words=words,
+        anchor_bbox=anchors,
+        bonus_top=bonus_top,
+        page_width=pw,
+        page_height=ph,
+    )
+    assigned_five_by_slot = _assign_mid_band_tokens_to_slots(mid_five_words, template_rows)
 
     slot_bboxes = [b for row in template_rows for b in row]
     # Whitelist model: only slot-contained words are candidates for middle-band extraction.
@@ -306,6 +393,7 @@ def _extract_mid_band_above_bonus(
 
             raw_text = _words_to_text(in_slot_words)
             parsed_name, parsed_last5, qty = parse_label_cell_text(raw_text)
+            accepted_word_tokens = [str(w.get("text", "")).strip() for w in in_slot_words]
 
             last5 = _to_last5(parsed_last5)
             if not last5:
@@ -324,6 +412,14 @@ def _extract_mid_band_above_bonus(
                         )
                     )
                     last5 = _to_last5(str(five_tokens[0].get("text", "")))
+
+            if not last5:
+                recovered = assigned_five_by_slot.get((row_index, slot_in_row))
+                if recovered is not None:
+                    recovered_last5 = _to_last5(str(recovered.get("text", "")).strip())
+                    if recovered_last5:
+                        last5 = recovered_last5
+                        accepted_word_tokens.append(f"TOKEN_RECOVERY:{recovered_last5}")
 
             if slot_in_row <= 1:
                 block_name = "left"
@@ -351,7 +447,7 @@ def _extract_mid_band_above_bonus(
                     last5=last5,
                     qty=qty,
                     extraction_bbox=extract_bbox,
-                    accepted_words=[str(w.get("text", "")).strip() for w in in_slot_words],
+                    accepted_words=accepted_word_tokens,
                     rejected_nearby_word_count=rejected_nearby,
                 )
             )
