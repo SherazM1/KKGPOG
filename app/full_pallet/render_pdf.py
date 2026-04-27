@@ -265,14 +265,49 @@ def select_mid_band_cards_for_display(
         omitted_by_group.setdefault(group, []).append(omitted)
         omitted_cards.append(omitted)
 
+    for final_index, selected in enumerate(selected_cards):
+        selected["final_index"] = final_index
+
     def _ids(rows: List[dict]) -> List[str]:
         return [_slot_id(r) for r in rows]
 
     def _upcs(rows: List[dict]) -> List[Optional[str]]:
         return [r.get("upc12") for r in rows]
 
+    def _compact_row(row: dict, index_key: str, index_value: int) -> dict:
+        return {
+            index_key: index_value,
+            "source_index": row.get("source_index"),
+            "slot_id": _slot_id(row),
+            "last5": row.get("last5"),
+            "upc12": row.get("upc12"),
+            "resolved_name": row.get("resolved_name") or row.get("display_name"),
+        }
+
+    candidate_order = [
+        _compact_row(row, "source_index", int(row.get("source_index", idx)))
+        for idx, row in enumerate(sorted(candidates, key=lambda r: int(r.get("source_index", 0))))
+    ]
+    selected_order = [
+        {
+            **_compact_row(row, "final_index", int(row.get("final_index", idx))),
+            "selected_row": row.get("selected_row"),
+            "selected_col": row.get("selected_col"),
+            "selected_group": row.get("selected_group"),
+        }
+        for idx, row in enumerate(selected_cards)
+    ]
+    omitted_order = [
+        {
+            **_compact_row(row, "source_index", int(row.get("source_index", idx))),
+            "omit_reason": row.get("omit_reason"),
+        }
+        for idx, row in enumerate(omitted_cards)
+    ]
+
     selected_row_col_assignment = [
         {
+            "final_index": idx,
             "slot_id": _slot_id(row),
             "selected_row": row.get("selected_row"),
             "selected_col": row.get("selected_col"),
@@ -280,7 +315,7 @@ def select_mid_band_cards_for_display(
             "source_row_index": _slot_value(row, "row_index"),
             "source_slot_in_row": _slot_value(row, "slot_in_row"),
         }
-        for row in selected_cards
+        for idx, row in enumerate(selected_cards)
     ]
     selected_group_assignment_per_row: Dict[int, Dict[str, List[str]]] = {}
     for row in selected_cards:
@@ -292,8 +327,11 @@ def select_mid_band_cards_for_display(
         "side": side_letter,
         "profile": profile.get("profile_name"),
         "candidate_count": len(candidates),
+        "candidate_order": candidate_order,
         "selected_count": len(selected_cards),
+        "selected_order": selected_order,
         "omitted_count": len(omitted_cards),
+        "omitted_order": omitted_order,
         "expected_selected_count": expected_selected_count,
         "row_clusters_detected": row_clusters_debug,
         "selected_row_col_assignment": selected_row_col_assignment,
@@ -308,6 +346,9 @@ def select_mid_band_cards_for_display(
         },
         "shortage_after_row_aware_selection": max(0, expected_selected_count - len(selected_cards)),
         "overage_after_row_aware_selection": len(omitted_cards),
+        "shortage_or_overage": len(selected_cards) - expected_selected_count,
+        "render_assignment": [],
+        "final_render_order_matches_selected_order": None,
     }
 
     return SelectionResult(
@@ -840,6 +881,161 @@ def render_full_pallet_pdf(
         c.setFont(BODY_BOLD_FONT, cpp_fs)
         tw = pdfmetrics.stringWidth(cpp_str, BODY_BOLD_FONT, cpp_fs)
         c.drawString(ix + (iw - tw) / 2, iy + (cpp_h - cpp_fs) / 2, cpp_str)
+
+    def _trim_mid_band_image_margins(img: Optional[Image.Image]) -> Tuple[Optional[Image.Image], Optional[List[int]], List[str]]:
+        if img is None:
+            return None, None, ["missing_image"]
+        try:
+            src = img.convert("RGB")
+            arr = np.asarray(src)
+            h_px, w_px = arr.shape[:2]
+            if w_px < 18 or h_px < 18:
+                return src, None, ["trim_skipped_tiny_image"]
+
+            edge = max(2, min(10, int(min(w_px, h_px) * 0.04)))
+            samples = np.concatenate(
+                [
+                    arr[:edge, :, :].reshape(-1, 3),
+                    arr[-edge:, :, :].reshape(-1, 3),
+                    arr[:, :edge, :].reshape(-1, 3),
+                    arr[:, -edge:, :].reshape(-1, 3),
+                ],
+                axis=0,
+            )
+            bg = np.median(samples, axis=0)
+            diff = np.max(np.abs(arr.astype(np.int16) - bg.astype(np.int16)), axis=2)
+            not_bg = diff > 18
+            not_near_white = np.min(arr, axis=2) < 246
+            content = not_bg & not_near_white
+            ys, xs = np.where(content)
+            if len(xs) == 0 or len(ys) == 0:
+                return src, None, ["trim_skipped_no_content_mask"]
+
+            left = int(xs.min())
+            right = int(xs.max()) + 1
+            top = int(ys.min())
+            bottom = int(ys.max()) + 1
+            max_trim_x = int(w_px * 0.18)
+            max_trim_y = int(h_px * 0.18)
+            left = min(left, max_trim_x)
+            top = min(top, max_trim_y)
+            right = max(right, w_px - max_trim_x)
+            bottom = max(bottom, h_px - max_trim_y)
+            if right <= left or bottom <= top:
+                return src, None, ["trim_skipped_invalid_bbox"]
+            if (left, top, right, bottom) == (0, 0, w_px, h_px):
+                return src, None, []
+            if (right - left) < w_px * 0.45 or (bottom - top) < h_px * 0.45:
+                return src, None, ["trim_skipped_aggressive_mask"]
+
+            return src.crop((left, top, right, bottom)), [left, top, right, bottom], ["outer_margin_trim"]
+        except Exception:
+            return img, None, ["trim_error"]
+
+    def _draw_mid_band_card(
+        c: canvas.Canvas,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        img: Optional[Image.Image],
+        upc12: str,
+        name: str,
+        cpp: Optional[int],
+        *,
+        side: str,
+        final_index: int,
+        row: int,
+        col: int,
+        source_crop_bbox: Optional[Tuple[float, float, float, float]],
+    ) -> Dict[str, object]:
+        pad = max(4.0, min(6.0, w * 0.075))
+        ix = x + pad
+        iy = y + pad
+        iw = max(1.0, w - 2 * pad)
+        ih = max(1.0, h - 2 * pad)
+        text_h = max(22.0, min(30.0, ih * 0.34))
+        text_gap = 3.0
+        img_h = max(8.0, ih - text_h - text_gap)
+        img_x = ix
+        img_y = iy + text_h + text_gap
+        image_draw_bbox: Optional[List[float]] = None
+        flags: List[str] = []
+
+        cleaned_img, trim_bbox, trim_flags = _trim_mid_band_image_margins(img)
+        flags.extend(trim_flags)
+        if cleaned_img is not None and iw > 6 and img_h > 6:
+            sw, sh = cleaned_img.size
+            aspect = sw / max(1, sh)
+            if aspect < 0.42 or aspect > 2.75:
+                flags.append("unusual_aspect_contain_fit")
+            fit = min(iw / max(1, sw), img_h / max(1, sh))
+            dw = max(1.0, sw * fit)
+            dh = max(1.0, sh * fit)
+            dx = img_x + (iw - dw) / 2.0
+            dy = img_y + (img_h - dh) / 2.0
+            c.drawImage(
+                ImageReader(cleaned_img),
+                dx,
+                dy,
+                dw,
+                dh,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+            image_draw_bbox = [round(dx, 2), round(dy, 2), round(dx + dw, 2), round(dy + dh, 2)]
+
+        cpp_str = f"CPP: {cpp}" if cpp is not None else "CPP:"
+        upc = (upc12 or "").strip()
+        cpp_h = max(8.0, text_h * 0.30)
+        name_h = max(8.0, text_h * 0.28)
+        upc_h = max(8.0, text_h - cpp_h - name_h)
+
+        upc_fs = _fit_font(upc, BODY_BOLD_FONT, iw, upc_h, 5.5, 12.0, step=0.25)
+        c.setFillColorRGB(0.05, 0.05, 0.05)
+        c.setFont(BODY_BOLD_FONT, upc_fs)
+        tw = pdfmetrics.stringWidth(upc, BODY_BOLD_FONT, upc_fs)
+        c.drawString(ix + (iw - tw) / 2, iy + cpp_h + name_h + (upc_h - upc_fs) / 2, upc)
+
+        name_fs = _fit_font((name or "").upper(), BODY_FONT, iw, name_h, 5.3, 6.6, step=0.1)
+        nm = _fit_name_preserve_qualifiers((name or "").upper(), BODY_FONT, name_fs, iw)
+        c.setFillColorRGB(0.10, 0.10, 0.10)
+        c.setFont(BODY_FONT, name_fs)
+        tw = pdfmetrics.stringWidth(nm, BODY_FONT, name_fs)
+        c.drawString(ix + (iw - tw) / 2, iy + cpp_h + (name_h - name_fs) / 2, nm)
+
+        cpp_fs = _fit_font(cpp_str, BODY_BOLD_FONT, iw, cpp_h, 5.5, 10.5, step=0.25)
+        c.setFillColorRGB(0.08, 0.08, 0.08)
+        c.setFont(BODY_BOLD_FONT, cpp_fs)
+        tw = pdfmetrics.stringWidth(cpp_str, BODY_BOLD_FONT, cpp_fs)
+        c.drawString(ix + (iw - tw) / 2, iy + (cpp_h - cpp_fs) / 2, cpp_str)
+
+        text_bbox = [round(ix, 2), round(iy, 2), round(ix + iw, 2), round(iy + text_h, 2)]
+        overflow = False
+        if image_draw_bbox is not None:
+            overflow = (
+                image_draw_bbox[0] < x - 0.001
+                or image_draw_bbox[1] < y - 0.001
+                or image_draw_bbox[2] > x + w + 0.001
+                or image_draw_bbox[3] > y + h + 0.001
+                or image_draw_bbox[1] < text_bbox[3] - 0.001
+            )
+
+        return {
+            "side": side,
+            "final_index": final_index,
+            "row": row,
+            "col": col,
+            "upc12": upc12,
+            "source_crop_bbox": list(source_crop_bbox) if source_crop_bbox else None,
+            "trimmed_crop_bbox": trim_bbox,
+            "image_fit_mode": "contain",
+            "card_bbox": [round(x, 2), round(y, 2), round(x + w, 2), round(y + h, 2)],
+            "image_draw_bbox": image_draw_bbox,
+            "text_bbox": text_bbox,
+            "overflow_or_bleed_detected": bool(overflow),
+            "normalization_flags": flags,
+        }
 
     def _section_shape_policy(section_kind: str) -> Dict[str, float]:
         if section_kind == "main":
@@ -1592,6 +1788,28 @@ def render_full_pallet_pdf(
         trace["excel_lookup_succeeded"] = False
         return None, trace
 
+    def _build_mid_band_candidate_record(
+        p: FullPalletPage,
+        slot: FullPalletMidBandSlot,
+        source_index: int,
+    ) -> dict:
+        match, resolve_trace = _resolve_mid_band_slot(p, slot)
+        return {
+            "side": p.side_letter,
+            "slot": slot,
+            "source_index": int(source_index),
+            "slot_id": slot.slot_id,
+            "group": slot.block_name,
+            "row_index": int(slot.row_index),
+            "slot_in_row": int(slot.slot_in_row),
+            "slot_order": int(slot.slot_order),
+            "last5": _to_last5(slot.last5),
+            "upc12": match.upc12 if match else None,
+            "resolved_name": match.display_name if match else (slot.parsed_name or slot.raw_label_text or "").strip(),
+            "display_name": match.display_name if match else (slot.parsed_name or slot.raw_label_text or "").strip(),
+            "resolve_fallback_path": resolve_trace.get("fallback_path"),
+        }
+
     def _build_mid_band_profile_comparison(
         p: FullPalletPage,
         slots: List[FullPalletMidBandSlot],
@@ -1604,28 +1822,14 @@ def render_full_pallet_pdf(
             if v is not None
         }
 
+        ordered_slots = sorted(slots, key=lambda s: (int(s.row_index), int(s.slot_in_row), int(s.slot_order)))
         candidates_by_group: Dict[str, List[dict]] = {g: [] for g in groups}
-        for slot in sorted(slots, key=lambda s: (int(s.row_index), int(s.slot_in_row), int(s.slot_order))):
-            group = str(slot.block_name or "unknown")
+        for source_index, slot in enumerate(ordered_slots):
+            candidate = _build_mid_band_candidate_record(p, slot, source_index)
+            group = str(candidate.get("group") or "unknown")
             if group not in candidates_by_group:
                 candidates_by_group[group] = []
-            match, resolve_trace = _resolve_mid_band_slot(p, slot)
-            last5 = _to_last5(slot.last5)
-            candidates_by_group[group].append(
-                {
-                    "side": p.side_letter,
-                    "slot": slot,
-                    "slot_id": slot.slot_id,
-                    "group": group,
-                    "row_index": int(slot.row_index),
-                    "slot_in_row": int(slot.slot_in_row),
-                    "slot_order": int(slot.slot_order),
-                    "last5": last5,
-                    "upc12": match.upc12 if match else None,
-                    "display_name": match.display_name if match else (slot.parsed_name or slot.raw_label_text or "").strip(),
-                    "resolve_fallback_path": resolve_trace.get("fallback_path"),
-                }
-            )
+            candidates_by_group[group].append(candidate)
 
         overage: Dict[str, int] = {}
         shortage: Dict[str, int] = {}
@@ -1685,6 +1889,7 @@ def render_full_pallet_pdf(
         layout_debug: Optional[Dict[str, object]] = None,
         layout_assignment_rows: Optional[List[dict]] = None,
         selection_debug: Optional[Dict[str, object]] = None,
+        normalization_debug_rows: Optional[List[dict]] = None,
     ) -> Tuple[int, int, bool, float, int, int]:
         nonlocal rightmost_used, matched_cells, unmatched_cells
 
@@ -1696,29 +1901,18 @@ def render_full_pallet_pdf(
             [s for r in section.rows for s in r.slots],
             key=lambda s: (int(s.row_index), int(s.slot_in_row), int(s.slot_order)),
         )
+        candidate_records = [
+            _build_mid_band_candidate_record(p, slot, source_index)
+            for source_index, slot in enumerate(candidate_slots)
+        ]
         selection = select_mid_band_cards_for_display(
             p.side_letter,
-            [
-                {
-                    "slot": slot,
-                    "slot_id": slot.slot_id,
-                    "group": slot.block_name,
-                    "row_index": int(slot.row_index),
-                    "slot_in_row": int(slot.slot_in_row),
-                    "slot_order": int(slot.slot_order),
-                    "last5": _to_last5(slot.last5),
-                    "upc12": None,
-                }
-                for slot in candidate_slots
-            ],
+            candidate_records,
             profile,
         )
-        selected_slot_ids = {
-            str(candidate.get("slot_id") or getattr(candidate.get("slot"), "slot_id", ""))
-            for candidate in selection.selected_cards
-        }
         if selection_debug is not None:
             selection_debug.update(selection.debug_summary)
+        render_assignment_debug: List[dict] = []
 
         card_w = float(plan["card_w"])
         card_h = float(plan["card_h"])
@@ -1761,111 +1955,155 @@ def render_full_pallet_pdf(
                 }
             )
 
-        for row in sorted(section.rows, key=lambda r: r.row_index):
-            y = grid_top - (row.row_index + 1) * card_h - row.row_index * row_gutter
-            ordered_slots: List[FullPalletMidBandSlot] = sorted(row.slots, key=lambda s: s.slot_in_row)
+        for selected_candidate in selection.selected_cards:
+            slot = selected_candidate.get("slot")
+            if slot is None:
+                continue
+            final_index = int(selected_candidate.get("final_index", slots_drawn))
+            render_row = int(selected_candidate.get("selected_row", slot.row_index))
+            render_col = int(selected_candidate.get("selected_col", slot.slot_in_row))
+            x = row_xs[min(max(render_col, 0), len(row_xs) - 1)]
+            y = grid_top - (render_row + 1) * card_h - render_row * row_gutter
 
-            for slot in ordered_slots:
-                if slot.slot_id not in selected_slot_ids:
-                    continue
-                x = row_xs[slot.slot_in_row]
+            match, resolve_trace = _resolve_mid_band_slot(p, slot)
+            if (
+                position_fallback_debug_rows is not None
+                and str(resolve_trace.get("fallback_path", "")).startswith("template_position_")
+            ):
+                position_fallback_debug_rows.append(
+                    {
+                        "side": p.side_letter,
+                        "slot_id": slot.slot_id,
+                        "row_index": slot.row_index,
+                        "slot_in_row": slot.slot_in_row,
+                        "fallback_scope": resolve_trace.get("position_fallback_scope"),
+                        "fallback_candidate_upcs": resolve_trace.get("fallback_candidate_upcs", []),
+                        "fallback_similarity_scores": resolve_trace.get("fallback_similarity_scores", {}),
+                        "chosen_candidate": resolve_trace.get("chosen_candidate"),
+                    }
+                )
+            upc12 = match.upc12 if match else None
+            cpp = match.cpp_qty if match else None
+            disp_name = (
+                match.display_name
+                if match and match.display_name
+                else (slot.parsed_name or slot.raw_label_text or "").strip()
+            )
 
-                match, resolve_trace = _resolve_mid_band_slot(p, slot)
-                if (
-                    position_fallback_debug_rows is not None
-                    and str(resolve_trace.get("fallback_path", "")).startswith("template_position_")
-                ):
-                    position_fallback_debug_rows.append(
+            if upc12:
+                upc_str = upc12
+                matched_cells += 1
+            else:
+                last5_key = _to_last5(slot.last5)
+                upc_str = f"LAST5 {last5_key}" if last5_key else "LAST5 MISSING"
+                disp_name = f"UNRESOLVED {last5_key}" if last5_key else "UNRESOLVED"
+                unresolved_bucket.append(last5_key or slot.slot_id)
+                if unresolved_debug_rows is not None:
+                    unresolved_debug_rows.append(
                         {
+                            "page_index": p.page_index,
                             "side": p.side_letter,
                             "slot_id": slot.slot_id,
                             "row_index": slot.row_index,
                             "slot_in_row": slot.slot_in_row,
-                            "fallback_scope": resolve_trace.get("position_fallback_scope"),
+                            "block_name": slot.block_name,
+                            "labels_last5": resolve_trace.get("labels_last5"),
+                            "labels_text": (slot.raw_label_text or "").strip(),
+                            "fallback_path": resolve_trace.get("fallback_path"),
+                            "label_hint_upc_candidates": resolve_trace.get("label_hint_upc_candidates", []),
+                            "label_hint_last5_candidates": resolve_trace.get("label_hint_last5_candidates", []),
                             "fallback_candidate_upcs": resolve_trace.get("fallback_candidate_upcs", []),
                             "fallback_similarity_scores": resolve_trace.get("fallback_similarity_scores", {}),
                             "chosen_candidate": resolve_trace.get("chosen_candidate"),
+                            "position_fallback_scope": resolve_trace.get("position_fallback_scope"),
+                            "excel_lookup_succeeded": bool(resolve_trace.get("excel_lookup_succeeded")),
                         }
                     )
-                upc12 = match.upc12 if match else None
-                cpp = match.cpp_qty if match else None
-                disp_name = (
-                    match.display_name
-                    if match and match.display_name
-                    else (slot.parsed_name or slot.raw_label_text or "").strip()
+                unmatched_cells += 1
+
+            try:
+                img = crop_image_cell(
+                    images_doc,
+                    p.page_index,
+                    slot.bbox,
+                    zoom=float(plan["crop_zoom"]),
+                    inset=float(plan["crop_inset"]),
                 )
+            except Exception:
+                img = None
 
-                if upc12:
-                    upc_str = upc12
-                    matched_cells += 1
-                else:
-                    last5_key = _to_last5(slot.last5)
-                    upc_str = f"LAST5 {last5_key}" if last5_key else "LAST5 MISSING"
-                    disp_name = f"UNRESOLVED {last5_key}" if last5_key else "UNRESOLVED"
-                    unresolved_bucket.append(last5_key or slot.slot_id)
-                    if unresolved_debug_rows is not None:
-                        unresolved_debug_rows.append(
-                            {
-                                "page_index": p.page_index,
-                                "side": p.side_letter,
-                                "slot_id": slot.slot_id,
-                                "row_index": slot.row_index,
-                                "slot_in_row": slot.slot_in_row,
-                                "block_name": slot.block_name,
-                                "labels_last5": resolve_trace.get("labels_last5"),
-                                "labels_text": (slot.raw_label_text or "").strip(),
-                                "fallback_path": resolve_trace.get("fallback_path"),
-                                "label_hint_upc_candidates": resolve_trace.get("label_hint_upc_candidates", []),
-                                "label_hint_last5_candidates": resolve_trace.get("label_hint_last5_candidates", []),
-                                "fallback_candidate_upcs": resolve_trace.get("fallback_candidate_upcs", []),
-                                "fallback_similarity_scores": resolve_trace.get("fallback_similarity_scores", {}),
-                                "chosen_candidate": resolve_trace.get("chosen_candidate"),
-                                "position_fallback_scope": resolve_trace.get("position_fallback_scope"),
-                                "excel_lookup_succeeded": bool(resolve_trace.get("excel_lookup_succeeded")),
-                            }
-                        )
-                    unmatched_cells += 1
+            if img is None:
+                missing_image_slots.append(slot.slot_id)
 
-                try:
-                    img = crop_image_cell(
-                        images_doc,
-                        p.page_index,
-                        slot.bbox,
-                        zoom=float(plan["crop_zoom"]),
-                        inset=float(plan["crop_inset"]),
-                    )
-                except Exception:
-                    img = None
+            if x < content_x0 - 0.001 or (x + card_w) > (content_x0 + content_w + 0.001):
+                overflow = True
 
-                if img is None:
-                    missing_image_slots.append(slot.slot_id)
+            c.setFillColorRGB(1, 1, 1)
+            c.setStrokeColorRGB(*FILLED_STROKE)
+            c.setLineWidth(0.75)
+            c.rect(x, y, card_w, card_h, stroke=1, fill=1)
+            norm_debug = _draw_mid_band_card(
+                c,
+                x,
+                y,
+                card_w,
+                card_h,
+                img,
+                upc_str,
+                disp_name,
+                cpp,
+                side=p.side_letter,
+                final_index=final_index,
+                row=render_row,
+                col=render_col,
+                source_crop_bbox=slot.bbox,
+            )
+            if normalization_debug_rows is not None:
+                normalization_debug_rows.append(norm_debug)
 
-                if x < content_x0 - 0.001 or (x + card_w) > (content_x0 + content_w + 0.001):
-                    overflow = True
+            if debug_overlay:
+                c.setFillColorRGB(0.35, 0.35, 0.35)
+                c.setFont("Helvetica", 6)
+                c.drawString(x + 2, y + card_h - 8, slot.slot_id)
 
-                c.setFillColorRGB(1, 1, 1)
-                c.setStrokeColorRGB(*FILLED_STROKE)
-                c.setLineWidth(0.75)
-                c.rect(x, y, card_w, card_h, stroke=1, fill=1)
-                _draw_card(c, x, y, card_w, card_h, img, upc_str, disp_name, cpp)
+            if layout_assignment_rows is not None:
+                layout_assignment_rows.append(
+                    {
+                        "side": p.side_letter,
+                        "final_index": final_index,
+                        "slot_id": slot.slot_id,
+                        "rendered_row": render_row,
+                        "rendered_col": render_col,
+                        "group": selected_candidate.get("selected_group"),
+                        "x": round(float(x), 2),
+                        "y": round(float(y), 2),
+                        "upc12": upc12,
+                    }
+                )
+            render_assignment_debug.append(
+                {
+                    "final_index": final_index,
+                    "row": render_row,
+                    "col": render_col,
+                    "group": selected_candidate.get("selected_group"),
+                    "x": round(float(x), 2),
+                    "y": round(float(y), 2),
+                    "upc12": upc12,
+                    "slot_id": slot.slot_id,
+                    "image_draw_bbox": norm_debug.get("image_draw_bbox"),
+                    "text_bbox": norm_debug.get("text_bbox"),
+                    "overflow_or_bleed_detected": norm_debug.get("overflow_or_bleed_detected"),
+                }
+            )
+            slots_drawn += 1
 
-                if debug_overlay:
-                    c.setFillColorRGB(0.35, 0.35, 0.35)
-                    c.setFont("Helvetica", 6)
-                    c.drawString(x + 2, y + card_h - 8, slot.slot_id)
-
-                if layout_assignment_rows is not None:
-                    layout_assignment_rows.append(
-                        {
-                            "side": p.side_letter,
-                            "slot_id": slot.slot_id,
-                            "rendered_row": int(row.row_index),
-                            "rendered_col": int(slot.slot_in_row),
-                            "x": round(float(x), 2),
-                            "y": round(float(y), 2),
-                        }
-                    )
-                slots_drawn += 1
+        if selection_debug is not None:
+            render_assignment_debug.sort(key=lambda r: int(r.get("final_index", 0)))
+            selected_ids = [r.get("slot_id") for r in selection_debug.get("selected_order", [])]
+            rendered_ids = [r.get("slot_id") for r in render_assignment_debug]
+            selection_debug["render_assignment"] = render_assignment_debug
+            selection_debug["actual_selected_count"] = len(selection.selected_cards)
+            selection_debug["final_render_order_matches_selected_order"] = rendered_ids == selected_ids
 
         sec_bottom = grid_top - 3 * card_h - 2 * row_gutter
         return 8, 3, overflow, sec_bottom, slots_drawn, 8
@@ -1886,6 +2124,7 @@ def render_full_pallet_pdf(
         layout_debug: Optional[Dict[str, object]] = None,
         layout_assignment_rows: Optional[List[dict]] = None,
         selection_debug: Optional[Dict[str, object]] = None,
+        normalization_debug_rows: Optional[List[dict]] = None,
     ) -> Tuple[int, int, bool, float, int, int]:
         nonlocal rightmost_used, matched_cells, unmatched_cells
 
@@ -1896,21 +2135,13 @@ def render_full_pallet_pdf(
         if not all_candidate_slots:
             return 0, 0, False, sec_top, 0, 0
         profile = get_mid_band_physical_profile(p.side_letter)
+        candidate_records = [
+            _build_mid_band_candidate_record(p, slot, source_index)
+            for source_index, slot in enumerate(all_candidate_slots)
+        ]
         selection = select_mid_band_cards_for_display(
             p.side_letter,
-            [
-                {
-                    "slot": slot,
-                    "slot_id": slot.slot_id,
-                    "group": slot.block_name,
-                    "row_index": int(slot.row_index),
-                    "slot_in_row": int(slot.slot_in_row),
-                    "slot_order": int(slot.slot_order),
-                    "last5": _to_last5(slot.last5),
-                    "upc12": None,
-                }
-                for slot in all_candidate_slots
-            ],
+            candidate_records,
             profile,
         )
         all_slots: List[FullPalletMidBandSlot] = [
@@ -1997,8 +2228,10 @@ def render_full_pallet_pdf(
         mapped_clean = 0
         mapped_fallback = 0
         mapped_empty = 0
+        render_assignment_debug: List[dict] = []
 
         for idx, slot in enumerate(all_slots):
+            selected_candidate = selection.selected_cards[idx] if idx < len(selection.selected_cards) else {}
             ri = idx // cols
             ci = idx % cols
             x = row_xs[ci]
@@ -2209,7 +2442,24 @@ def render_full_pallet_pdf(
             c.setStrokeColorRGB(*FILLED_STROKE)
             c.setLineWidth(0.75)
             c.rect(x, y, card_w, card_h, stroke=1, fill=1)
-            _draw_card(c, x, y, card_w, card_h, img, upc_str, disp_name, cpp)
+            norm_debug = _draw_mid_band_card(
+                c,
+                x,
+                y,
+                card_w,
+                card_h,
+                img,
+                upc_str,
+                disp_name,
+                cpp,
+                side=p.side_letter,
+                final_index=int(idx),
+                row=int(ri),
+                col=int(ci),
+                source_crop_bbox=image_crop_bbox_used,
+            )
+            if normalization_debug_rows is not None:
+                normalization_debug_rows.append(norm_debug)
 
             if debug_overlay:
                 c.setFillColorRGB(0.35, 0.35, 0.35)
@@ -2220,13 +2470,31 @@ def render_full_pallet_pdf(
                 layout_assignment_rows.append(
                     {
                         "side": p.side_letter,
+                        "final_index": int(idx),
                         "slot_id": slot.slot_id,
                         "rendered_row": int(ri),
                         "rendered_col": int(ci),
+                        "group": selected_candidate.get("selected_group"),
                         "x": round(float(x), 2),
                         "y": round(float(y), 2),
+                        "upc12": upc12,
                     }
                 )
+            render_assignment_debug.append(
+                {
+                    "final_index": int(idx),
+                    "row": int(ri),
+                    "col": int(ci),
+                    "group": selected_candidate.get("selected_group"),
+                    "x": round(float(x), 2),
+                    "y": round(float(y), 2),
+                    "upc12": upc12,
+                    "slot_id": slot.slot_id,
+                    "image_draw_bbox": norm_debug.get("image_draw_bbox"),
+                    "text_bbox": norm_debug.get("text_bbox"),
+                    "overflow_or_bleed_detected": norm_debug.get("overflow_or_bleed_detected"),
+                }
+            )
             slots_drawn += 1
 
         if detection_debug is not None:
@@ -2235,6 +2503,12 @@ def render_full_pallet_pdf(
             detection_debug["mapped_clean_count"] = mapped_clean
             detection_debug["mapped_fallback_count"] = mapped_fallback
             detection_debug["mapped_empty_count"] = mapped_empty
+        if selection_debug is not None:
+            selected_ids = [r.get("slot_id") for r in selection_debug.get("selected_order", [])]
+            rendered_ids = [r.get("slot_id") for r in render_assignment_debug]
+            selection_debug["render_assignment"] = render_assignment_debug
+            selection_debug["actual_selected_count"] = len(selection.selected_cards)
+            selection_debug["final_render_order_matches_selected_order"] = rendered_ids == selected_ids
 
         sec_bottom = grid_top - rows * card_h - max(0, rows - 1) * row_gutter
         return cols, rows, overflow, sec_bottom, slots_drawn, cols
@@ -2920,6 +3194,7 @@ def render_full_pallet_pdf(
             mid_band_layout_debug: Dict[str, object] = {}
             mid_band_layout_assignments: List[dict] = []
             mid_band_selection_debug: Dict[str, object] = {}
+            mid_band_normalization_debug_rows: List[dict] = []
             missing_main_images: List[str] = []
             missing_bonus_images: List[str] = []
             main_render_source = (
@@ -3069,6 +3344,7 @@ def render_full_pallet_pdf(
                     layout_debug=mid_band_layout_debug,
                     layout_assignment_rows=mid_band_layout_assignments,
                     selection_debug=mid_band_selection_debug,
+                    normalization_debug_rows=mid_band_normalization_debug_rows,
                 )
             elif token_first_mid_band_ok and mid_band is not None:
                 (
@@ -3094,6 +3370,7 @@ def render_full_pallet_pdf(
                     layout_debug=mid_band_layout_debug,
                     layout_assignment_rows=mid_band_layout_assignments,
                     selection_debug=mid_band_selection_debug,
+                    normalization_debug_rows=mid_band_normalization_debug_rows,
                 )
             else:
                 (
@@ -3214,6 +3491,26 @@ def render_full_pallet_pdf(
 
             bonus_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(below_bonus_rows)})
             bonus_slots_total = sum(1 for c in pdata.cells if c.row in set(below_bonus_rows))
+            mid_band_normalization_summary = {
+                "side": pdata.side_letter,
+                "rendered_count": len(mid_band_normalization_debug_rows),
+                "trim_cleanup_count": sum(
+                    1 for r in mid_band_normalization_debug_rows if r.get("trimmed_crop_bbox") is not None
+                ),
+                "trim_cleanup_indices": [
+                    r.get("final_index")
+                    for r in mid_band_normalization_debug_rows
+                    if r.get("trimmed_crop_bbox") is not None
+                ],
+                "overflow_or_bleed_count": sum(
+                    1 for r in mid_band_normalization_debug_rows if bool(r.get("overflow_or_bleed_detected"))
+                ),
+                "overflow_or_bleed_indices": [
+                    r.get("final_index")
+                    for r in mid_band_normalization_debug_rows
+                    if bool(r.get("overflow_or_bleed_detected"))
+                ],
+            }
             mid_band_profile_comparison = (
                 _build_mid_band_profile_comparison(pdata, main_slots)
                 if main_slots
@@ -3270,6 +3567,7 @@ def render_full_pallet_pdf(
                             "token_first_unresolved_slots": [r.get("slot_id") for r in unresolved_mid_slot_debug] if token_first_mid_band_ok else [],
                             "physical_profile_comparison": mid_band_profile_comparison,
                             "display_selection_debug": mid_band_selection_debug,
+                            "image_normalization_summary": mid_band_normalization_summary,
                             "layout_debug": mid_band_layout_debug,
                         },
                         "grid_detected": {
@@ -3383,6 +3681,36 @@ def render_full_pallet_pdf(
                         }
                     }
                 )
+                st.write(
+                    {
+                        "FULL_PALLET_mid_band_final_render_selection": {
+                            "side": pdata.side_letter,
+                            "candidate_count": mid_band_selection_debug.get("candidate_count"),
+                            "candidate_order": mid_band_selection_debug.get("candidate_order", []),
+                            "selected_count": mid_band_selection_debug.get("selected_count"),
+                            "selected_order": mid_band_selection_debug.get("selected_order", []),
+                            "omitted_count": mid_band_selection_debug.get("omitted_count"),
+                            "omitted_order": mid_band_selection_debug.get("omitted_order", []),
+                            "render_assignment": mid_band_selection_debug.get("render_assignment", []),
+                            "image_normalization_summary": mid_band_normalization_summary,
+                            "summary": {
+                                "expected_selected_count": mid_band_selection_debug.get("expected_selected_count"),
+                                "actual_selected_count": mid_band_selection_debug.get("actual_selected_count"),
+                                "shortage_or_overage": mid_band_selection_debug.get("shortage_or_overage"),
+                                "final_render_order_matches_selected_order": mid_band_selection_debug.get(
+                                    "final_render_order_matches_selected_order"
+                                ),
+                            },
+                        }
+                    }
+                )
+                if mid_band_normalization_debug_rows:
+                    st.write(
+                        {
+                            "FULL_PALLET_mid_band_image_normalization_summary": mid_band_normalization_summary,
+                        }
+                    )
+                    st.dataframe(pd.DataFrame(mid_band_normalization_debug_rows), use_container_width=True)
                 retained_profile_rows = [
                     {k: v for k, v in {**row, "profile_action": "retain"}.items() if k != "slot"}
                     for group_rows in dict(
