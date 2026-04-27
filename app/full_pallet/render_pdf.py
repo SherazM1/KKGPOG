@@ -874,7 +874,64 @@ def render_full_pallet_pdf(
             "crop_inset": crop_inset,
         }
 
-    def _derive_token_first_image_bbox(
+    def _build_anchor_mid_band_slot_grid(
+        anchor_bbox: Optional[Tuple[float, float, float, float]],
+        page_width: float,
+        page_height: float,
+    ) -> Optional[List[List[Tuple[float, float, float, float]]]]:
+        if anchor_bbox is None:
+            return None
+        x0, top, x1, bottom = anchor_bbox
+        section_w = float(x1 - x0)
+        section_h = float(bottom - top)
+        if section_w <= 0.0 or section_h <= 0.0:
+            return None
+
+        inter_gap = max(10.0, min(28.0, section_w * 0.045))
+        intra_gap = max(4.0, min(12.0, section_w * 0.014))
+        row_gap = max(6.0, min(14.0, section_h * 0.08))
+        slot_w = (section_w - (2.0 * inter_gap) - (5.0 * intra_gap)) / 8.0
+        row_h = max(40.0, min(62.0, section_h * 0.28))
+        needed_h = 3.0 * row_h + 2.0 * row_gap
+        if slot_w < 18.0 or section_h < 90.0:
+            return None
+        if needed_h > section_h:
+            row_h = (section_h - 2.0 * row_gap) / 3.0
+        if row_h < 24.0:
+            return None
+
+        row_xs = [
+            x0,
+            x0 + slot_w + intra_gap,
+            x0 + 2 * slot_w + intra_gap + inter_gap,
+            x0 + 3 * slot_w + 2 * intra_gap + inter_gap,
+            x0 + 4 * slot_w + 3 * intra_gap + inter_gap,
+            x0 + 5 * slot_w + 4 * intra_gap + inter_gap,
+            x0 + 6 * slot_w + 5 * intra_gap + 2 * inter_gap,
+            x0 + 7 * slot_w + 6 * intra_gap + 2 * inter_gap,
+        ]
+        rows: List[List[Tuple[float, float, float, float]]] = []
+        for r in range(3):
+            ry0 = top + r * (row_h + row_gap)
+            ry1 = ry0 + row_h
+            if r == 2 and ry1 > bottom:
+                overflow = ry1 - bottom
+                ry0 -= overflow
+                ry1 -= overflow
+            rows.append(
+                [
+                    (
+                        max(0.0, float(sx)),
+                        max(0.0, float(ry0)),
+                        min(page_width, float(sx + slot_w)),
+                        min(page_height, float(ry1)),
+                    )
+                    for sx in row_xs
+                ]
+            )
+        return rows
+
+    def _derive_token_first_fallback_image_bbox(
         slot: FullPalletMidBandSlot,
         section: FullPalletMidBandSection,
         page_width: float,
@@ -957,6 +1014,51 @@ def render_full_pallet_pdf(
             y1 = min(page_height, center_y_for_crop + half)
 
         return (float(x0), float(y0), float(x1), float(y1))
+
+    def _derive_token_first_image_bbox(
+        slot: FullPalletMidBandSlot,
+        section: FullPalletMidBandSection,
+        page_width: float,
+        page_height: float,
+    ) -> Tuple[Tuple[float, float, float, float], str, bool]:
+        grid = _build_anchor_mid_band_slot_grid(section.anchor_bbox, page_width, page_height)
+        if grid:
+            sx0, sy0, sx1, sy1 = slot.bbox
+            tcx = float(sx0 + sx1) / 2.0
+            tcy = float(sy0 + sy1) / 2.0
+            nearest_bbox: Optional[Tuple[float, float, float, float]] = None
+            nearest_dist = float("inf")
+            for row in grid:
+                for b in row:
+                    bx0, by0, bx1, by1 = b
+                    bcx = (bx0 + bx1) / 2.0
+                    bcy = (by0 + by1) / 2.0
+                    d = ((bcx - tcx) ** 2 + (bcy - tcy) ** 2) ** 0.5
+                    if d < nearest_dist:
+                        nearest_dist = d
+                        nearest_bbox = b
+            if nearest_bbox is not None:
+                bx0, by0, bx1, by1 = nearest_bbox
+                bw = max(1.0, bx1 - bx0)
+                bh = max(1.0, by1 - by0)
+                crop_w = max(36.0, min(72.0, bw * 0.95))
+                crop_h = max(36.0, min(58.0, bh * 1.05))
+                cx = (bx0 + bx1) / 2.0
+                cy = (by0 + by1) / 2.0 - crop_h * 0.20
+                x0 = cx - crop_w / 2.0
+                x1 = cx + crop_w / 2.0
+                y0 = cy - crop_h / 2.0
+                y1 = cy + crop_h / 2.0
+                # clamp to page bounds
+                x0 = max(0.0, x0)
+                y0 = max(0.0, y0)
+                x1 = min(page_width, x1)
+                y1 = min(page_height, y1)
+                if (x1 - x0) >= 30.0 and (y1 - y0) >= 30.0:
+                    return (float(x0), float(y0), float(x1), float(y1)), "mid_band_slot_grid_bbox", True
+
+        fb = _derive_token_first_fallback_image_bbox(slot, section, page_width, page_height)
+        return fb, "derived_token_cell_bbox_fallback", False
 
     def _resolve_mid_band_slot(
         page: FullPalletPage,
@@ -1239,13 +1341,12 @@ def render_full_pallet_pdf(
                     )
                 unmatched_cells += 1
 
-            image_crop_bbox_used = _derive_token_first_image_bbox(
+            image_crop_bbox_used, image_crop_source, used_slot_grid_crop_path = _derive_token_first_image_bbox(
                 slot=slot,
                 section=section,
                 page_width=page_width,
                 page_height=page_height,
             )
-            image_crop_source = "derived_token_cell_bbox"
             crop_error: Optional[str] = None
             try:
                 img = crop_image_cell(
@@ -1282,6 +1383,8 @@ def render_full_pallet_pdf(
                         "extraction_bbox": list(slot.extraction_bbox) if slot.extraction_bbox else None,
                         "image_crop_bbox_used": list(image_crop_bbox_used) if image_crop_bbox_used else None,
                         "image_crop_source": image_crop_source,
+                        "used_slot_grid_crop_path": bool(used_slot_grid_crop_path),
+                        "crop_path_used": "slot_grid" if used_slot_grid_crop_path else "fallback",
                         "derived_bbox_width": bw,
                         "derived_bbox_height": bh,
                         "crop_zoom": float(plan["crop_zoom"]),
@@ -2379,6 +2482,8 @@ def render_full_pallet_pdf(
                 if token_first_mid_band_ok:
                     crop_success_count = sum(1 for r in token_first_crop_debug_rows if bool(r.get("crop_success")))
                     crop_failure_count = len(token_first_crop_debug_rows) - crop_success_count
+                    slot_grid_crop_count = sum(1 for r in token_first_crop_debug_rows if bool(r.get("used_slot_grid_crop_path")))
+                    fallback_crop_count = len(token_first_crop_debug_rows) - slot_grid_crop_count
                     tiny_bbox_count = sum(1 for r in token_first_crop_debug_rows if bool(r.get("tiny_bbox")))
                     large_bbox_count = sum(1 for r in token_first_crop_debug_rows if bool(r.get("large_bbox")))
                     widths = [float(r["crop_image_width"]) for r in token_first_crop_debug_rows if r.get("crop_image_width") is not None]
@@ -2389,6 +2494,8 @@ def render_full_pallet_pdf(
                     st.write(
                         {
                             "token_first_slot_count": len(token_first_crop_debug_rows),
+                            "new_crop_path_count": slot_grid_crop_count,
+                            "fallback_crop_path_count": fallback_crop_count,
                             "crop_success_count": crop_success_count,
                             "crop_failure_count": crop_failure_count,
                             "tiny_bbox_count": tiny_bbox_count,
