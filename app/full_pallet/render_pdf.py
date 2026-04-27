@@ -874,6 +874,90 @@ def render_full_pallet_pdf(
             "crop_inset": crop_inset,
         }
 
+    def _derive_token_first_image_bbox(
+        slot: FullPalletMidBandSlot,
+        section: FullPalletMidBandSection,
+        page_width: float,
+        page_height: float,
+    ) -> Tuple[float, float, float, float]:
+        all_slots = [s for r in (section.rows or []) for s in (r.slots or [])]
+        centers = [(s, (float(s.bbox[0] + s.bbox[2]) / 2.0, float(s.bbox[1] + s.bbox[3]) / 2.0)) for s in all_slots if s.bbox]
+
+        row_x_gaps: List[float] = []
+        for row in section.rows or []:
+            xs = sorted([(float(s.bbox[0] + s.bbox[2]) / 2.0) for s in row.slots if s.bbox])
+            if len(xs) >= 2:
+                row_x_gaps.extend([xs[i + 1] - xs[i] for i in range(len(xs) - 1) if (xs[i + 1] - xs[i]) > 1.0])
+
+        row_centers: List[float] = []
+        for row in section.rows or []:
+            ys = [(float(s.bbox[1] + s.bbox[3]) / 2.0) for s in row.slots if s.bbox]
+            if ys:
+                row_centers.append(float(np.mean(ys)))
+        row_centers = sorted(set(row_centers))
+        row_y_gaps = [row_centers[i + 1] - row_centers[i] for i in range(len(row_centers) - 1) if (row_centers[i + 1] - row_centers[i]) > 1.0]
+
+        median_x_spacing = float(np.median(row_x_gaps)) if row_x_gaps else None
+        median_y_spacing = float(np.median(row_y_gaps)) if row_y_gaps else None
+
+        if median_x_spacing is None and len(centers) >= 2:
+            xs_all = sorted([c[0] for _s, c in centers])
+            all_x_gaps = [xs_all[i + 1] - xs_all[i] for i in range(len(xs_all) - 1) if (xs_all[i + 1] - xs_all[i]) > 1.0]
+            median_x_spacing = float(np.median(all_x_gaps)) if all_x_gaps else None
+
+        crop_w = max(36.0, min(72.0, (median_x_spacing * 0.90) if median_x_spacing is not None else 54.0))
+        crop_h = max(36.0, min(58.0, (median_y_spacing * 0.90) if median_y_spacing is not None else 44.0))
+
+        sx0, sy0, sx1, sy1 = slot.bbox
+        cx = float(sx0 + sx1) / 2.0
+        cy = float(sy0 + sy1) / 2.0
+        center_y_for_crop = cy - crop_h * 0.25
+
+        x0 = cx - crop_w / 2.0
+        x1 = cx + crop_w / 2.0
+        y0 = center_y_for_crop - crop_h / 2.0
+        y1 = center_y_for_crop + crop_h / 2.0
+
+        # Clamp to anchor range first (with allowance), then to page bounds.
+        ax0_lim = 0.0
+        ay0_lim = 0.0
+        ax1_lim = page_width
+        ay1_lim = page_height
+        if section.anchor_bbox is not None:
+            ax0, ay0, ax1, ay1 = section.anchor_bbox
+            ax0_lim = max(0.0, float(ax0) - 30.0)
+            ay0_lim = max(0.0, float(ay0) - 20.0)
+            ax1_lim = min(page_width, float(ax1) + 30.0)
+            ay1_lim = min(page_height, float(ay1) + 20.0)
+
+        def _shift_within(v0: float, v1: float, lo: float, hi: float) -> Tuple[float, float]:
+            if v0 < lo:
+                dv = lo - v0
+                v0 += dv
+                v1 += dv
+            if v1 > hi:
+                dv = v1 - hi
+                v0 -= dv
+                v1 -= dv
+            return v0, v1
+
+        x0, x1 = _shift_within(x0, x1, ax0_lim, ax1_lim)
+        y0, y1 = _shift_within(y0, y1, ay0_lim, ay1_lim)
+        x0, x1 = _shift_within(x0, x1, 0.0, page_width)
+        y0, y1 = _shift_within(y0, y1, 0.0, page_height)
+
+        # Final safety: preserve a minimum crop footprint.
+        if (x1 - x0) < 30.0:
+            half = 15.0
+            x0 = max(0.0, cx - half)
+            x1 = min(page_width, cx + half)
+        if (y1 - y0) < 30.0:
+            half = 15.0
+            y0 = max(0.0, center_y_for_crop - half)
+            y1 = min(page_height, center_y_for_crop + half)
+
+        return (float(x0), float(y0), float(x1), float(y1))
+
     def _resolve_mid_band_slot(
         page: FullPalletPage,
         slot: FullPalletMidBandSlot,
@@ -1084,6 +1168,13 @@ def render_full_pallet_pdf(
         grid_top = sec_top
         overflow = bool(plan["overflow"])
         slots_drawn = 0
+        try:
+            img_page = images_doc[p.page_index]
+            page_width = float(img_page.rect.width)
+            page_height = float(img_page.rect.height)
+        except Exception:
+            page_width = float(PAGE_W)
+            page_height = float(BASE_PAGE_H)
 
         for idx, slot in enumerate(all_slots):
             ri = idx // cols
@@ -1148,8 +1239,13 @@ def render_full_pallet_pdf(
                     )
                 unmatched_cells += 1
 
-            image_crop_bbox_used = slot.bbox
-            image_crop_source = "slot.bbox"
+            image_crop_bbox_used = _derive_token_first_image_bbox(
+                slot=slot,
+                section=section,
+                page_width=page_width,
+                page_height=page_height,
+            )
+            image_crop_source = "derived_token_cell_bbox"
             crop_error: Optional[str] = None
             try:
                 img = crop_image_cell(
@@ -1181,10 +1277,13 @@ def render_full_pallet_pdf(
                         "resolved_upc12": upc12,
                         "resolved_display_name": disp_name,
                         "resolved_cpp": cpp,
+                        "token_bbox": list(slot.bbox) if slot.bbox else None,
                         "slot_bbox": list(slot.bbox) if slot.bbox else None,
                         "extraction_bbox": list(slot.extraction_bbox) if slot.extraction_bbox else None,
                         "image_crop_bbox_used": list(image_crop_bbox_used) if image_crop_bbox_used else None,
                         "image_crop_source": image_crop_source,
+                        "derived_bbox_width": bw,
+                        "derived_bbox_height": bh,
                         "crop_zoom": float(plan["crop_zoom"]),
                         "crop_inset": float(plan["crop_inset"]),
                         "crop_success": bool(img is not None),
