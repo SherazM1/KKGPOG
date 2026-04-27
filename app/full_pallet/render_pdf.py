@@ -821,6 +821,8 @@ def render_full_pallet_pdf(
         slot_count: int,
         include_bar: bool = False,
     ) -> Dict[str, float]:
+        intra_gap = 6.0
+        inter_gap = 14.0
         col_gap = 6.0
         row_gutter = 8.0
         min_card_h = 50.0
@@ -836,26 +838,38 @@ def render_full_pallet_pdf(
                 "card_w": 0.0,
                 "card_h": 0.0,
                 "col_gap": col_gap,
+                "intra_gap": intra_gap,
+                "inter_gap": inter_gap,
                 "row_gutter": row_gutter,
                 "total_w": 0.0,
                 "total_h": 0.0,
                 "overflow": False,
                 "crop_zoom": crop_zoom,
                 "crop_inset": crop_inset,
+                "layout_mode": "empty",
             }
 
         avail = max(1.0, content_w)
         cols = min(8, max(1, slot_count))
         while cols > 1:
-            probe_w = (avail - (cols - 1) * col_gap) / cols
+            if cols == 8:
+                probe_w = (avail - (5.0 * intra_gap) - (2.0 * inter_gap)) / 8.0
+            else:
+                probe_w = (avail - (cols - 1) * col_gap) / cols
             if probe_w >= 24.0:
                 break
             cols -= 1
 
-        card_w = max(24.0, (avail - (cols - 1) * col_gap) / cols)
+        if cols == 8:
+            card_w = max(24.0, (avail - (5.0 * intra_gap) - (2.0 * inter_gap)) / 8.0)
+            total_w = 8.0 * card_w + 5.0 * intra_gap + 2.0 * inter_gap
+            layout_mode = "canonical_8col_spacing"
+        else:
+            card_w = max(24.0, (avail - (cols - 1) * col_gap) / cols)
+            total_w = cols * card_w + max(0, cols - 1) * col_gap
+            layout_mode = "uniform_wrap_spacing"
         card_h = max(min_card_h, min(max_card_h, card_w * card_ratio))
         rows = int(math.ceil(slot_count / cols))
-        total_w = cols * card_w + max(0, cols - 1) * col_gap
         total_h = rows * card_h + max(0, rows - 1) * row_gutter
         if include_bar:
             total_h += SECTION_BAR_H + SECTION_BAR_GAP
@@ -866,13 +880,37 @@ def render_full_pallet_pdf(
             "card_w": card_w,
             "card_h": card_h,
             "col_gap": col_gap,
+            "intra_gap": intra_gap,
+            "inter_gap": inter_gap,
             "row_gutter": row_gutter,
             "total_w": total_w,
             "total_h": total_h,
             "overflow": total_w > (avail + 0.001),
             "crop_zoom": crop_zoom,
             "crop_inset": crop_inset,
+            "layout_mode": layout_mode,
         }
+
+    def _mid_band_row_xs(
+        start_x: float,
+        card_w: float,
+        cols: int,
+        intra_gap: float,
+        inter_gap: float,
+        col_gap: float,
+    ) -> List[float]:
+        if cols == 8:
+            return [
+                start_x,
+                start_x + card_w + intra_gap,
+                start_x + 2 * card_w + intra_gap + inter_gap,
+                start_x + 3 * card_w + 2 * intra_gap + inter_gap,
+                start_x + 4 * card_w + 3 * intra_gap + inter_gap,
+                start_x + 5 * card_w + 4 * intra_gap + inter_gap,
+                start_x + 6 * card_w + 5 * intra_gap + 2 * inter_gap,
+                start_x + 7 * card_w + 6 * intra_gap + 2 * inter_gap,
+            ]
+        return [start_x + i * (card_w + col_gap) for i in range(cols)]
 
     def _build_anchor_mid_band_slot_grid(
         anchor_bbox: Optional[Tuple[float, float, float, float]],
@@ -1285,6 +1323,8 @@ def render_full_pallet_pdf(
         content_x0: float,
         unresolved_debug_rows: Optional[List[dict]] = None,
         position_fallback_debug_rows: Optional[List[dict]] = None,
+        layout_debug: Optional[Dict[str, object]] = None,
+        layout_assignment_rows: Optional[List[dict]] = None,
     ) -> Tuple[int, int, bool, float, int, int]:
         nonlocal rightmost_used, matched_cells, unmatched_cells
 
@@ -1300,21 +1340,37 @@ def render_full_pallet_pdf(
         total_w = float(plan["total_w"])
 
         start_x = content_x0 + max(0.0, (content_w - total_w) / 2.0)
-        row_xs = [
-            start_x,
-            start_x + card_w + intra_gap,
-            start_x + 2 * card_w + intra_gap + inter_gap,
-            start_x + 3 * card_w + 2 * intra_gap + inter_gap,
-            start_x + 4 * card_w + 3 * intra_gap + inter_gap,
-            start_x + 5 * card_w + 4 * intra_gap + inter_gap,
-            start_x + 6 * card_w + 5 * intra_gap + 2 * inter_gap,
-            start_x + 7 * card_w + 6 * intra_gap + 2 * inter_gap,
-        ]
+        row_xs = _mid_band_row_xs(
+            start_x=start_x,
+            card_w=card_w,
+            cols=8,
+            intra_gap=intra_gap,
+            inter_gap=inter_gap,
+            col_gap=intra_gap,
+        )
         rightmost_used = max(rightmost_used, start_x + total_w)
 
         grid_top = y_cursor
         slots_drawn = 0
         overflow = bool(plan["overflow"])
+        if layout_debug is not None:
+            layout_debug.update(
+                {
+                    "side": p.side_letter,
+                    "mode": "canonical_mid_band",
+                    "card_count": len([s for r in section.rows for s in r.slots]),
+                    "columns_used": 8,
+                    "rows_used": 3,
+                    "card_w": card_w,
+                    "card_h": card_h,
+                    "h_gutter_intra": intra_gap,
+                    "h_gutter_inter": inter_gap,
+                    "h_gutter_uniform": None,
+                    "v_gutter": row_gutter,
+                    "origin_x": start_x,
+                    "origin_y": grid_top,
+                }
+            )
 
         for row in sorted(section.rows, key=lambda r: r.row_index):
             y = grid_top - (row.row_index + 1) * card_h - row.row_index * row_gutter
@@ -1407,6 +1463,17 @@ def render_full_pallet_pdf(
                     c.setFont("Helvetica", 6)
                     c.drawString(x + 2, y + card_h - 8, slot.slot_id)
 
+                if layout_assignment_rows is not None:
+                    layout_assignment_rows.append(
+                        {
+                            "side": p.side_letter,
+                            "slot_id": slot.slot_id,
+                            "rendered_row": int(row.row_index),
+                            "rendered_col": int(slot.slot_in_row),
+                            "x": round(float(x), 2),
+                            "y": round(float(y), 2),
+                        }
+                    )
                 slots_drawn += 1
 
         sec_bottom = grid_top - 3 * card_h - 2 * row_gutter
@@ -1425,6 +1492,8 @@ def render_full_pallet_pdf(
         crop_debug_rows: Optional[List[dict]] = None,
         mapping_debug_rows: Optional[List[dict]] = None,
         detection_debug: Optional[Dict[str, object]] = None,
+        layout_debug: Optional[Dict[str, object]] = None,
+        layout_assignment_rows: Optional[List[dict]] = None,
     ) -> Tuple[int, int, bool, float, int, int]:
         nonlocal rightmost_used, matched_cells, unmatched_cells
 
@@ -1445,9 +1514,19 @@ def render_full_pallet_pdf(
         card_h = float(plan["card_h"])
         row_gutter = float(plan["row_gutter"])
         col_gap = float(plan.get("col_gap", 6.0))
+        intra_gap = float(plan.get("intra_gap", 6.0))
+        inter_gap = float(plan.get("inter_gap", 14.0))
         total_w = float(plan["total_w"])
 
         start_x = content_x0 + max(0.0, (content_w - total_w) / 2.0)
+        row_xs = _mid_band_row_xs(
+            start_x=start_x,
+            card_w=card_w,
+            cols=cols,
+            intra_gap=intra_gap,
+            inter_gap=inter_gap,
+            col_gap=col_gap,
+        )
         rightmost_used = max(rightmost_used, start_x + total_w)
         grid_top = sec_top
         overflow = bool(plan["overflow"])
@@ -1477,6 +1556,25 @@ def render_full_pallet_pdf(
             detection_debug["source_image_cell_count"] = len(source_cells)
             detection_debug["ordered_source_cell_ids"] = [str(c.get("cell_id", "")) for c in source_cells]
             detection_debug["strict_side_guardrails"] = strict_side_guardrails
+        if layout_debug is not None:
+            layout_debug.update(
+                {
+                    "side": p.side_letter,
+                    "mode": "token_first_mid_band",
+                    "layout_mode": str(plan.get("layout_mode", "token_first")),
+                    "card_count": len(all_slots),
+                    "columns_used": cols,
+                    "rows_used": rows,
+                    "card_w": card_w,
+                    "card_h": card_h,
+                    "h_gutter_intra": intra_gap if cols == 8 else None,
+                    "h_gutter_inter": inter_gap if cols == 8 else None,
+                    "h_gutter_uniform": col_gap if cols != 8 else None,
+                    "v_gutter": row_gutter,
+                    "origin_x": start_x,
+                    "origin_y": grid_top,
+                }
+            )
 
         mapped_clean = 0
         mapped_fallback = 0
@@ -1485,7 +1583,7 @@ def render_full_pallet_pdf(
         for idx, slot in enumerate(all_slots):
             ri = idx // cols
             ci = idx % cols
-            x = start_x + ci * (card_w + col_gap)
+            x = row_xs[ci]
             y = grid_top - (ri + 1) * card_h - ri * row_gutter
 
             match, resolve_trace = _resolve_mid_band_slot(p, slot)
@@ -1676,6 +1774,8 @@ def render_full_pallet_pdf(
                         "rejected_crop_reasons": rejected_crop_reasons,
                         "constrained_by_label_slot_geometry": bool(constrained_by_slot_geometry),
                         "fallback_reason": fallback_reason,
+                        "rendered_row": int(ri),
+                        "rendered_col": int(ci),
                         "mismatch_note": (
                             "no_source_image_cell_detected_for_slot"
                             if mapped_cell is None
@@ -1698,6 +1798,17 @@ def render_full_pallet_pdf(
                 c.setFont("Helvetica", 6)
                 c.drawString(x + 2, y + card_h - 8, slot.slot_id)
 
+            if layout_assignment_rows is not None:
+                layout_assignment_rows.append(
+                    {
+                        "side": p.side_letter,
+                        "slot_id": slot.slot_id,
+                        "rendered_row": int(ri),
+                        "rendered_col": int(ci),
+                        "x": round(float(x), 2),
+                        "y": round(float(y), 2),
+                    }
+                )
             slots_drawn += 1
 
         if detection_debug is not None:
@@ -2387,6 +2498,8 @@ def render_full_pallet_pdf(
             token_first_crop_debug_rows: List[dict] = []
             token_first_mapping_debug_rows: List[dict] = []
             token_first_detection_debug: Dict[str, object] = {}
+            mid_band_layout_debug: Dict[str, object] = {}
+            mid_band_layout_assignments: List[dict] = []
             missing_main_images: List[str] = []
             missing_bonus_images: List[str] = []
             main_render_source = (
@@ -2533,6 +2646,8 @@ def render_full_pallet_pdf(
                     cx0,
                     unresolved_debug_rows=unresolved_mid_slot_debug,
                     position_fallback_debug_rows=position_fallback_mid_slot_debug,
+                    layout_debug=mid_band_layout_debug,
+                    layout_assignment_rows=mid_band_layout_assignments,
                 )
             elif token_first_mid_band_ok and mid_band is not None:
                 (
@@ -2555,6 +2670,8 @@ def render_full_pallet_pdf(
                     crop_debug_rows=token_first_crop_debug_rows,
                     mapping_debug_rows=token_first_mapping_debug_rows,
                     detection_debug=token_first_detection_debug,
+                    layout_debug=mid_band_layout_debug,
+                    layout_assignment_rows=mid_band_layout_assignments,
                 )
             else:
                 (
@@ -2711,6 +2828,7 @@ def render_full_pallet_pdf(
                             "token_first_rows": int(main_plan.get("rows", 0)) if token_first_mid_band_ok else 0,
                             "token_first_codes": main_last5_codes if token_first_mid_band_ok else [],
                             "token_first_unresolved_slots": [r.get("slot_id") for r in unresolved_mid_slot_debug] if token_first_mid_band_ok else [],
+                            "layout_debug": mid_band_layout_debug,
                         },
                         "grid_detected": {
                             "main_cols": main_cols,
@@ -2775,6 +2893,28 @@ def render_full_pallet_pdf(
                         },
                     }
                 )
+                if mid_band_layout_debug:
+                    st.write(
+                        {
+                            "mid_band_layout_summary": {
+                                "side": pdata.side_letter,
+                                "mid_band_card_count": mid_band_layout_debug.get("card_count"),
+                                "columns_used": mid_band_layout_debug.get("columns_used"),
+                                "rows_used": mid_band_layout_debug.get("rows_used"),
+                                "card_box_width": mid_band_layout_debug.get("card_w"),
+                                "card_box_height": mid_band_layout_debug.get("card_h"),
+                                "horizontal_gutter_intra": mid_band_layout_debug.get("h_gutter_intra"),
+                                "horizontal_gutter_inter": mid_band_layout_debug.get("h_gutter_inter"),
+                                "horizontal_gutter_uniform": mid_band_layout_debug.get("h_gutter_uniform"),
+                                "vertical_gutter": mid_band_layout_debug.get("v_gutter"),
+                                "mid_band_origin_x": mid_band_layout_debug.get("origin_x"),
+                                "mid_band_origin_y": mid_band_layout_debug.get("origin_y"),
+                                "layout_mode": mid_band_layout_debug.get("layout_mode", mid_band_layout_debug.get("mode")),
+                            }
+                        }
+                    )
+                if mid_band_layout_assignments:
+                    st.dataframe(pd.DataFrame(mid_band_layout_assignments), use_container_width=True)
                 if token_first_mid_band_ok:
                     crop_success_count = sum(1 for r in token_first_crop_debug_rows if bool(r.get("crop_success")))
                     crop_failure_count = len(token_first_crop_debug_rows) - crop_success_count
