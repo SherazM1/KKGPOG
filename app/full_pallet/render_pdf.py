@@ -3510,15 +3510,56 @@ def render_full_pallet_pdf(
             pixmap_page_img, pixmap_page_zoom = _render_page_pixmap_image(img_page, zoom=3.0)
         except Exception:
             pixmap_page_img = None
-        pixmap_source_region_bbox = region_bbox
-        pixmap_grid_source = "fixed_3x8_images_pdf_region_split"
-        pixmap_flat_cells = _split_bbox_to_fixed_grid(
-            region_bbox,
-            rows=3,
-            cols=8,
-            cell_id_prefix=f"{p.side_letter}_MID_FIXED",
-        )
+
         pixmap_slot_grid = None
+
+        if strict_side_guardrails and cols == 8:
+            pixmap_slot_grid, pixmap_source_region_bbox, pixmap_grid_source = _build_bd_mid_band_pixmap_grid(
+                source_cells,
+                page_width,
+                page_height,
+                pixmap_page_img,
+                pixmap_page_zoom,
+            )
+
+            pixmap_flat_cells = []
+            if pixmap_slot_grid:
+                for source_row, row in enumerate(pixmap_slot_grid):
+                    for source_col, bbox in enumerate(row):
+                        pixmap_flat_cells.append(
+                            {
+                                "bbox": bbox,
+                                "cell_id": f"{p.side_letter}_MID_PIXMAP_R{source_row + 1}S{source_col + 1}",
+                                "source_row_index": source_row,
+                                "source_slot_index": source_col,
+
+                            }
+                        )
+        elif ac_pixmap_enabled:
+            pixmap_flat_cells, pixmap_source_region_bbox, pixmap_grid_source = _build_ac_mid_band_pixmap_cells(
+                    source_cells,
+                    expected_count=24,
+
+            )
+
+        else:
+            pixmap_source_region_bbox = None
+            pixmap_grid_source = "no_pixmap_profile_for_side"
+            pixmap_flat_cells = []
+        
+        detected_pixmap_count = len(pixmap_flat_cells)
+
+        if detected_pixmap_count != 24:
+            pixmap_source_region_bbox = region_bbox
+            pixmap_grid_source = f"fallback_fixed_3x8_after_detected_count_{detected_pixmap_count}"
+            pixmap_flat_cells = _split_bbox_to_fixed_grid(
+                region_bbox,
+                rows=3,
+                cols=8,
+                cell_id_prefix=f"{p.side_letter}_MID_FIXED_FALLBACK",
+            )
+     
+        
         if detection_debug is not None:
             detection_debug["side"] = p.side_letter
             detection_debug["image_page_index"] = p.page_index
@@ -3752,13 +3793,13 @@ def render_full_pallet_pdf(
                         image_crop_bbox_used = pix_bbox
                         image_crop_source = "images_pdf_pixmap"
                         chosen_crop_source_type = "images_pdf_pixmap"
-                        crop_selection_path = "fixed_middle_slot_i_to_images_pdf_pixmap_i"
+                        crop_selection_path = "metadata_i_to_images_pdf_pixmap_i"
                         fallback_used = False
                         fallback_type = ""
                         final_crop_slot_aligned = True
                         crop_flagged_suspicious = False
                         suspicious_reasons = []
-                        image_binding_method = "fixed_middle_slot_i_to_images_pdf_pixmap_i"
+                        image_binding_method = "metadata_i_to_images_pdf_pixmap_i"
                         image_identity_confident = True
                         selected_image_source_id = str(ac_pixmap_source_cell.get("cell_id", ""))
                         pixmap_crop_count += 1
@@ -4107,9 +4148,9 @@ def render_full_pallet_pdf(
             detection_debug["image_source"] = "images_pdf_pixmap"
             detection_debug["labels_pdf_visual_crop_used"] = False
             detection_debug["labels_pdf_visual_source_enabled"] = False
-            detection_debug["middle_band_binding_mode"] = "fixed_middle_slot_i_to_images_pdf_pixmap_i"
-            detection_debug["slot_binding_mode"] = "fixed_middle_slot_i_to_images_pdf_pixmap_i"
-            detection_debug["binding_mode"] = "fixed_middle_slot_i_to_images_pdf_pixmap_i"
+            detection_debug["middle_band_binding_mode"] = "metadata_i_to_images_pdf_pixmap_i"
+            detection_debug["slot_binding_mode"] = "metadata_i_to_images_pdf_pixmap_i"
+            detection_debug["binding_mode"] = "metadata_i_to_images_pdf_pixmap_i"
             detection_debug["raw_middle_candidate_count"] = raw_middle_candidate_count
             detection_debug["raw_candidate_count"] = raw_middle_candidate_count
             detection_debug["cleaned_middle_candidate_count"] = cleaned_middle_candidate_count
@@ -5545,7 +5586,7 @@ def render_full_pallet_pdf(
                                 "pixmap_crop_count": pixmap_crop_count,
                                 "missing_image_slots": token_first_detection_debug.get("blank_image_count", empty_crop_count),
                                 "labels_pdf_visual_crop_used": False,
-                                "binding_mode": "fixed_middle_slot_i_to_images_pdf_pixmap_i",
+                                "binding_mode": "metadata_i_to_images_pdf_pixmap_i",
                                 "issue": issue,
                             }
                         }
