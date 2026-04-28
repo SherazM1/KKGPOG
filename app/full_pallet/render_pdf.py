@@ -1049,10 +1049,16 @@ def render_full_pallet_pdf(
         img_h = max(8.0, ih - text_h - text_gap)
         img_x = ix
         img_y = iy + text_h + text_gap
+        image_inner_inset = max(1.5, min(3.0, w * 0.035)) if section == "bonus" else 0.0
         image_draw_bbox: Optional[List[float]] = None
 
         card_bbox = (x, y, x + w, y + h)
-        image_area_bbox = (img_x, img_y, img_x + iw, img_y + img_h)
+        image_area_bbox = (
+            img_x + image_inner_inset,
+            img_y + image_inner_inset,
+            img_x + iw - image_inner_inset,
+            img_y + img_h - image_inner_inset,
+        )
         draw_plan = _prepare_mid_band_image_draw(
             img,
             source_crop_bbox,
@@ -1112,7 +1118,7 @@ def render_full_pallet_pdf(
         clamped_to_fit = False
         final_contained = True
         residual_bleed_warning = False
-        if section == "mid_band" and image_draw_bbox is not None:
+        if section in {"mid_band", "bonus"} and image_draw_bbox is not None:
             ax0, ay0, ax1, ay1 = image_area_bbox
             cx0, cy0, cx1, cy1 = card_bbox
             dx0, dy0, dx1, dy1 = [float(v) for v in image_draw_bbox]
@@ -1131,7 +1137,8 @@ def render_full_pallet_pdf(
             src_h = max(1.0, dy1 - dy0)
             max_w = max(1.0, ax1 - ax0)
             max_h = max(1.0, ay1 - ay0)
-            scale = min(1.0, max_w / src_w, max_h / src_h) * 0.985
+            containment_scale = 0.965 if section == "bonus" else 0.985
+            scale = min(1.0, max_w / src_w, max_h / src_h) * containment_scale
             new_w = max(1.0, src_w * scale)
             new_h = max(1.0, src_h * scale)
             ndx0 = ax0 + (max_w - new_w) / 2.0
@@ -1149,7 +1156,7 @@ def render_full_pallet_pdf(
             draw_plan["proposed_image_draw_bbox"] = image_draw_bbox
             draw_plan["image_draw_bbox"] = image_draw_bbox
             draw_plan["normalization_notes"] = list(draw_plan.get("normalization_notes", [])) + (
-                ["mid_band_containment_clamp"] if clamped_to_fit else []
+                [f"{section}_containment_clamp"] if clamped_to_fit else []
             )
             final_contained = bool(
                 image_draw_bbox[0] >= ax0 - 0.001
@@ -1165,15 +1172,25 @@ def render_full_pallet_pdf(
 
         if draw_img is not None and image_draw_bbox is not None:
             dx0, dy0, dx1, dy1 = [float(v) for v in image_draw_bbox]
-            c.drawImage(
-                ImageReader(draw_img),
-                dx0,
-                dy0,
-                max(1.0, dx1 - dx0),
-                max(1.0, dy1 - dy0),
-                preserveAspectRatio=True,
-                mask="auto",
-            )
+            if section == "bonus":
+                c.saveState()
+                clip = c.beginPath()
+                ax0, ay0, ax1, ay1 = image_area_bbox
+                clip.rect(ax0, ay0, max(1.0, ax1 - ax0), max(1.0, ay1 - ay0))
+                c.clipPath(clip, stroke=0, fill=0)
+            try:
+                c.drawImage(
+                    ImageReader(draw_img),
+                    dx0,
+                    dy0,
+                    max(1.0, dx1 - dx0),
+                    max(1.0, dy1 - dy0),
+                    preserveAspectRatio=True,
+                    mask="auto",
+                )
+            finally:
+                if section == "bonus":
+                    c.restoreState()
 
         cpp_str = f"CPP: {cpp}" if cpp is not None else "CPP:"
         upc = (upc12 or "").strip()
@@ -1204,11 +1221,16 @@ def render_full_pallet_pdf(
         draw_plan["section"] = section
         draw_plan["text_bbox"] = text_bbox
         draw_plan["image_draw_bbox"] = draw_plan.get("proposed_image_draw_bbox")
+        draw_plan["slot_rect"] = draw_plan.get("card_bbox")
+        draw_plan["inset_used"] = round(float(image_inner_inset), 2)
+        draw_plan["fit_mode_used"] = "contain"
+        draw_plan["hard_clip_applied"] = bool(section == "bonus")
+        draw_plan["draw_rect_reduced_to_avoid_overflow"] = bool(clamped_to_fit)
         draw_plan["overflow_before_clamp"] = bool(overflow_before_clamp)
         draw_plan["clamped_to_fit"] = bool(clamped_to_fit)
         draw_plan["final_contained"] = bool(final_contained)
         draw_plan["residual_bleed_warning"] = bool(residual_bleed_warning)
-        if section == "mid_band":
+        if section in {"mid_band", "bonus"}:
             draw_plan["overflow_or_bleed_detected"] = bool(residual_bleed_warning)
         draw_plan["normalization_applied"] = bool(
             trim_applied
@@ -1471,10 +1493,15 @@ def render_full_pallet_pdf(
                             "crop_pixel_width": int(getattr(img, "width")) if img is not None and hasattr(img, "width") else None,
                             "crop_pixel_height": int(getattr(img, "height")) if img is not None and hasattr(img, "height") else None,
                             "contain_fit_used": True,
+                            "fit_mode_used": norm_debug.get("fit_mode_used", "contain"),
+                            "inset_used": norm_debug.get("inset_used"),
+                            "hard_clip_applied": norm_debug.get("hard_clip_applied"),
+                            "draw_rect_reduced_to_avoid_overflow": norm_debug.get("draw_rect_reduced_to_avoid_overflow"),
                             "suspicious_crop": bool(pixmap_debug.get("suspicious_crop", False)),
                             "suspicious_reason": pixmap_debug.get("suspicious_reason", []),
                             "fallback_used": bool(fallback_used),
                             "blank_or_missing_crop": bool(img is None),
+                            "slot_rect": norm_debug.get("slot_rect", norm_debug.get("card_bbox")),
                             "card_bbox": norm_debug.get("card_bbox"),
                             "image_draw_bbox": norm_debug.get("image_draw_bbox"),
                             "text_bbox": norm_debug.get("text_bbox"),
