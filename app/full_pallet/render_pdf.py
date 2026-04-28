@@ -1037,19 +1037,19 @@ def render_full_pallet_pdf(
         source_crop_bbox: Optional[Tuple[float, float, float, float]],
     ) -> Dict[str, object]:
         if section == "bonus":
-            pad = max(2.8, min(4.2, w * 0.045))
+            pad = max(3.0, min(4.5, w * 0.050))
         else:
             pad = max(4.0, min(6.0, w * 0.075))
         ix = x + pad
         iy = y + pad
         iw = max(1.0, w - 2 * pad)
         ih = max(1.0, h - 2 * pad)
-        text_h = max(16.0, min(21.0, ih * 0.22)) if section == "bonus" else max(20.0, min(28.0, ih * 0.30))
-        text_gap = 1.25 if section == "bonus" else 3.0
+        text_h = max(18.0, min(24.0, ih * 0.24)) if section == "bonus" else max(20.0, min(28.0, ih * 0.30))
+        text_gap = 2.0 if section == "bonus" else 3.0
         img_h = max(8.0, ih - text_h - text_gap)
         img_x = ix
         img_y = iy + text_h + text_gap
-        image_inner_inset = max(.75, min(1.5, w * 0.018)) if section == "bonus" else 0.0
+        image_inner_inset = max(1.0, min(1.8, w * 0.022)) if section == "bonus" else 0.0
         image_draw_bbox: Optional[List[float]] = None
 
         card_bbox = (x, y, x + w, y + h)
@@ -1137,7 +1137,7 @@ def render_full_pallet_pdf(
             src_h = max(1.0, dy1 - dy0)
             max_w = max(1.0, ax1 - ax0)
             max_h = max(1.0, ay1 - ay0)
-            containment_scale = 0.99 if section == "bonus" else 0.985
+            containment_scale = 0.965 if section == "bonus" else 0.985
             scale = min(1.0, max_w / src_w, max_h / src_h) * containment_scale
             new_w = max(1.0, src_w * scale)
             new_h = max(1.0, src_h * scale)
@@ -1256,12 +1256,12 @@ def render_full_pallet_pdf(
             }
 
         return {
-            "desired_card_w": 72.0,
-            "desired_gap": 4.0,
-            "row_gutter": 6.0,
-            "card_ratio": 1.20,   # h / w
-            "min_card_h": 62.0,
-            "max_card_h": 102.0,
+            "desired_card_w": 78.0,
+            "desired_gap": 5.0,
+            "row_gutter": 8.0,
+            "card_ratio": 1.28,   # h / w
+            "min_card_h": 72.0,
+            "max_card_h": 112.0,
             "crop_zoom": 3.00,
             "crop_inset": 0.018,
         }
