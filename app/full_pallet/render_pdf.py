@@ -1899,6 +1899,65 @@ def render_full_pallet_pdf(
             mapping[slot.slot_id] = source_cells[idx] if idx < len(source_cells) else None
         return mapping
 
+    def _build_mid_band_row_strip_lookup(
+        source_cells: List[dict],
+        expected_rows: int,
+    ) -> Dict[int, dict]:
+        if expected_rows <= 0:
+            return {}
+        strip_candidates: List[dict] = []
+        for cell in source_cells:
+            bbox = cell.get("bbox")
+            if not bbox or len(bbox) != 4:
+                continue
+            x0, y0, x1, y1 = map(float, bbox)
+            w = max(0.0, x1 - x0)
+            h = max(0.0, y1 - y0)
+            aspect = (w / h) if h > 0.0 else 99.0
+            if w >= 120.0 and h >= 36.0 and aspect >= 1.65:
+                row_cell = dict(cell)
+                row_cell["strip_aspect"] = aspect
+                strip_candidates.append(row_cell)
+        if len(strip_candidates) < expected_rows:
+            return {}
+        strip_candidates.sort(key=lambda c: (float(c.get("cy", 0.0)), float(c.get("cx", 0.0))))
+        return {idx: cell for idx, cell in enumerate(strip_candidates[:expected_rows])}
+
+    def _slice_mid_band_row_strip_cell(
+        row_strip_cell: dict,
+        row_index: int,
+        col_index: int,
+        col_count: int,
+    ) -> Tuple[Optional[Tuple[float, float, float, float]], List[str]]:
+        bbox = row_strip_cell.get("bbox")
+        reasons: List[str] = ["source_cell_is_row_strip"]
+        if not bbox or len(bbox) != 4 or col_count <= 0:
+            reasons.append("invalid_row_strip_slice_inputs")
+            return None, reasons
+        sx0, sy0, sx1, sy1 = map(float, bbox)
+        sw = max(0.0, sx1 - sx0)
+        sh = max(0.0, sy1 - sy0)
+        if sw < 30.0 or sh < 20.0:
+            reasons.append("row_strip_too_small")
+            return None, reasons
+
+        bounded_col = max(0, min(int(col_count) - 1, int(col_index)))
+        cell_w = sw / float(col_count)
+        x_pad = min(3.5, max(1.0, cell_w * 0.06))
+        y_pad = min(4.0, max(1.0, sh * 0.025))
+        x0 = sx0 + bounded_col * cell_w + x_pad
+        x1 = sx0 + (bounded_col + 1) * cell_w - x_pad
+        y0 = sy0 + y_pad
+        y1 = sy1 - y_pad
+        if x1 <= x0 + 6.0 or y1 <= y0 + 6.0:
+            reasons.append("row_strip_slice_collapsed")
+            return None, reasons
+        if bounded_col != int(col_index):
+            reasons.append("column_index_clamped")
+        if int(row_index) != int(row_strip_cell.get("source_row_index", row_index)):
+            reasons.append("render_row_mapped_to_source_strip_order")
+        return (float(x0), float(y0), float(x1), float(y1)), reasons
+
     def _validate_mid_band_mapped_cell_bbox(
         mapped_bbox: Optional[Tuple[float, float, float, float]],
         fallback_bbox: Optional[Tuple[float, float, float, float]],
@@ -2397,6 +2456,11 @@ def render_full_pallet_pdf(
         source_cells = _detect_mid_band_image_cells(img_page, region_bbox) if img_page is not None else []
         slot_to_cell = _map_mid_band_slots_to_image_cells(all_candidate_slots, source_cells)
         strict_side_guardrails = str(p.side_letter or "").upper() in {"B", "D"}
+        row_strip_lookup = (
+            _build_mid_band_row_strip_lookup(source_cells, expected_rows=rows)
+            if strict_side_guardrails
+            else {}
+        )
         if detection_debug is not None:
             detection_debug["side"] = p.side_letter
             detection_debug["image_page_index"] = p.page_index
@@ -2404,6 +2468,10 @@ def render_full_pallet_pdf(
             detection_debug["source_image_cell_count"] = len(source_cells)
             detection_debug["ordered_source_cell_ids"] = [str(c.get("cell_id", "")) for c in source_cells]
             detection_debug["strict_side_guardrails"] = strict_side_guardrails
+            detection_debug["row_strip_fallback_available"] = bool(row_strip_lookup)
+            detection_debug["row_strip_source_cell_ids"] = [
+                str(cell.get("cell_id", "")) for _, cell in sorted(row_strip_lookup.items())
+            ]
         if layout_debug is not None:
             layout_debug.update(
                 {
@@ -2428,6 +2496,9 @@ def render_full_pallet_pdf(
         mapped_clean = 0
         mapped_fallback = 0
         mapped_empty = 0
+        row_strip_slice_count = 0
+        suspicious_crop_count = 0
+        residual_bad_crop_warning_count = 0
         render_assignment_debug: List[dict] = []
 
         for idx, slot in enumerate(all_slots):
@@ -2505,8 +2576,42 @@ def render_full_pallet_pdf(
                 page_width=page_width,
                 page_height=page_height,
             )
+            crop_selection_path = "fallback_token_crop"
+            crop_flagged_suspicious = False
+            suspicious_reasons: List[str] = []
+            fallback_used = False
+            fallback_type = ""
+            final_crop_slot_aligned = False
+            neighboring_overlap_detected = False
+            residual_bad_crop_warning = False
+            row_strip_cell = row_strip_lookup.get(int(ri))
+            row_strip_slice_bbox: Optional[Tuple[float, float, float, float]] = None
+            row_strip_reasons: List[str] = []
+            if row_strip_cell is not None:
+                row_strip_slice_bbox, row_strip_reasons = _slice_mid_band_row_strip_cell(
+                    row_strip_cell=row_strip_cell,
+                    row_index=int(ri),
+                    col_index=int(ci),
+                    col_count=int(cols),
+                )
 
-            if mapped_cell is not None:
+            if row_strip_slice_bbox is not None:
+                image_crop_bbox_used = row_strip_slice_bbox
+                image_crop_source = "row_strip_slot_slice"
+                candidate_crop_count += 1
+                used_slot_grid_crop_path = True
+                constrained_by_slot_geometry = True
+                fallback_reason = "grouped_row_strip_source_cell_sliced_to_render_slot"
+                rejected_crop_reasons = row_strip_reasons
+                crop_selection_path = "row_strip_slot_slice"
+                fallback_used = True
+                fallback_type = "row_strip_slot_aligned_slice"
+                final_crop_slot_aligned = True
+                crop_flagged_suspicious = True
+                suspicious_reasons = row_strip_reasons
+                row_strip_slice_count += 1
+                mapped_fallback += 1
+            elif mapped_cell is not None:
                 candidate_crop_count += 1
                 mapped_bbox = tuple(mapped_cell.get("bbox", slot.bbox))
                 mapped_ok, reject_reasons = _validate_mid_band_mapped_cell_bbox(
@@ -2518,6 +2623,7 @@ def render_full_pallet_pdf(
                     image_crop_bbox_used = mapped_bbox
                     image_crop_source = "image_cell_match"
                     used_slot_grid_crop_path = False
+                    crop_selection_path = "image_cell_match"
                     mapped_clean += 1
                 else:
                     rejected_crop_reasons = reject_reasons
@@ -2525,6 +2631,12 @@ def render_full_pallet_pdf(
                     used_slot_grid_crop_path = bool(_legacy_grid)
                     constrained_by_slot_geometry = True
                     fallback_reason = "rejected_image_cell_candidate"
+                    crop_selection_path = "fallback_token_crop"
+                    fallback_used = True
+                    fallback_type = "token_slot_geometry"
+                    final_crop_slot_aligned = bool(_legacy_grid)
+                    crop_flagged_suspicious = True
+                    suspicious_reasons = list(reject_reasons)
                     mapped_fallback += 1
             elif image_crop_bbox_used:
                 image_crop_source = "fallback_token_crop"
@@ -2532,6 +2644,12 @@ def render_full_pallet_pdf(
                 constrained_by_slot_geometry = True
                 fallback_reason = "no_source_image_cell_for_slot"
                 rejected_crop_reasons = ["no_source_image_cell_for_slot"]
+                crop_selection_path = "fallback_token_crop"
+                fallback_used = True
+                fallback_type = "token_slot_geometry"
+                final_crop_slot_aligned = bool(_legacy_grid)
+                crop_flagged_suspicious = True
+                suspicious_reasons = list(rejected_crop_reasons)
                 mapped_fallback += 1
             else:
                 image_crop_bbox_used, _legacy_source, _legacy_grid = _derive_token_first_image_bbox(
@@ -2545,13 +2663,27 @@ def render_full_pallet_pdf(
                     used_slot_grid_crop_path = bool(_legacy_grid)
                     constrained_by_slot_geometry = True
                     fallback_reason = "legacy_fallback_crop"
+                    crop_selection_path = "fallback_token_crop"
+                    fallback_used = True
+                    fallback_type = "token_slot_geometry"
+                    final_crop_slot_aligned = bool(_legacy_grid)
+                    crop_flagged_suspicious = True
+                    suspicious_reasons = [fallback_reason]
                     mapped_fallback += 1
                 else:
                     image_crop_source = "fallback_none"
                     used_slot_grid_crop_path = False
                     constrained_by_slot_geometry = False
                     fallback_reason = "no_crop_candidate"
+                    crop_selection_path = "fallback_none"
+                    crop_flagged_suspicious = True
+                    suspicious_reasons = [fallback_reason]
+                    residual_bad_crop_warning = True
                     mapped_empty += 1
+            if crop_flagged_suspicious:
+                suspicious_crop_count += 1
+            if residual_bad_crop_warning:
+                residual_bad_crop_warning_count += 1
             crop_error: Optional[str] = None
             try:
                 img = crop_image_cell(
@@ -2564,6 +2696,9 @@ def render_full_pallet_pdf(
             except Exception as exc:
                 img = None
                 crop_error = str(exc)
+                if not residual_bad_crop_warning:
+                    residual_bad_crop_warning_count += 1
+                residual_bad_crop_warning = True
 
             if img is None:
                 missing_image_slots.append(slot.slot_id)
@@ -2571,11 +2706,14 @@ def render_full_pallet_pdf(
             if debug and crop_debug_rows is not None:
                 bw = float(image_crop_bbox_used[2] - image_crop_bbox_used[0]) if image_crop_bbox_used else 0.0
                 bh = float(image_crop_bbox_used[3] - image_crop_bbox_used[1]) if image_crop_bbox_used else 0.0
+                crop_aspect = round(bw / bh, 4) if bh > 0.0 else None
                 crop_debug_rows.append(
                     {
                         "side": p.side_letter,
                         "page_index": p.page_index,
                         "slot_id": slot.slot_id,
+                        "render_row": int(ri),
+                        "render_col": int(ci),
                         "row_index": slot.row_index,
                         "slot_in_row": slot.slot_in_row,
                         "slot_order": slot.slot_order,
@@ -2587,7 +2725,21 @@ def render_full_pallet_pdf(
                         "slot_bbox": list(slot.bbox) if slot.bbox else None,
                         "extraction_bbox": list(slot.extraction_bbox) if slot.extraction_bbox else None,
                         "image_crop_bbox_used": list(image_crop_bbox_used) if image_crop_bbox_used else None,
+                        "chosen_source_crop_bbox": list(image_crop_bbox_used) if image_crop_bbox_used else None,
+                        "chosen_source_crop_width": bw,
+                        "chosen_source_crop_height": bh,
+                        "chosen_source_crop_aspect_ratio": crop_aspect,
                         "image_crop_source": image_crop_source,
+                        "crop_selection_path": crop_selection_path,
+                        "crop_flagged_suspicious": bool(crop_flagged_suspicious),
+                        "suspicious_reasons": suspicious_reasons,
+                        "fallback_used": bool(fallback_used),
+                        "fallback_type": fallback_type,
+                        "final_crop_slot_aligned": bool(final_crop_slot_aligned),
+                        "neighboring_overlap_detected": bool(neighboring_overlap_detected),
+                        "residual_bad_crop_warning": bool(residual_bad_crop_warning),
+                        "row_strip_source_cell_id": row_strip_cell.get("cell_id") if row_strip_cell else None,
+                        "row_strip_source_bbox": list(row_strip_cell.get("bbox")) if row_strip_cell and row_strip_cell.get("bbox") else None,
                         "candidate_crop_count": candidate_crop_count,
                         "rejected_crop_reasons": rejected_crop_reasons,
                         "constrained_by_label_slot_geometry": bool(constrained_by_slot_geometry),
@@ -2619,8 +2771,17 @@ def render_full_pallet_pdf(
                         "resolved_name": disp_name,
                         "chosen_image_source_page": p.page_index,
                         "chosen_source_image_cell_id": (mapped_cell.get("cell_id") if mapped_cell else None),
+                        "row_strip_source_cell_id": row_strip_cell.get("cell_id") if row_strip_cell else None,
                         "chosen_crop_bbox": list(image_crop_bbox_used) if image_crop_bbox_used else None,
                         "crop_source_type": image_crop_source,
+                        "crop_selection_path": crop_selection_path,
+                        "crop_flagged_suspicious": bool(crop_flagged_suspicious),
+                        "suspicious_reasons": suspicious_reasons,
+                        "fallback_used": bool(fallback_used),
+                        "fallback_type": fallback_type,
+                        "final_crop_slot_aligned": bool(final_crop_slot_aligned),
+                        "neighboring_overlap_detected": bool(neighboring_overlap_detected),
+                        "residual_bad_crop_warning": bool(residual_bad_crop_warning),
                         "candidate_crop_count": candidate_crop_count,
                         "rejected_crop_reasons": rejected_crop_reasons,
                         "constrained_by_label_slot_geometry": bool(constrained_by_slot_geometry),
@@ -2628,7 +2789,9 @@ def render_full_pallet_pdf(
                         "rendered_row": int(ri),
                         "rendered_col": int(ci),
                         "mismatch_note": (
-                            "no_source_image_cell_detected_for_slot"
+                            "row_strip_source_cell_sliced_to_slot"
+                            if image_crop_source == "row_strip_slot_slice"
+                            else "no_source_image_cell_detected_for_slot"
                             if mapped_cell is None
                             else ("rejected_image_cell_candidate" if rejected_crop_reasons else "")
                         ),
@@ -2704,6 +2867,10 @@ def render_full_pallet_pdf(
             detection_debug["mapped_clean_count"] = mapped_clean
             detection_debug["mapped_fallback_count"] = mapped_fallback
             detection_debug["mapped_empty_count"] = mapped_empty
+            detection_debug["row_strip_slice_count"] = row_strip_slice_count
+            detection_debug["suspicious_crop_count"] = suspicious_crop_count
+            detection_debug["fallback_used_count"] = mapped_fallback
+            detection_debug["residual_bad_crop_warning_count"] = residual_bad_crop_warning_count
         if selection_debug is not None:
             selected_ids = [r.get("slot_id") for r in selection_debug.get("selected_order", [])]
             rendered_ids = [r.get("slot_id") for r in render_assignment_debug]
@@ -3981,10 +4148,19 @@ def render_full_pallet_pdf(
                     image_cell_match_count = sum(
                         1 for r in token_first_crop_debug_rows if str(r.get("image_crop_source", "")) == "image_cell_match"
                     )
+                    row_strip_slice_count = sum(
+                        1 for r in token_first_crop_debug_rows if str(r.get("image_crop_source", "")) == "row_strip_slot_slice"
+                    )
                     fallback_crop_count = sum(
                         1
                         for r in token_first_crop_debug_rows
                         if str(r.get("image_crop_source", "")).startswith("fallback_")
+                    )
+                    suspicious_crop_count = sum(
+                        1 for r in token_first_crop_debug_rows if bool(r.get("crop_flagged_suspicious"))
+                    )
+                    residual_bad_crop_warning_count = sum(
+                        1 for r in token_first_crop_debug_rows if bool(r.get("residual_bad_crop_warning"))
                     )
                     empty_crop_count = sum(
                         1 for r in token_first_crop_debug_rows if str(r.get("image_crop_source", "")) == "fallback_none"
@@ -4000,8 +4176,11 @@ def render_full_pallet_pdf(
                         {
                             "token_first_slot_count": len(token_first_crop_debug_rows),
                             "new_crop_path_count": image_cell_match_count,
+                            "row_strip_slot_slice_count": row_strip_slice_count,
                             "fallback_crop_path_count": fallback_crop_count,
                             "empty_crop_path_count": empty_crop_count,
+                            "suspicious_crop_count": suspicious_crop_count,
+                            "residual_bad_crop_warning_count": residual_bad_crop_warning_count,
                             "crop_success_count": crop_success_count,
                             "crop_failure_count": crop_failure_count,
                             "tiny_bbox_count": tiny_bbox_count,
@@ -4019,6 +4198,8 @@ def render_full_pallet_pdf(
                                 "source_image_cell_count": token_first_detection_debug.get("source_image_cell_count", 0),
                                 "ordered_source_cell_ids": token_first_detection_debug.get("ordered_source_cell_ids", []),
                                 "strict_side_guardrails": bool(token_first_detection_debug.get("strict_side_guardrails")),
+                                "row_strip_fallback_available": bool(token_first_detection_debug.get("row_strip_fallback_available")),
+                                "row_strip_source_cell_ids": token_first_detection_debug.get("row_strip_source_cell_ids", []),
                             },
                             "token_first_mapping_summary": {
                                 "side": pdata.side_letter,
@@ -4027,6 +4208,9 @@ def render_full_pallet_pdf(
                                 "mapped_cleanly": token_first_detection_debug.get("mapped_clean_count", 0),
                                 "using_fallback": token_first_detection_debug.get("mapped_fallback_count", 0),
                                 "empty_unrendered": token_first_detection_debug.get("mapped_empty_count", 0),
+                                "row_strip_sliced_to_slots": token_first_detection_debug.get("row_strip_slice_count", 0),
+                                "suspicious_crop_count": token_first_detection_debug.get("suspicious_crop_count", 0),
+                                "residual_bad_crop_warning_count": token_first_detection_debug.get("residual_bad_crop_warning_count", 0),
                             },
                         }
                     )
