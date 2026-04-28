@@ -2615,10 +2615,103 @@ def render_full_pallet_pdf(
             "slot_order": int(slot.slot_order),
             "last5": _to_last5(slot.last5),
             "upc12": match.upc12 if match else None,
+            "cpp": match.cpp_qty if match else None,
+            "resolved_match": match,
             "resolved_name": match.display_name if match else (slot.parsed_name or slot.raw_label_text or "").strip(),
             "display_name": match.display_name if match else (slot.parsed_name or slot.raw_label_text or "").strip(),
             "resolve_fallback_path": resolve_trace.get("fallback_path"),
+            "resolve_trace": resolve_trace,
         }
+
+    def _clean_middle_grid_candidate_records(candidates: List[dict]) -> Tuple[List[dict], List[dict]]:
+        cleaned: List[dict] = []
+        rejected: List[dict] = []
+
+        def _is_non_product_fixture_or_signage(slot: Optional[FullPalletMidBandSlot]) -> bool:
+            if slot is None:
+                return False
+            text = " ".join(
+                [
+                    str(getattr(slot, "raw_label_text", "") or ""),
+                    str(getattr(slot, "parsed_name", "") or ""),
+                    str(getattr(slot, "block_name", "") or ""),
+                ]
+            ).upper()
+            normalized = re.sub(r"[^A-Z0-9]+", " ", text)
+            tokens = set(normalized.split())
+
+            phrase_markers = (
+                "MARKETING MESSAGE",
+                "FRAME SIGN",
+                "GIFT CARD HOLDER",
+                "GIFT CARD HOLDERS",
+                "GIFT CARD D",
+                "GIFT CARD IN NEW",
+                "GIFT CARD D IN NEW",
+            )
+            if any(marker in normalized for marker in phrase_markers):
+                return True
+
+            if "GCI" in tokens:
+                return True
+            if "PKG" in tokens:
+                return True
+            if "HEADER" in tokens or "SIGN" in tokens or "FIXTURE" in tokens:
+                return True
+            if "MARKETING" in tokens and "MESSAGE" in tokens:
+                return True
+            if "FRAME" in tokens and "SIGN" in tokens:
+                return True
+            if "GIFTCARD" in tokens or ("GIFT" in tokens and "CARD" in tokens and ("NEW" in tokens or "PKG" in tokens)):
+                return True
+            if "WM" in tokens and ("NEW" in tokens or "PKG" in tokens):
+                return True
+            if ("TALL" in tokens or "LID" in tokens) and ("BOX" in tokens or "HARDWARE" in tokens or "GCI" in tokens):
+                return True
+
+            return False
+
+        for candidate in candidates:
+            slot = candidate.get("slot")
+            slot_id = str(candidate.get("slot_id") or getattr(slot, "slot_id", ""))
+            raw_text = str(getattr(slot, "raw_label_text", "") or "")
+            parsed_name = str(getattr(slot, "parsed_name", "") or "")
+            last5 = _to_last5(candidate.get("last5") or getattr(slot, "last5", ""))
+            upc12 = str(candidate.get("upc12") or "").strip()
+            match = candidate.get("resolved_match")
+            reason = ""
+
+            if _is_non_product_fixture_or_signage(slot):
+                reason = "non_product_fixture_or_signage"
+            elif match is None or not upc12:
+                reason = "unresolved_no_matrix_match"
+            elif not last5 and not upc12:
+                reason = "missing_upc_and_last5"
+            elif not str(candidate.get("resolved_name") or parsed_name or "").strip():
+                reason = "missing_resolved_description"
+
+            if reason:
+                rejected.append(
+                    {
+                        "slot_id": slot_id,
+                        "source_index": candidate.get("source_index"),
+                        "row_index": candidate.get("row_index"),
+                        "slot_in_row": candidate.get("slot_in_row"),
+                        "last5": last5,
+                        "upc12": upc12 or None,
+                        "raw_label_text": raw_text,
+                        "parsed_name": parsed_name,
+                        "cpp": candidate.get("cpp"),
+                        "resolve_fallback_path": candidate.get("resolve_fallback_path"),
+                        "reason": reason,
+                        "rejection_reason": reason,
+                    }
+                )
+                continue
+
+            cleaned.append(candidate)
+
+        return cleaned, rejected
 
     def _build_mid_band_profile_comparison(
         p: FullPalletPage,
@@ -2950,9 +3043,10 @@ def render_full_pallet_pdf(
             _build_mid_band_candidate_record(p, slot, source_index)
             for source_index, slot in enumerate(all_candidate_slots)
         ]
+        cleaned_candidate_records, rejected_middle_candidates = _clean_middle_grid_candidate_records(candidate_records)
         selection = select_mid_band_cards_for_display(
             p.side_letter,
-            candidate_records,
+            cleaned_candidate_records,
             profile,
         )
         all_slots: List[FullPalletMidBandSlot] = [
@@ -2960,6 +3054,10 @@ def render_full_pallet_pdf(
         ]
         if selection_debug is not None:
             selection_debug.update(selection.debug_summary)
+            selection_debug["raw_middle_candidate_count"] = len(candidate_records)
+            selection_debug["cleaned_middle_candidate_count"] = len(cleaned_candidate_records)
+            selection_debug["rejected_middle_candidate_count"] = len(rejected_middle_candidates)
+            selection_debug["rejected_middle_candidates"] = rejected_middle_candidates
         if not all_slots:
             return 0, 0, False, sec_top, 0, 0
 
@@ -3006,14 +3104,10 @@ def render_full_pallet_pdf(
             page_height=page_height,
         )
         source_cells = _detect_mid_band_image_cells(img_page, region_bbox) if img_page is not None else []
-        slot_to_cell = _map_mid_band_slots_to_image_cells(all_candidate_slots, source_cells)
+        slot_to_cell: Dict[str, Optional[dict]] = {}
         strict_side_guardrails = str(p.side_letter or "").upper() in {"B", "D"}
         ac_pixmap_enabled = str(p.side_letter or "").upper() in {"A", "C"}
-        row_strip_lookup = (
-            _build_mid_band_row_strip_lookup(source_cells, expected_rows=rows)
-            if strict_side_guardrails
-            else {}
-        )
+        row_strip_lookup: Dict[int, dict] = {}
         pixmap_page_img: Optional[Image.Image] = None
         pixmap_page_zoom = 3.0
         pixmap_source_region_bbox: Optional[Tuple[float, float, float, float]] = None
@@ -3116,6 +3210,8 @@ def render_full_pallet_pdf(
         unbound_image_count = 0
         prevented_wrong_image_count = 0
         render_assignment_debug: List[dict] = []
+        image_crop_sources_by_slot: List[dict] = []
+        blank_image_count = 0
 
         for idx, slot in enumerate(all_slots):
             selected_candidate = selection.selected_cards[idx] if idx < len(selection.selected_cards) else {}
@@ -3309,12 +3405,13 @@ def render_full_pallet_pdf(
             wrong_image_fallback_prevented = False
             selected_image_source_id: Optional[str] = None
             img: Optional[Image.Image] = None
+            image_source_index = int(idx)
             if (
                 (ac_pixmap_enabled or strict_side_guardrails)
                 and pixmap_page_img is not None
-                and 0 <= selected_source_index < len(pixmap_flat_cells)
+                and 0 <= image_source_index < len(pixmap_flat_cells)
             ):
-                ac_pixmap_source_cell = pixmap_flat_cells[int(selected_source_index)]
+                ac_pixmap_source_cell = pixmap_flat_cells[int(image_source_index)]
                 source_bbox = ac_pixmap_source_cell.get("bbox")
                 if source_bbox and len(source_bbox) == 4:
                     pixmap_slot_bbox_before_padding = tuple(map(float, source_bbox))
@@ -3333,13 +3430,13 @@ def render_full_pallet_pdf(
                         image_crop_bbox_used = pix_bbox
                         image_crop_source = "pixmap_middle_band"
                         chosen_crop_source_type = "pixmap_middle_band"
-                        crop_selection_path = "pixmap_middle_band_resolved_source_index"
+                        crop_selection_path = "image_pdf_crop_i_to_clean_label_slot_i"
                         fallback_used = False
                         fallback_type = ""
                         final_crop_slot_aligned = True
                         crop_flagged_suspicious = False
                         suspicious_reasons = []
-                        image_binding_method = "exact_last5"
+                        image_binding_method = "ordered_clean_slot_index"
                         image_identity_confident = True
                         selected_image_source_id = str(ac_pixmap_source_cell.get("cell_id", ""))
                         pixmap_crop_count += 1
@@ -3359,8 +3456,8 @@ def render_full_pallet_pdf(
                     crop_flagged_suspicious = True
                     fallback_used = True
             elif ac_pixmap_enabled or strict_side_guardrails:
-                rejected_crop_reasons = list(rejected_crop_reasons) + ["no_resolved_source_index_image_crop"]
-                suspicious_reasons = list(suspicious_reasons) + ["no_resolved_source_index_image_crop"]
+                rejected_crop_reasons = list(rejected_crop_reasons) + ["no_ordered_images_pdf_art_cell_for_clean_slot_index"]
+                suspicious_reasons = list(suspicious_reasons) + ["no_ordered_images_pdf_art_cell_for_clean_slot_index"]
                 crop_flagged_suspicious = True
                 fallback_used = True
 
@@ -3412,6 +3509,18 @@ def render_full_pallet_pdf(
 
             if img is None:
                 missing_image_slots.append(slot.slot_id)
+                blank_image_count += 1
+
+            image_crop_sources_by_slot.append(
+                {
+                    "slot_index": int(idx),
+                    "slot_id": slot.slot_id,
+                    "artwork_crop_source": image_crop_source,
+                    "crop_selection_path": crop_selection_path,
+                    "source_cell_id": selected_image_source_id,
+                    "crop_present": bool(img is not None),
+                }
+            )
 
             if debug and crop_debug_rows is not None:
                 bw = float(image_crop_bbox_used[2] - image_crop_bbox_used[0]) if image_crop_bbox_used else 0.0
@@ -3474,7 +3583,7 @@ def render_full_pallet_pdf(
                         "row_strip_source_bbox": list(row_strip_cell.get("bbox")) if row_strip_cell and row_strip_cell.get("bbox") else None,
                         "candidate_crop_count": candidate_crop_count,
                         "rejected_crop_reasons": rejected_crop_reasons,
-                        "constrained_by_label_slot_geometry": bool(constrained_by_slot_geometry),
+                        "constrained_by_art_cell_geometry": bool(constrained_by_slot_geometry),
                         "fallback_reason": fallback_reason,
                         "used_slot_grid_crop_path": bool(used_slot_grid_crop_path),
                         "crop_path_used": image_crop_source,
@@ -3535,7 +3644,7 @@ def render_full_pallet_pdf(
                         "residual_bad_crop_warning": bool(residual_bad_crop_warning),
                         "candidate_crop_count": candidate_crop_count,
                         "rejected_crop_reasons": rejected_crop_reasons,
-                        "constrained_by_label_slot_geometry": bool(constrained_by_slot_geometry),
+                        "constrained_by_art_cell_geometry": bool(constrained_by_slot_geometry),
                         "fallback_reason": fallback_reason,
                         "rendered_row": int(ri),
                         "rendered_col": int(ci),
@@ -3613,6 +3722,22 @@ def render_full_pallet_pdf(
             slots_drawn += 1
 
         if detection_debug is not None:
+            rejected_middle_candidates = list(selection_debug.get("rejected_middle_candidates", [])) if selection_debug else []
+            detection_debug["active_mid_band_render_path"] = "token_first_mid_band"
+            detection_debug["side"] = p.side_letter
+            detection_debug["visual_source"] = "images_pdf"
+            detection_debug["labels_pdf_visual_crop_used"] = False
+            detection_debug["labels_pdf_visual_source_enabled"] = False
+            detection_debug["middle_band_binding_mode"] = "image_pdf_crop_i_to_clean_label_slot_i"
+            detection_debug["slot_binding_mode"] = "image_pdf_crop_i_to_clean_label_slot_i"
+            detection_debug["ordered_label_slot_count"] = len(all_slots)
+            detection_debug["ordered_image_crop_count"] = max(0, min(len(all_slots), len(pixmap_flat_cells)))
+            detection_debug["rendered_middle_slot_count"] = slots_drawn
+            detection_debug["rejected_middle_candidate_count"] = len(rejected_middle_candidates)
+            detection_debug["rejected_middle_candidates"] = rejected_middle_candidates
+            detection_debug["image_crop_sources_by_slot"] = image_crop_sources_by_slot
+            detection_debug["invalid_label_text_crop_count"] = 0
+            detection_debug["blank_image_count"] = blank_image_count
             detection_debug["resolved_mid_band_slot_count"] = len(all_slots)
             detection_debug["candidate_mid_band_slot_count"] = len(all_candidate_slots)
             detection_debug["mapped_clean_count"] = mapped_clean
@@ -4243,16 +4368,14 @@ def render_full_pallet_pdf(
             )
 
             token_first_slot_count = len([s for r in mid_band.rows for s in r.slots]) if mid_band is not None else 0
-            token_first_mid_band_ok = bool(mid_band is not None and token_first_slot_count > 0 and not canonical_mid_band_ok)
+            token_first_mid_band_ok = bool(mid_band is not None and token_first_slot_count > 0)
             canonical_main_plan = _measure_canonical_mid_band(content_w, include_bar=False)
             token_first_main_plan = _measure_token_first_mid_band(
                 content_w,
                 token_first_slot_count,
                 include_bar=False,
             )
-            if canonical_mid_band_ok:
-                main_plan = canonical_main_plan
-            elif token_first_mid_band_ok:
+            if token_first_mid_band_ok:
                 main_plan = token_first_main_plan
             else:
                 main_plan = canonical_main_plan
@@ -4331,11 +4454,7 @@ def render_full_pallet_pdf(
             bonus_crop_debug_rows: List[dict] = []
             missing_main_images: List[str] = []
             missing_bonus_images: List[str] = []
-            main_render_source = (
-                "mid_band_template"
-                if canonical_mid_band_ok
-                else ("token_first_mid_band" if token_first_mid_band_ok else "mid_band_template_placeholder")
-            )
+            main_render_source = "token_first_mid_band" if token_first_mid_band_ok else "mid_band_template_placeholder"
             if debug and not canonical_mid_band_ok:
                 st.write(
                     {
@@ -4457,30 +4576,7 @@ def render_full_pallet_pdf(
             main_over = False
             main_bottom = products_top
 
-            if canonical_mid_band_ok and mid_band is not None:
-                (
-                    main_cols,
-                    main_rows_count,
-                    main_over,
-                    main_bottom,
-                    _main_occ_count,
-                    _main_sec_cols,
-                ) = _draw_canonical_mid_band_section(
-                    pdata,
-                    mid_band,
-                    main_plan,
-                    products_top,
-                    unresolved_main,
-                    missing_main_images,
-                    cx0,
-                    unresolved_debug_rows=unresolved_mid_slot_debug,
-                    position_fallback_debug_rows=position_fallback_mid_slot_debug,
-                    layout_debug=mid_band_layout_debug,
-                    layout_assignment_rows=mid_band_layout_assignments,
-                    selection_debug=mid_band_selection_debug,
-                    normalization_debug_rows=mid_band_normalization_debug_rows,
-                )
-            elif token_first_mid_band_ok and mid_band is not None:
+            if token_first_mid_band_ok and mid_band is not None:
                 (
                     main_cols,
                     main_rows_count,
@@ -4501,6 +4597,29 @@ def render_full_pallet_pdf(
                     crop_debug_rows=token_first_crop_debug_rows,
                     mapping_debug_rows=token_first_mapping_debug_rows,
                     detection_debug=token_first_detection_debug,
+                    layout_debug=mid_band_layout_debug,
+                    layout_assignment_rows=mid_band_layout_assignments,
+                    selection_debug=mid_band_selection_debug,
+                    normalization_debug_rows=mid_band_normalization_debug_rows,
+                )
+            elif canonical_mid_band_ok and mid_band is not None:
+                (
+                    main_cols,
+                    main_rows_count,
+                    main_over,
+                    main_bottom,
+                    _main_occ_count,
+                    _main_sec_cols,
+                ) = _draw_canonical_mid_band_section(
+                    pdata,
+                    mid_band,
+                    main_plan,
+                    products_top,
+                    unresolved_main,
+                    missing_main_images,
+                    cx0,
+                    unresolved_debug_rows=unresolved_mid_slot_debug,
+                    position_fallback_debug_rows=position_fallback_mid_slot_debug,
                     layout_debug=mid_band_layout_debug,
                     layout_assignment_rows=mid_band_layout_assignments,
                     selection_debug=mid_band_selection_debug,
@@ -5041,6 +5160,18 @@ def render_full_pallet_pdf(
                                 "row_strip_source_cell_ids": token_first_detection_debug.get("row_strip_source_cell_ids", []),
                                 "pixmap_source_region_bbox": token_first_detection_debug.get("pixmap_source_region_bbox"),
                                 "pixmap_grid_source": token_first_detection_debug.get("pixmap_grid_source"),
+                                "active_mid_band_render_path": token_first_detection_debug.get("active_mid_band_render_path"),
+                                "visual_source": token_first_detection_debug.get("visual_source"),
+                                "labels_pdf_visual_crop_used": token_first_detection_debug.get("labels_pdf_visual_crop_used"),
+                                "labels_pdf_visual_source_enabled": token_first_detection_debug.get("labels_pdf_visual_source_enabled"),
+                                "middle_band_binding_mode": token_first_detection_debug.get("middle_band_binding_mode"),
+                                "ordered_label_slot_count": token_first_detection_debug.get("ordered_label_slot_count"),
+                                "ordered_image_crop_count": token_first_detection_debug.get("ordered_image_crop_count"),
+                                "rendered_middle_slot_count": token_first_detection_debug.get("rendered_middle_slot_count"),
+                                "rejected_middle_candidate_count": token_first_detection_debug.get("rejected_middle_candidate_count"),
+                                "rejected_middle_candidates": token_first_detection_debug.get("rejected_middle_candidates", []),
+                                "image_crop_sources_by_slot": token_first_detection_debug.get("image_crop_sources_by_slot", []),
+                                "blank_image_count": token_first_detection_debug.get("blank_image_count"),
                             },
                             "token_first_mapping_summary": {
                                 "side": pdata.side_letter,
