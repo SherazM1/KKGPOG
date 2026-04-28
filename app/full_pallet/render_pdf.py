@@ -1037,7 +1037,7 @@ def render_full_pallet_pdf(
         source_crop_bbox: Optional[Tuple[float, float, float, float]],
     ) -> Dict[str, object]:
         if section == "bonus":
-            pad = max(3.5, min(5.0, w * 0.060))
+            pad = max(4.5, min(6.5, w * 0.075))
         else:
             pad = max(4.0, min(6.0, w * 0.075))
         ix = x + pad
@@ -1049,7 +1049,7 @@ def render_full_pallet_pdf(
         img_h = max(8.0, ih - text_h - text_gap)
         img_x = ix
         img_y = iy + text_h + text_gap
-        image_inner_inset = max(1.5, min(3.0, w * 0.035)) if section == "bonus" else 0.0
+        image_inner_inset = max(2.5, min(4.0, w * 0.050)) if section == "bonus" else 0.0
         image_draw_bbox: Optional[List[float]] = None
 
         card_bbox = (x, y, x + w, y + h)
@@ -1074,7 +1074,7 @@ def render_full_pallet_pdf(
         trim_bbox = draw_plan.get("proposed_trimmed_crop_bbox")
         initial_plan = dict(draw_plan)
         trim_applied = False
-        if img is not None and trim_bbox is not None:
+        if img is not None and trim_bbox is not None and section != "bonus":
             try:
                 l, t, r, b = [int(v) for v in trim_bbox]
                 if r > l and b > t:
@@ -1137,7 +1137,7 @@ def render_full_pallet_pdf(
             src_h = max(1.0, dy1 - dy0)
             max_w = max(1.0, ax1 - ax0)
             max_h = max(1.0, ay1 - ay0)
-            containment_scale = 0.965 if section == "bonus" else 0.985
+            containment_scale = 0.93 if section == "bonus" else 0.985
             scale = min(1.0, max_w / src_w, max_h / src_h) * containment_scale
             new_w = max(1.0, src_w * scale)
             new_h = max(1.0, src_h * scale)
