@@ -1967,6 +1967,193 @@ def render_full_pallet_pdf(
         pix = image_page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
         return Image.frombytes("RGB", (pix.width, pix.height), pix.samples), zoom
 
+    def _tighten_pixmap_region_to_visible_art(
+        page_img: Optional[Image.Image],
+        page_zoom: float,
+        region_bbox: Tuple[float, float, float, float],
+    ) -> Tuple[Tuple[float, float, float, float], str]:
+        if page_img is None:
+            return region_bbox, "source_strip_not_tightened_no_pixmap"
+        x0, y0, x1, y1 = map(float, region_bbox)
+        ix0 = max(0, int(math.floor(x0 * page_zoom)))
+        iy0 = max(0, int(math.floor(y0 * page_zoom)))
+        ix1 = min(page_img.width, int(math.ceil(x1 * page_zoom)))
+        iy1 = min(page_img.height, int(math.ceil(y1 * page_zoom)))
+        if ix1 <= ix0 + 20 or iy1 <= iy0 + 20:
+            return region_bbox, "source_strip_not_tightened_too_small"
+
+        arr = np.asarray(page_img.crop((ix0, iy0, ix1, iy1)).convert("RGB"))
+        min_rgb = np.min(arr, axis=2)
+        max_rgb = np.max(arr, axis=2)
+        saturation = max_rgb - min_rgb
+        # Exclude pale page/ruler artifacts while retaining colored artwork and dark text.
+        art_mask = (min_rgb < 245) & ((saturation > 18) | (min_rgb < 120))
+        if not bool(np.any(art_mask)):
+            return region_bbox, "source_strip_not_tightened_no_art_mask"
+
+        h_px, w_px = art_mask.shape
+        col_counts = np.sum(art_mask, axis=0)
+        row_counts = np.sum(art_mask, axis=1)
+        col_threshold = max(2, int(h_px * 0.025))
+        row_threshold = max(2, int(w_px * 0.020))
+        xs = np.where(col_counts >= col_threshold)[0]
+        ys = np.where(row_counts >= row_threshold)[0]
+        if len(xs) == 0 or len(ys) == 0:
+            return region_bbox, "source_strip_not_tightened_sparse_art_mask"
+
+        margin_x = int(round(5.0 * page_zoom))
+        margin_y = int(round(3.0 * page_zoom))
+        tx0 = max(0, int(xs.min()) - margin_x)
+        tx1 = min(w_px, int(xs.max()) + 1 + margin_x)
+        ty0 = max(0, int(ys.min()) - margin_y)
+        ty1 = min(h_px, int(ys.max()) + 1 + margin_y)
+        tightened = (
+            float((ix0 + tx0) / page_zoom),
+            float((iy0 + ty0) / page_zoom),
+            float((ix0 + tx1) / page_zoom),
+            float((iy0 + ty1) / page_zoom),
+        )
+        tw = tightened[2] - tightened[0]
+        th = tightened[3] - tightened[1]
+        ow = x1 - x0
+        oh = y1 - y0
+        if tw < ow * 0.62 or th < oh * 0.70:
+            return region_bbox, "source_strip_tighten_rejected_too_aggressive"
+        return tightened, "source_strip_tightened_to_visible_art"
+
+    def _detect_bd_mid_band_visual_slot_grid(
+        page_img: Optional[Image.Image],
+        page_zoom: float,
+        region_bbox: Tuple[float, float, float, float],
+    ) -> Optional[List[List[Tuple[float, float, float, float]]]]:
+        if page_img is None:
+            return None
+        x0, y0, x1, y1 = map(float, region_bbox)
+        ix0 = max(0, int(math.floor(x0 * page_zoom)))
+        iy0 = max(0, int(math.floor(y0 * page_zoom)))
+        ix1 = min(page_img.width, int(math.ceil(x1 * page_zoom)))
+        iy1 = min(page_img.height, int(math.ceil(y1 * page_zoom)))
+        if ix1 <= ix0 + 20 or iy1 <= iy0 + 20:
+            return None
+
+        arr = np.asarray(page_img.crop((ix0, iy0, ix1, iy1)).convert("RGB"))
+        min_rgb = np.min(arr, axis=2)
+        max_rgb = np.max(arr, axis=2)
+        saturation = max_rgb - min_rgb
+        art_mask = (min_rgb < 245) & ((saturation > 18) | (min_rgb < 120))
+        h_px, w_px = art_mask.shape
+
+        def _segments_from_projection(values: np.ndarray, threshold: float, min_len_px: int) -> List[Tuple[int, int]]:
+            active = values >= threshold
+            segments: List[Tuple[int, int]] = []
+            i = 0
+            while i < len(active):
+                if not bool(active[i]):
+                    i += 1
+                    continue
+                j = i + 1
+                while j < len(active) and bool(active[j]):
+                    j += 1
+                if (j - i) >= min_len_px:
+                    segments.append((i, j))
+                i = j
+            return segments
+
+        col_counts = np.sum(art_mask, axis=0)
+        col_smooth = np.convolve(col_counts, np.ones(9) / 9.0, mode="same")
+        x_segments = _segments_from_projection(
+            col_smooth,
+            threshold=max(2.0, h_px * 0.035),
+            min_len_px=max(6, int(page_zoom * 5.0)),
+        )
+        if len(x_segments) < 8:
+            return None
+        if len(x_segments) > 8:
+            x_segments = sorted(
+                sorted(x_segments, key=lambda s: (s[1] - s[0]), reverse=True)[:8],
+                key=lambda s: s[0],
+            )
+
+        row_counts = np.sum(art_mask, axis=1)
+        row_smooth = np.convolve(row_counts, np.ones(9) / 9.0, mode="same")
+        y_segments = _segments_from_projection(
+            row_smooth,
+            threshold=max(2.0, w_px * 0.025),
+            min_len_px=max(6, int(page_zoom * 8.0)),
+        )
+        if len(y_segments) == 2 and (y_segments[1][1] - y_segments[1][0]) > (y_segments[0][1] - y_segments[0][0]) * 1.45:
+            y0b, y1b = y_segments[1]
+            mid = int(round((y0b + y1b) / 2.0))
+            y_segments = [y_segments[0], (y0b, mid), (mid, y1b)]
+        if len(y_segments) < 3:
+            return None
+        if len(y_segments) > 3:
+            y_segments = sorted(
+                sorted(y_segments, key=lambda s: (s[1] - s[0]), reverse=True)[:3],
+                key=lambda s: s[0],
+            )
+
+        x_margin = int(round(page_zoom * 1.2))
+        y_margin = int(round(page_zoom * 1.0))
+        x_boxes = [
+            (
+                float((ix0 + max(0, sx - x_margin)) / page_zoom),
+                float((ix0 + min(w_px, ex + x_margin)) / page_zoom),
+            )
+            for sx, ex in x_segments[:8]
+        ]
+        y_boxes = [
+            (
+                float((iy0 + max(0, sy - y_margin)) / page_zoom),
+                float((iy0 + min(h_px, ey + y_margin)) / page_zoom),
+            )
+            for sy, ey in y_segments[:3]
+        ]
+        return [[(xx0, yy0, xx1, yy1) for xx0, xx1 in x_boxes] for yy0, yy1 in y_boxes]
+
+    def _build_bd_mid_band_pixmap_grid(
+        source_cells: List[dict],
+        page_width: float,
+        page_height: float,
+        page_img: Optional[Image.Image],
+        page_zoom: float,
+    ) -> Tuple[Optional[List[List[Tuple[float, float, float, float]]]], Optional[Tuple[float, float, float, float]], str]:
+        strip_candidates: List[dict] = []
+        for cell in source_cells:
+            bbox = cell.get("bbox")
+            if not bbox or len(bbox) != 4:
+                continue
+            x0, y0, x1, y1 = map(float, bbox)
+            w = max(0.0, x1 - x0)
+            h = max(0.0, y1 - y0)
+            aspect = (w / h) if h > 0.0 else 99.0
+            if w >= 120.0 and h >= 70.0 and aspect >= 1.65:
+                strip_candidates.append({"bbox": (x0, y0, x1, y1), "y0": y0, "cy": (y0 + y1) / 2.0})
+        if not strip_candidates:
+            return None, None, "no_wide_pixmap_source_strip"
+
+        strip_candidates.sort(key=lambda c: (float(c["y0"]), float(c["cy"])))
+        middle_candidates = [c for c in strip_candidates if 200.0 <= float(c["y0"]) <= 320.0]
+        chosen = middle_candidates[0] if middle_candidates else (strip_candidates[1] if len(strip_candidates) >= 2 else strip_candidates[0])
+        region, tighten_source = _tighten_pixmap_region_to_visible_art(page_img, page_zoom, chosen["bbox"])
+        visual_grid = _detect_bd_mid_band_visual_slot_grid(page_img, page_zoom, region)
+        if visual_grid:
+            return visual_grid, region, f"bd_middle_band_visual_segments:{tighten_source}"
+        grid = _build_anchor_mid_band_slot_grid(region, page_width, page_height)
+        if not grid:
+            return None, region, "pixmap_source_strip_grid_failed"
+        return grid, region, f"bd_middle_band_source_strip:{tighten_source}"
+
+    def _pad_mid_band_pixmap_slot_bbox(
+        bbox: Tuple[float, float, float, float],
+    ) -> Tuple[float, float, float, float]:
+        x0, y0, x1, y1 = map(float, bbox)
+        w = max(0.0, x1 - x0)
+        h = max(0.0, y1 - y0)
+        x_pad = min(3.0, max(1.0, w * 0.055))
+        y_pad = min(2.6, max(0.8, h * 0.055))
+        return (x0 + x_pad, y0 + y_pad, x1 - x_pad, y1 - y_pad)
+
     def _crop_mid_band_pixmap_slot(
         page_img: Optional[Image.Image],
         page_zoom: float,
@@ -2561,16 +2748,22 @@ def render_full_pallet_pdf(
         )
         pixmap_page_img: Optional[Image.Image] = None
         pixmap_page_zoom = 3.0
-        pixmap_slot_grid = (
-            _build_anchor_mid_band_slot_grid(section.anchor_bbox, page_width, page_height)
-            if strict_side_guardrails and cols == 8
-            else None
-        )
-        if strict_side_guardrails and pixmap_slot_grid is not None:
+        pixmap_source_region_bbox: Optional[Tuple[float, float, float, float]] = None
+        pixmap_grid_source = ""
+        if strict_side_guardrails and cols == 8:
             try:
                 pixmap_page_img, pixmap_page_zoom = _render_page_pixmap_image(img_page, zoom=3.0)
             except Exception:
                 pixmap_page_img = None
+            pixmap_slot_grid, pixmap_source_region_bbox, pixmap_grid_source = _build_bd_mid_band_pixmap_grid(
+                source_cells,
+                page_width,
+                page_height,
+                pixmap_page_img,
+                pixmap_page_zoom,
+            )
+        else:
+            pixmap_slot_grid = None
         if detection_debug is not None:
             detection_debug["side"] = p.side_letter
             detection_debug["image_page_index"] = p.page_index
@@ -2583,6 +2776,8 @@ def render_full_pallet_pdf(
                 str(cell.get("cell_id", "")) for _, cell in sorted(row_strip_lookup.items())
             ]
             detection_debug["pixmap_middle_band_available"] = bool(pixmap_page_img is not None)
+            detection_debug["pixmap_source_region_bbox"] = list(pixmap_source_region_bbox) if pixmap_source_region_bbox else None
+            detection_debug["pixmap_grid_source"] = pixmap_grid_source
         if layout_debug is not None:
             layout_debug.update(
                 {
@@ -2800,6 +2995,7 @@ def render_full_pallet_pdf(
             crop_error: Optional[str] = None
             pixmap_debug: Dict[str, object] = {}
             pixmap_slot_bbox: Optional[Tuple[float, float, float, float]] = None
+            pixmap_slot_bbox_before_padding: Optional[Tuple[float, float, float, float]] = None
             img: Optional[Image.Image] = None
             if (
                 strict_side_guardrails
@@ -2808,7 +3004,8 @@ def render_full_pallet_pdf(
                 and int(ri) < len(pixmap_slot_grid)
                 and int(ci) < len(pixmap_slot_grid[int(ri)])
             ):
-                pixmap_slot_bbox = pixmap_slot_grid[int(ri)][int(ci)]
+                pixmap_slot_bbox_before_padding = pixmap_slot_grid[int(ri)][int(ci)]
+                pixmap_slot_bbox = _pad_mid_band_pixmap_slot_bbox(pixmap_slot_bbox_before_padding)
                 pix_img, pix_bbox, pixmap_debug = _crop_mid_band_pixmap_slot(
                     pixmap_page_img,
                     pixmap_page_zoom,
@@ -2888,7 +3085,10 @@ def render_full_pallet_pdf(
                         "image_crop_source": image_crop_source,
                         "chosen_crop_source_type": chosen_crop_source_type,
                         "render_path_used": chosen_crop_source_type,
+                        "pixmap_source_region_bbox": list(pixmap_source_region_bbox) if pixmap_source_region_bbox else None,
                         "pixmap_slot_bbox": list(pixmap_slot_bbox) if pixmap_slot_bbox else None,
+                        "pixmap_slot_bbox_before_padding": list(pixmap_slot_bbox_before_padding) if pixmap_slot_bbox_before_padding else None,
+                        "pixmap_slot_bbox_after_padding": list(pixmap_slot_bbox) if pixmap_slot_bbox else None,
                         "pixmap_crop_pixel_width": int(getattr(img, "width")) if image_crop_source == "pixmap_middle_band" and img is not None else None,
                         "pixmap_crop_pixel_height": int(getattr(img, "height")) if image_crop_source == "pixmap_middle_band" and img is not None else None,
                         "pixmap_whitespace_score": pixmap_debug.get("whitespace_score"),
@@ -2942,7 +3142,10 @@ def render_full_pallet_pdf(
                         "crop_source_type": image_crop_source,
                         "chosen_crop_source_type": chosen_crop_source_type,
                         "render_path_used": chosen_crop_source_type,
+                        "pixmap_source_region_bbox": list(pixmap_source_region_bbox) if pixmap_source_region_bbox else None,
                         "pixmap_slot_bbox": list(pixmap_slot_bbox) if pixmap_slot_bbox else None,
+                        "pixmap_slot_bbox_before_padding": list(pixmap_slot_bbox_before_padding) if pixmap_slot_bbox_before_padding else None,
+                        "pixmap_slot_bbox_after_padding": list(pixmap_slot_bbox) if pixmap_slot_bbox else None,
                         "pixmap_whitespace_score": pixmap_debug.get("whitespace_score"),
                         "pixmap_suspicious_crop": bool(pixmap_debug.get("suspicious_crop", False)),
                         "pixmap_suspicious_reason": pixmap_debug.get("suspicious_reason", []),
@@ -4395,6 +4598,8 @@ def render_full_pallet_pdf(
                                 "strict_side_guardrails": bool(token_first_detection_debug.get("strict_side_guardrails")),
                                 "row_strip_fallback_available": bool(token_first_detection_debug.get("row_strip_fallback_available")),
                                 "row_strip_source_cell_ids": token_first_detection_debug.get("row_strip_source_cell_ids", []),
+                                "pixmap_source_region_bbox": token_first_detection_debug.get("pixmap_source_region_bbox"),
+                                "pixmap_grid_source": token_first_detection_debug.get("pixmap_grid_source"),
                             },
                             "token_first_mapping_summary": {
                                 "side": pdata.side_letter,
