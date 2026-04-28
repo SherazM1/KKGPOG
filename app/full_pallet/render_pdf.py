@@ -1029,6 +1029,7 @@ def render_full_pallet_pdf(
         name: str,
         cpp: Optional[int],
         *,
+        section: str,
         side: str,
         final_index: int,
         row: int,
@@ -1040,7 +1041,7 @@ def render_full_pallet_pdf(
         iy = y + pad
         iw = max(1.0, w - 2 * pad)
         ih = max(1.0, h - 2 * pad)
-        text_h = max(22.0, min(30.0, ih * 0.34))
+        text_h = max(20.0, min(28.0, ih * 0.30))
         text_gap = 3.0
         img_h = max(8.0, ih - text_h - text_gap)
         img_x = ix
@@ -1060,11 +1061,54 @@ def render_full_pallet_pdf(
             col=col,
             upc12=upc12,
         )
+        draw_img = img
+        trim_bbox = draw_plan.get("proposed_trimmed_crop_bbox")
+        initial_plan = dict(draw_plan)
+        trim_applied = False
+        if img is not None and trim_bbox is not None:
+            try:
+                l, t, r, b = [int(v) for v in trim_bbox]
+                if r > l and b > t:
+                    draw_img = img.convert("RGB").crop((l, t, r, b))
+                    trim_applied = True
+                    draw_plan = _prepare_mid_band_image_draw(
+                        draw_img,
+                        source_crop_bbox,
+                        card_bbox,
+                        image_area_bbox,
+                        side=side,
+                        final_index=final_index,
+                        row=row,
+                        col=col,
+                        upc12=upc12,
+                    )
+                    draw_plan["proposed_trimmed_crop_bbox"] = trim_bbox
+                    draw_plan["trimmed_crop_bbox"] = trim_bbox
+                    draw_plan["trim_applied"] = True
+                    draw_plan["original_crop_size"] = initial_plan.get("original_crop_size")
+                    draw_plan["thin_crop_detected"] = bool(
+                        initial_plan.get("thin_crop_detected") or draw_plan.get("thin_crop_detected")
+                    )
+                    draw_plan["excessive_whitespace_detected"] = bool(
+                        initial_plan.get("excessive_whitespace_detected")
+                        or draw_plan.get("excessive_whitespace_detected")
+                    )
+                    draw_plan["normalization_notes"] = list(initial_plan.get("normalization_notes", [])) + list(
+                        draw_plan.get("normalization_notes", [])
+                    ) + [
+                        "conservative_trim_applied"
+                    ]
+            except Exception:
+                draw_img = img
+                draw_plan["normalization_notes"] = list(draw_plan.get("normalization_notes", [])) + [
+                    "trim_apply_failed"
+                ]
+
         image_draw_bbox = draw_plan.get("proposed_image_draw_bbox")
-        if img is not None and image_draw_bbox is not None:
+        if draw_img is not None and image_draw_bbox is not None:
             dx0, dy0, dx1, dy1 = [float(v) for v in image_draw_bbox]
             c.drawImage(
-                ImageReader(img),
+                ImageReader(draw_img),
                 dx0,
                 dy0,
                 max(1.0, dx1 - dx0),
@@ -1099,8 +1143,14 @@ def render_full_pallet_pdf(
         c.drawString(ix + (iw - tw) / 2, iy + (cpp_h - cpp_fs) / 2, cpp_str)
 
         text_bbox = [round(ix, 2), round(iy, 2), round(ix + iw, 2), round(iy + text_h, 2)]
+        draw_plan["section"] = section
         draw_plan["text_bbox"] = text_bbox
         draw_plan["image_draw_bbox"] = draw_plan.get("proposed_image_draw_bbox")
+        draw_plan["normalization_applied"] = bool(
+            trim_applied or draw_plan.get("thin_crop_detected") or draw_plan.get("excessive_whitespace_detected")
+        )
+        draw_plan["trim_applied"] = bool(trim_applied)
+        draw_plan.setdefault("trimmed_crop_bbox", trim_bbox if trim_applied else None)
         return draw_plan
 
     def _section_shape_policy(section_kind: str) -> Dict[str, float]:
@@ -1109,9 +1159,9 @@ def render_full_pallet_pdf(
                 "desired_card_w": 64.0,
                 "desired_gap": 6.0,
                 "row_gutter": 8.0,
-                "card_ratio": 1.04,   # h / w
-                "min_card_h": 50.0,
-                "max_card_h": 82.0,
+                "card_ratio": 1.10,   # h / w
+                "min_card_h": 56.0,
+                "max_card_h": 92.0,
                 "crop_zoom": 2.40,
                 "crop_inset": 0.018,
             }
@@ -1120,9 +1170,9 @@ def render_full_pallet_pdf(
             "desired_card_w": 64.0,
             "desired_gap": 6.0,
             "row_gutter": 8.0,
-            "card_ratio": 1.04,   # h / w
-            "min_card_h": 50.0,
-            "max_card_h": 82.0,
+            "card_ratio": 1.10,   # h / w
+            "min_card_h": 56.0,
+            "max_card_h": 92.0,
             "crop_zoom": 2.40,
             "crop_inset": 0.018,
         }
@@ -1204,6 +1254,7 @@ def render_full_pallet_pdf(
         content_x0: float,
         product_map: Dict[Tuple[int, int], Tuple[Optional[MatrixRow], CellData]],
         missing_image_slots: Optional[List[str]] = None,
+        normalization_debug_rows: Optional[List[dict]] = None,
     ) -> Tuple[int, int, bool, float, int, int]:
         nonlocal rightmost_used, matched_cells, unmatched_cells
 
@@ -1282,7 +1333,25 @@ def render_full_pallet_pdf(
                 c.setStrokeColorRGB(*FILLED_STROKE)
                 c.setLineWidth(0.75)
                 c.rect(x, y, card_w, card_h, stroke=1, fill=1)
-                _draw_card(c, x, y, card_w, card_h, img, upc_str, disp_name, cpp)
+                norm_debug = _draw_mid_band_card(
+                    c,
+                    x,
+                    y,
+                    card_w,
+                    card_h,
+                    img,
+                    upc_str,
+                    disp_name,
+                    cpp,
+                    section="bonus",
+                    side=p.side_letter,
+                    final_index=ri * n_cols + ci,
+                    row=ri,
+                    col=ci,
+                    source_crop_bbox=cell.bbox,
+                )
+                if normalization_debug_rows is not None:
+                    normalization_debug_rows.append(norm_debug)
 
         sec_bottom = grid_top - n_rows * card_h - max(0, n_rows - 1) * row_gutter
 
@@ -1323,9 +1392,9 @@ def render_full_pallet_pdf(
         intra_gap = 6.0
         inter_gap = 14.0
         row_gutter = 8.0
-        min_card_h = 50.0
-        max_card_h = 82.0
-        card_ratio = 1.04  # h / w
+        min_card_h = 56.0
+        max_card_h = 90.0
+        card_ratio = 1.10  # h / w
         crop_zoom = 2.40
         crop_inset = 0.018
 
@@ -1366,9 +1435,9 @@ def render_full_pallet_pdf(
         inter_gap = 14.0
         col_gap = 6.0
         row_gutter = 8.0
-        min_card_h = 50.0
-        max_card_h = 82.0
-        card_ratio = 1.04  # h / w
+        min_card_h = 56.0
+        max_card_h = 90.0
+        card_ratio = 1.10  # h / w
         crop_zoom = 2.40
         crop_inset = 0.018
 
@@ -2118,6 +2187,7 @@ def render_full_pallet_pdf(
                 upc_str,
                 disp_name,
                 cpp,
+                section="mid_band",
                 side=p.side_letter,
                 final_index=final_index,
                 row=render_row,
@@ -2518,6 +2588,7 @@ def render_full_pallet_pdf(
                 upc_str,
                 disp_name,
                 cpp,
+                section="mid_band",
                 side=p.side_letter,
                 final_index=int(idx),
                 row=int(ri),
@@ -3478,6 +3549,7 @@ def render_full_pallet_pdf(
                     cx0,
                     product_map,
                     missing_bonus_images,
+                    normalization_debug_rows=mid_band_normalization_debug_rows,
                 )
 
             adjusted_to_fit = adjusted_to_fit or main_over or bonus_over
@@ -3557,42 +3629,35 @@ def render_full_pallet_pdf(
 
             bonus_last5_codes = sorted({_to_last5(c.last5) for c in pdata.cells if c.row in set(below_bonus_rows)})
             bonus_slots_total = sum(1 for c in pdata.cells if c.row in set(below_bonus_rows))
-            mid_band_normalization_summary = {
+            def _normalization_summary(section_name: str) -> Dict[str, object]:
+                rows = [r for r in mid_band_normalization_debug_rows if r.get("section") == section_name]
+                return {
+                    "side": pdata.side_letter,
+                    "section": section_name,
+                    "rendered_count": len(rows),
+                    "normalized_count": sum(1 for r in rows if bool(r.get("normalization_applied"))),
+                    "trim_applied_count": sum(1 for r in rows if bool(r.get("trim_applied"))),
+                    "thin_crop_count": sum(1 for r in rows if bool(r.get("thin_crop_detected"))),
+                    "whitespace_heavy_count": sum(1 for r in rows if bool(r.get("excessive_whitespace_detected"))),
+                    "overflow_or_bleed_warning_count": sum(
+                        1 for r in rows if bool(r.get("overflow_or_bleed_detected"))
+                    ),
+                    "trim_applied_indices": [
+                        r.get("final_index") for r in rows if bool(r.get("trim_applied"))
+                    ],
+                    "overflow_or_bleed_indices": [
+                        r.get("final_index") for r in rows if bool(r.get("overflow_or_bleed_detected"))
+                    ],
+                }
+
+            product_normalization_summary = {
                 "side": pdata.side_letter,
-                "rendered_mid_band_count": len(mid_band_normalization_debug_rows),
-                "thin_crop_detected_count": sum(
-                    1 for r in mid_band_normalization_debug_rows if bool(r.get("thin_crop_detected"))
-                ),
-                "excessive_whitespace_detected_count": sum(
-                    1 for r in mid_band_normalization_debug_rows if bool(r.get("excessive_whitespace_detected"))
-                ),
-                "proposed_trim_count": sum(
-                    1 for r in mid_band_normalization_debug_rows if r.get("proposed_trimmed_crop_bbox") is not None
-                ),
-                "overflow_or_bleed_warning_count": sum(
-                    1 for r in mid_band_normalization_debug_rows if bool(r.get("overflow_or_bleed_detected"))
-                ),
-                "thin_crop_detected_indices": [
-                    r.get("final_index")
-                    for r in mid_band_normalization_debug_rows
-                    if bool(r.get("thin_crop_detected"))
-                ],
-                "excessive_whitespace_detected_indices": [
-                    r.get("final_index")
-                    for r in mid_band_normalization_debug_rows
-                    if bool(r.get("excessive_whitespace_detected"))
-                ],
-                "proposed_trim_indices": [
-                    r.get("final_index")
-                    for r in mid_band_normalization_debug_rows
-                    if r.get("proposed_trimmed_crop_bbox") is not None
-                ],
-                "overflow_or_bleed_indices": [
-                    r.get("final_index")
-                    for r in mid_band_normalization_debug_rows
-                    if bool(r.get("overflow_or_bleed_detected"))
-                ],
+                "by_section": {
+                    "mid_band": _normalization_summary("mid_band"),
+                    "bonus": _normalization_summary("bonus"),
+                },
             }
+            mid_band_normalization_summary = product_normalization_summary["by_section"]["mid_band"]
             mid_band_profile_comparison = (
                 _build_mid_band_profile_comparison(pdata, main_slots)
                 if main_slots
@@ -3650,6 +3715,7 @@ def render_full_pallet_pdf(
                             "physical_profile_comparison": mid_band_profile_comparison,
                             "display_selection_debug": mid_band_selection_debug,
                             "image_normalization_summary": mid_band_normalization_summary,
+                            "product_normalization_summary": product_normalization_summary,
                             "layout_debug": mid_band_layout_debug,
                         },
                         "grid_detected": {
@@ -3775,6 +3841,7 @@ def render_full_pallet_pdf(
                             "omitted_order": mid_band_selection_debug.get("omitted_order", []),
                             "render_assignment": mid_band_selection_debug.get("render_assignment", []),
                             "image_normalization_summary": mid_band_normalization_summary,
+                            "product_normalization_summary": product_normalization_summary,
                             "summary": {
                                 "expected_selected_count": mid_band_selection_debug.get("expected_selected_count"),
                                 "actual_selected_count": mid_band_selection_debug.get("actual_selected_count"),
@@ -3789,7 +3856,7 @@ def render_full_pallet_pdf(
                 if mid_band_normalization_debug_rows:
                     st.write(
                         {
-                            "FULL_PALLET_mid_band_image_normalization_summary": mid_band_normalization_summary,
+                            "FULL_PALLET_product_image_normalization_summary": product_normalization_summary,
                         }
                     )
                     st.dataframe(pd.DataFrame(mid_band_normalization_debug_rows), use_container_width=True)
