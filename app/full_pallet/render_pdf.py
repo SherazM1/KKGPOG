@@ -1256,12 +1256,12 @@ def render_full_pallet_pdf(
             }
 
         return {
-            "desired_card_w": 78.0,
+            "desired_card_w": 82.0,
             "desired_gap": 5.0,
             "row_gutter": 8.0,
-            "card_ratio": 1.28,   # h / w
-            "min_card_h": 72.0,
-            "max_card_h": 112.0,
+            "card_ratio": 1.30,   # h / w
+            "min_card_h": 76.0,
+            "max_card_h": 118.0,
             "crop_zoom": 3.00,
             "crop_inset": 0.018,
         }
@@ -2569,7 +2569,7 @@ def render_full_pallet_pdf(
     # Source-crop tightening only.
     # This prevents bonus crops from grabbing slivers of neighboring cards/boxes.
         inset_x = max(2.0, min(4.5, w * 0.060))
-        inset_y = max(1.25, min(3.0, h * 0.045))
+        inset_y = max(2.0, min(4.25, h * 0.065))
 
         sanitized = (
             float(x0 + inset_x),
