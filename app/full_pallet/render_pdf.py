@@ -2689,8 +2689,6 @@ def render_full_pallet_pdf(
                 "WRAP",
                 "DIECUT",
             }
-            if upc12.startswith("084921908") and ("GCI" in tokens or bool(tokens & seasonal_fixture_tokens)):
-                return True
             if "GCI" in tokens:
                 return True
             if "PKG" in tokens:
@@ -2752,35 +2750,153 @@ def render_full_pallet_pdf(
 
         return cleaned, rejected
 
-    def _build_middle_grid_cell_candidate_records(p: FullPalletPage) -> Tuple[List[dict], List[dict], int]:
+    def _build_middle_grid_cell_candidate_records(
+        p: FullPalletPage,
+    ) -> Tuple[List[dict], List[dict], int, Dict[str, object]]:
         bonus_y = _marker_y(p, "bonus_strip")
-        cells_above_bonus: List[CellData] = []
+        holders_y = _marker_y(p, "gift_card_holders")
+        cells_in_band: List[CellData] = []
         for cell in p.cells:
             _cx, cy = _cell_center(cell)
+            if holders_y is not None and cy <= float(holders_y) + 4.0:
+                continue
             if bonus_y is not None and cy >= float(bonus_y) - 8.0:
                 continue
-            cells_above_bonus.append(cell)
+            cells_in_band.append(cell)
 
         row_to_cells: Dict[int, List[CellData]] = {}
-        for cell in cells_above_bonus:
+        for cell in cells_in_band:
             row_to_cells.setdefault(cell.row, []).append(cell)
 
-        candidate_rows: List[Tuple[float, List[dict]]] = []
+        detected_rows: List[dict] = []
+        for row_id, row_cells in row_to_cells.items():
+            ordered_cells = sorted(row_cells, key=lambda c_: _cell_center(c_)[0])
+            x_centers = [round(float(_cell_center(c_)[0]), 2) for c_ in ordered_cells]
+            y_center = float(np.mean([_cell_center(c_)[1] for c_ in ordered_cells])) if ordered_cells else 0.0
+            widths = [float(c_.bbox[2] - c_.bbox[0]) for c_ in ordered_cells]
+            heights = [float(c_.bbox[3] - c_.bbox[1]) for c_ in ordered_cells]
+            detected_rows.append(
+                {
+                    "row_id": int(row_id),
+                    "y_center": round(y_center, 2),
+                    "slot_count": len(ordered_cells),
+                    "x_centers": x_centers,
+                    "avg_width": round(float(np.mean(widths)), 2) if widths else 0.0,
+                    "avg_height": round(float(np.mean(heights)), 2) if heights else 0.0,
+                    "cells": ordered_cells,
+                }
+            )
+
+        detected_rows.sort(key=lambda r: float(r["y_center"]))
+
+        def _eight_grid_cells(row: dict) -> List[CellData]:
+            cells = list(row.get("cells") or [])
+            cells = sorted(cells, key=lambda c_: _cell_center(c_)[0])
+            if len(cells) <= 8:
+                return cells
+            best_cells = cells[:8]
+            best_score = float("inf")
+            for start_idx in range(0, len(cells) - 7):
+                window = cells[start_idx : start_idx + 8]
+                centers = [float(_cell_center(c_)[0]) for c_ in window]
+                gaps = [centers[i + 1] - centers[i] for i in range(7)]
+                widths = [max(1.0, float(c_.bbox[2] - c_.bbox[0])) for c_ in window]
+                heights = [max(1.0, float(c_.bbox[3] - c_.bbox[1])) for c_ in window]
+                gap_score = float(np.std(gaps)) / max(1.0, float(np.mean(gaps))) if gaps else 0.0
+                width_score = float(np.std(widths)) / max(1.0, float(np.mean(widths))) if widths else 0.0
+                height_score = float(np.std(heights)) / max(1.0, float(np.mean(heights))) if heights else 0.0
+                score = gap_score + width_score + height_score
+                if score < best_score:
+                    best_score = score
+                    best_cells = window
+            return best_cells
+
+        def _score_three_row_window(rows: List[dict]) -> float:
+            score = 0.0
+            counts = [int(r["slot_count"]) for r in rows]
+            for count in counts:
+                if count < 8:
+                    score += 10000.0 + float(8 - count) * 1000.0
+                else:
+                    score += float(abs(count - 8)) * 250.0
+
+            row_centers = [float(r["y_center"]) for r in rows]
+            if len(row_centers) == 3:
+                spacing_a = row_centers[1] - row_centers[0]
+                spacing_b = row_centers[2] - row_centers[1]
+                median_spacing = max(1.0, float(np.median([spacing_a, spacing_b])))
+                score += abs(spacing_a - spacing_b) / median_spacing * 500.0
+
+            selected_rows = [_eight_grid_cells(r) for r in rows]
+            if all(len(row) >= 8 for row in selected_rows):
+                centers_by_col = [
+                    [float(_cell_center(row[col])[0]) for row in selected_rows]
+                    for col in range(8)
+                ]
+                template = [float(np.median(col_centers)) for col_centers in centers_by_col]
+                align_errors: List[float] = []
+                for row in selected_rows:
+                    for col, cell in enumerate(row[:8]):
+                        align_errors.append(abs(float(_cell_center(cell)[0]) - template[col]))
+                widths = [
+                    max(1.0, float(cell.bbox[2] - cell.bbox[0]))
+                    for row in selected_rows
+                    for cell in row[:8]
+                ]
+                score += (float(np.mean(align_errors)) / max(1.0, float(np.median(widths)))) * 1000.0
+
+            return score
+
+        selected_row_ids: set[int] = set()
+        selected_row_debug: List[dict] = []
+        rejected_rows: List[dict] = []
+        if len(detected_rows) >= 3:
+            scored_windows: List[Tuple[float, int, List[dict]]] = []
+            for start_idx in range(0, len(detected_rows) - 2):
+                window = detected_rows[start_idx : start_idx + 3]
+                scored_windows.append((_score_three_row_window(window), start_idx, window))
+            scored_windows.sort(key=lambda item: (item[0], item[1]))
+            _best_score, _best_start_idx, best_window = scored_windows[0]
+            selected_row_ids = {int(r["row_id"]) for r in best_window}
+            selected_row_debug = [
+                {
+                    "row_id": int(r["row_id"]),
+                    "y_center": r["y_center"],
+                    "slot_count": int(r["slot_count"]),
+                    "x_centers": r["x_centers"],
+                }
+                for r in best_window
+            ]
+        for row in detected_rows:
+            if int(row["row_id"]) not in selected_row_ids:
+                rejected_rows.append(
+                    {
+                        "row_id": int(row["row_id"]),
+                        "y_center": row["y_center"],
+                        "slot_count": int(row["slot_count"]),
+                        "x_centers": row["x_centers"],
+                        "reason": "artifact_row_not_in_3x8_grid",
+                    }
+                )
+
+        selected_rows = [row for row in detected_rows if int(row["row_id"]) in selected_row_ids]
+        selected_rows.sort(key=lambda r: float(r["y_center"]))
         rejected: List[dict] = []
-        raw_candidate_count = 0
-        for _row_id, row_cells in row_to_cells.items():
-            row_records: List[dict] = []
-            for cell in sorted(row_cells, key=lambda c_: _cell_center(c_)[0]):
-                raw_candidate_count += 1
+        raw_candidate_count = sum(int(row["slot_count"]) for row in detected_rows)
+        selected_records: List[dict] = []
+        source_index = 0
+        for row_index, row in enumerate(selected_rows):
+            row_cells = _eight_grid_cells(row)
+            for slot_in_row, cell in enumerate(row_cells[:8]):
                 match = resolve_full_pallet(cell.last5, cell.name, matrix_idx) if cell.last5 else None
                 synthetic_slot = FullPalletMidBandSlot(
-                    slot_id=f"{p.side_letter}-MB-CELL-R{cell.row}-C{cell.col}",
+                    slot_id=f"{p.side_letter}-MB-R{row_index + 1}-S{slot_in_row + 1}",
                     side_letter=p.side_letter,
-                    row_index=0,
-                    block_name="middle",
-                    block_pos_index=0,
-                    slot_order=0,
-                    slot_in_row=0,
+                    row_index=row_index,
+                    block_name=("left" if slot_in_row <= 1 else "center" if slot_in_row <= 5 else "right"),
+                    block_pos_index=(slot_in_row if slot_in_row <= 1 else slot_in_row - 2 if slot_in_row <= 5 else slot_in_row - 6),
+                    slot_order=source_index,
+                    slot_in_row=slot_in_row,
                     bbox=cell.bbox,
                     raw_label_text=cell.name,
                     parsed_name=cell.name,
@@ -2796,12 +2912,12 @@ def render_full_pallet_pdf(
                 record = {
                     "side": p.side_letter,
                     "slot": synthetic_slot,
-                    "source_index": 0,
+                    "source_index": source_index,
                     "slot_id": synthetic_slot.slot_id,
-                    "group": "middle",
-                    "row_index": 0,
-                    "slot_in_row": 0,
-                    "slot_order": 0,
+                    "group": synthetic_slot.block_name,
+                    "row_index": row_index,
+                    "slot_in_row": slot_in_row,
+                    "slot_order": source_index,
                     "last5": _to_last5(cell.last5),
                     "upc12": match.upc12 if match else None,
                     "cpp": match.cpp_qty if match else None,
@@ -2813,57 +2929,25 @@ def render_full_pallet_pdf(
                 }
                 cleaned, rejected_one = _clean_middle_grid_candidate_records([record])
                 if cleaned:
-                    row_records.extend(cleaned)
+                    selected_records.extend(cleaned)
                 else:
                     rejected.extend(rejected_one)
-
-            if row_records:
-                row_y = float(np.mean([_cell_center(c_)[1] for c_ in row_cells]))
-                candidate_rows.append((row_y, row_records))
-
-        candidate_rows.sort(key=lambda item: item[0])
-        selected_rows = candidate_rows[-3:]
-        selected_records: List[dict] = []
-        source_index = 0
-        for row_index, (_row_y, row_records) in enumerate(selected_rows):
-            row_records = sorted(row_records, key=lambda r: float(r["slot"].bbox[0]))
-            for slot_in_row, record in enumerate(row_records[:8]):
-                slot = record["slot"]
-                updated_slot = FullPalletMidBandSlot(
-                    slot_id=f"{p.side_letter}-MB-R{row_index + 1}-S{slot_in_row + 1}",
-                    side_letter=p.side_letter,
-                    row_index=row_index,
-                    block_name=("left" if slot_in_row <= 1 else "center" if slot_in_row <= 5 else "right"),
-                    block_pos_index=(slot_in_row if slot_in_row <= 1 else slot_in_row - 2 if slot_in_row <= 5 else slot_in_row - 6),
-                    slot_order=source_index,
-                    slot_in_row=slot_in_row,
-                    bbox=slot.bbox,
-                    raw_label_text=slot.raw_label_text,
-                    parsed_name=slot.parsed_name,
-                    last5=slot.last5,
-                    qty=slot.qty,
-                    extraction_bbox=slot.extraction_bbox,
-                    accepted_words=slot.accepted_words,
-                    rejected_nearby_word_count=slot.rejected_nearby_word_count,
-                    resolved_upc12=slot.resolved_upc12,
-                    resolved_display_name=slot.resolved_display_name,
-                    resolved_cpp_qty=slot.resolved_cpp_qty,
-                )
-                selected_records.append(
-                    {
-                        **record,
-                        "slot": updated_slot,
-                        "source_index": source_index,
-                        "slot_id": updated_slot.slot_id,
-                        "row_index": row_index,
-                        "slot_in_row": slot_in_row,
-                        "slot_order": source_index,
-                        "group": updated_slot.block_name,
-                    }
-                )
                 source_index += 1
 
-        return selected_records[:24], rejected, raw_candidate_count
+        row_debug = {
+            "all_detected_rows": [
+                {
+                    "row_id": int(row["row_id"]),
+                    "y_center": row["y_center"],
+                    "slot_count": int(row["slot_count"]),
+                    "x_centers": row["x_centers"],
+                }
+                for row in detected_rows
+            ],
+            "selected_3x8_rows": selected_row_debug,
+            "rejected_rows": rejected_rows,
+        }
+        return selected_records[:24], rejected, raw_candidate_count, row_debug
 
     def _build_mid_band_profile_comparison(
         p: FullPalletPage,
@@ -3192,7 +3276,7 @@ def render_full_pallet_pdf(
             key=lambda s: (int(s.row_index), int(s.slot_in_row), int(s.slot_order)),
         )
         profile = get_mid_band_physical_profile(p.side_letter)
-        cleaned_candidate_records, rejected_middle_candidates, raw_middle_candidate_count = (
+        cleaned_candidate_records, rejected_middle_candidates, raw_middle_candidate_count, middle_grid_row_debug = (
             _build_middle_grid_cell_candidate_records(p)
         )
         selection = select_mid_band_cards_for_display(
@@ -3213,6 +3297,7 @@ def render_full_pallet_pdf(
             selection_debug["rejected_middle_candidate_count"] = len(rejected_middle_candidates)
             selection_debug["rejected_candidate_count"] = len(rejected_middle_candidates)
             selection_debug["rejected_middle_candidates"] = rejected_middle_candidates
+            selection_debug.update(middle_grid_row_debug)
         if not all_slots:
             if detection_debug is not None:
                 detection_debug.update(
@@ -3236,6 +3321,9 @@ def render_full_pallet_pdf(
                         "metadata_order_preview": [],
                         "image_order_preview": [],
                         "final_join_preview": [],
+                        "all_detected_rows": middle_grid_row_debug.get("all_detected_rows", []),
+                        "selected_3x8_rows": middle_grid_row_debug.get("selected_3x8_rows", []),
+                        "rejected_rows": middle_grid_row_debug.get("rejected_rows", []),
                         "labels_pdf_visual_crop_used": False,
                         "labels_pdf_visual_source_enabled": False,
                         "visual_source": "images_pdf",
@@ -3996,6 +4084,15 @@ def render_full_pallet_pdf(
             detection_debug["metadata_order_preview"] = metadata_order_preview
             detection_debug["image_order_preview"] = image_order_preview
             detection_debug["final_join_preview"] = final_join_preview
+            detection_debug["all_detected_rows"] = (
+                list(selection_debug.get("all_detected_rows", [])) if selection_debug else []
+            )
+            detection_debug["selected_3x8_rows"] = (
+                list(selection_debug.get("selected_3x8_rows", [])) if selection_debug else []
+            )
+            detection_debug["rejected_rows"] = (
+                list(selection_debug.get("rejected_rows", [])) if selection_debug else []
+            )
             detection_debug["image_crop_sources_by_slot"] = image_crop_sources_by_slot
             detection_debug["invalid_label_text_crop_count"] = 0
             detection_debug["blank_image_count"] = blank_image_count
