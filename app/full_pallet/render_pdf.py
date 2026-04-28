@@ -2752,6 +2752,119 @@ def render_full_pallet_pdf(
 
         return cleaned, rejected
 
+    def _build_middle_grid_cell_candidate_records(p: FullPalletPage) -> Tuple[List[dict], List[dict], int]:
+        bonus_y = _marker_y(p, "bonus_strip")
+        cells_above_bonus: List[CellData] = []
+        for cell in p.cells:
+            _cx, cy = _cell_center(cell)
+            if bonus_y is not None and cy >= float(bonus_y) - 8.0:
+                continue
+            cells_above_bonus.append(cell)
+
+        row_to_cells: Dict[int, List[CellData]] = {}
+        for cell in cells_above_bonus:
+            row_to_cells.setdefault(cell.row, []).append(cell)
+
+        candidate_rows: List[Tuple[float, List[dict]]] = []
+        rejected: List[dict] = []
+        raw_candidate_count = 0
+        for _row_id, row_cells in row_to_cells.items():
+            row_records: List[dict] = []
+            for cell in sorted(row_cells, key=lambda c_: _cell_center(c_)[0]):
+                raw_candidate_count += 1
+                match = resolve_full_pallet(cell.last5, cell.name, matrix_idx) if cell.last5 else None
+                synthetic_slot = FullPalletMidBandSlot(
+                    slot_id=f"{p.side_letter}-MB-CELL-R{cell.row}-C{cell.col}",
+                    side_letter=p.side_letter,
+                    row_index=0,
+                    block_name="middle",
+                    block_pos_index=0,
+                    slot_order=0,
+                    slot_in_row=0,
+                    bbox=cell.bbox,
+                    raw_label_text=cell.name,
+                    parsed_name=cell.name,
+                    last5=cell.last5,
+                    qty=cell.qty,
+                    extraction_bbox=cell.bbox,
+                    accepted_words=[],
+                    rejected_nearby_word_count=0,
+                    resolved_upc12=match.upc12 if match else None,
+                    resolved_display_name=match.display_name if match else None,
+                    resolved_cpp_qty=match.cpp_qty if match else None,
+                )
+                record = {
+                    "side": p.side_letter,
+                    "slot": synthetic_slot,
+                    "source_index": 0,
+                    "slot_id": synthetic_slot.slot_id,
+                    "group": "middle",
+                    "row_index": 0,
+                    "slot_in_row": 0,
+                    "slot_order": 0,
+                    "last5": _to_last5(cell.last5),
+                    "upc12": match.upc12 if match else None,
+                    "cpp": match.cpp_qty if match else None,
+                    "resolved_match": match,
+                    "resolved_name": match.display_name if match else cell.name.strip(),
+                    "display_name": match.display_name if match else cell.name.strip(),
+                    "resolve_fallback_path": "cell_last5_matrix" if match else "unresolved_cell",
+                    "resolve_trace": {"fallback_path": "cell_last5_matrix" if match else "unresolved_cell"},
+                }
+                cleaned, rejected_one = _clean_middle_grid_candidate_records([record])
+                if cleaned:
+                    row_records.extend(cleaned)
+                else:
+                    rejected.extend(rejected_one)
+
+            if row_records:
+                row_y = float(np.mean([_cell_center(c_)[1] for c_ in row_cells]))
+                candidate_rows.append((row_y, row_records))
+
+        candidate_rows.sort(key=lambda item: item[0])
+        selected_rows = candidate_rows[-3:]
+        selected_records: List[dict] = []
+        source_index = 0
+        for row_index, (_row_y, row_records) in enumerate(selected_rows):
+            row_records = sorted(row_records, key=lambda r: float(r["slot"].bbox[0]))
+            for slot_in_row, record in enumerate(row_records[:8]):
+                slot = record["slot"]
+                updated_slot = FullPalletMidBandSlot(
+                    slot_id=f"{p.side_letter}-MB-R{row_index + 1}-S{slot_in_row + 1}",
+                    side_letter=p.side_letter,
+                    row_index=row_index,
+                    block_name=("left" if slot_in_row <= 1 else "center" if slot_in_row <= 5 else "right"),
+                    block_pos_index=(slot_in_row if slot_in_row <= 1 else slot_in_row - 2 if slot_in_row <= 5 else slot_in_row - 6),
+                    slot_order=source_index,
+                    slot_in_row=slot_in_row,
+                    bbox=slot.bbox,
+                    raw_label_text=slot.raw_label_text,
+                    parsed_name=slot.parsed_name,
+                    last5=slot.last5,
+                    qty=slot.qty,
+                    extraction_bbox=slot.extraction_bbox,
+                    accepted_words=slot.accepted_words,
+                    rejected_nearby_word_count=slot.rejected_nearby_word_count,
+                    resolved_upc12=slot.resolved_upc12,
+                    resolved_display_name=slot.resolved_display_name,
+                    resolved_cpp_qty=slot.resolved_cpp_qty,
+                )
+                selected_records.append(
+                    {
+                        **record,
+                        "slot": updated_slot,
+                        "source_index": source_index,
+                        "slot_id": updated_slot.slot_id,
+                        "row_index": row_index,
+                        "slot_in_row": slot_in_row,
+                        "slot_order": source_index,
+                        "group": updated_slot.block_name,
+                    }
+                )
+                source_index += 1
+
+        return selected_records[:24], rejected, raw_candidate_count
+
     def _build_mid_band_profile_comparison(
         p: FullPalletPage,
         slots: List[FullPalletMidBandSlot],
@@ -2907,7 +3020,10 @@ def render_full_pallet_pdf(
             x = row_xs[min(max(render_col, 0), len(row_xs) - 1)]
             y = grid_top - (render_row + 1) * card_h - render_row * row_gutter
 
-            match, resolve_trace = _resolve_mid_band_slot(p, slot)
+            match = selected_candidate.get("resolved_match")
+            resolve_trace = dict(selected_candidate.get("resolve_trace") or {})
+            if match is None:
+                match, resolve_trace = _resolve_mid_band_slot(p, slot)
             if (
                 position_fallback_debug_rows is not None
                 and str(resolve_trace.get("fallback_path", "")).startswith("template_position_")
@@ -3075,14 +3191,10 @@ def render_full_pallet_pdf(
             [s for r in section.rows for s in r.slots],
             key=lambda s: (int(s.row_index), int(s.slot_in_row), int(s.slot_order)),
         )
-        if not all_candidate_slots:
-            return 0, 0, False, sec_top, 0, 0
         profile = get_mid_band_physical_profile(p.side_letter)
-        candidate_records = [
-            _build_mid_band_candidate_record(p, slot, source_index)
-            for source_index, slot in enumerate(all_candidate_slots)
-        ]
-        cleaned_candidate_records, rejected_middle_candidates = _clean_middle_grid_candidate_records(candidate_records)
+        cleaned_candidate_records, rejected_middle_candidates, raw_middle_candidate_count = (
+            _build_middle_grid_cell_candidate_records(p)
+        )
         selection = select_mid_band_cards_for_display(
             p.side_letter,
             cleaned_candidate_records,
@@ -3093,11 +3205,45 @@ def render_full_pallet_pdf(
         ]
         if selection_debug is not None:
             selection_debug.update(selection.debug_summary)
-            selection_debug["raw_middle_candidate_count"] = len(candidate_records)
+            selection_debug["active_middle_band_path"] = "cell_middle_grid_above_bonus"
+            selection_debug["raw_middle_candidate_count"] = raw_middle_candidate_count
+            selection_debug["raw_candidate_count"] = raw_middle_candidate_count
             selection_debug["cleaned_middle_candidate_count"] = len(cleaned_candidate_records)
+            selection_debug["clean_metadata_count"] = len(cleaned_candidate_records)
             selection_debug["rejected_middle_candidate_count"] = len(rejected_middle_candidates)
+            selection_debug["rejected_candidate_count"] = len(rejected_middle_candidates)
             selection_debug["rejected_middle_candidates"] = rejected_middle_candidates
         if not all_slots:
+            if detection_debug is not None:
+                detection_debug.update(
+                    {
+                        "side": p.side_letter,
+                        "active_mid_band_render_path": "token_first_mid_band",
+                        "active_middle_band_path": "cell_middle_grid_above_bonus",
+                        "raw_middle_candidate_count": raw_middle_candidate_count,
+                        "raw_candidate_count": raw_middle_candidate_count,
+                        "rejected_middle_candidate_count": len(rejected_middle_candidates),
+                        "rejected_candidate_count": len(rejected_middle_candidates),
+                        "rejected_middle_candidates": rejected_middle_candidates,
+                        "cleaned_middle_candidate_count": 0,
+                        "clean_metadata_count": 0,
+                        "ordered_label_slot_count": 0,
+                        "ordered_image_crop_count": 0,
+                        "image_crop_count": 0,
+                        "rendered_middle_slot_count": 0,
+                        "rendered_count": 0,
+                        "count_is_24": False,
+                        "metadata_order_preview": [],
+                        "image_order_preview": [],
+                        "final_join_preview": [],
+                        "labels_pdf_visual_crop_used": False,
+                        "labels_pdf_visual_source_enabled": False,
+                        "visual_source": "images_pdf",
+                        "binding_mode": "image_pdf_crop_i_to_metadata_i",
+                        "middle_band_binding_mode": "image_pdf_crop_i_to_clean_label_slot_i",
+                        "slot_binding_mode": "image_pdf_crop_i_to_clean_label_slot_i",
+                    }
+                )
             return 0, 0, False, sec_top, 0, 0
 
         cols = int(plan.get("cols", 0))
@@ -3260,7 +3406,10 @@ def render_full_pallet_pdf(
             x = row_xs[ci]
             y = grid_top - (ri + 1) * card_h - ri * row_gutter
 
-            match, resolve_trace = _resolve_mid_band_slot(p, slot)
+            match = selected_candidate.get("resolved_match")
+            resolve_trace = dict(selected_candidate.get("resolve_trace") or {})
+            if match is None:
+                match, resolve_trace = _resolve_mid_band_slot(p, slot)
             if (
                 position_fallback_debug_rows is not None
                 and str(resolve_trace.get("fallback_path", "")).startswith("template_position_")
@@ -3766,21 +3915,87 @@ def render_full_pallet_pdf(
             cleaned_middle_candidate_count = int(selection_debug.get("cleaned_middle_candidate_count", len(all_slots))) if selection_debug else len(all_slots)
             expected_middle_count = int(selection_debug.get("expected_selected_count", 24)) if selection_debug else 24
             missing_middle_count = max(0, expected_middle_count - slots_drawn)
+            ordered_image_crop_count = max(0, min(expected_middle_count, len(pixmap_flat_cells)))
+            metadata_order_preview = []
+            image_order_preview = []
+            final_join_preview = []
+            for preview_index, candidate in enumerate(selection.selected_cards[:expected_middle_count]):
+                preview_match = candidate.get("resolved_match")
+                preview_slot = candidate.get("slot")
+                preview_upc = (
+                    getattr(preview_match, "upc12", None)
+                    or candidate.get("upc12")
+                    or getattr(preview_slot, "resolved_upc12", None)
+                )
+                preview_name = (
+                    getattr(preview_match, "display_name", None)
+                    or candidate.get("resolved_name")
+                    or candidate.get("display_name")
+                    or getattr(preview_slot, "resolved_display_name", None)
+                    or getattr(preview_slot, "parsed_name", "")
+                )
+                preview_cpp = (
+                    getattr(preview_match, "cpp_qty", None)
+                    if preview_match is not None
+                    else candidate.get("cpp")
+                )
+                image_cell = pixmap_flat_cells[preview_index] if preview_index < len(pixmap_flat_cells) else None
+                metadata_order_preview.append(
+                    {
+                        "index": int(preview_index),
+                        "upc": preview_upc,
+                        "name": preview_name,
+                        "cpp": preview_cpp,
+                    }
+                )
+                image_order_preview.append(
+                    {
+                        "index": int(preview_index),
+                        "source": "images_pdf",
+                        "cell_id": str(image_cell.get("cell_id", "")) if image_cell else None,
+                        "bbox": list(image_cell.get("bbox")) if image_cell and image_cell.get("bbox") else None,
+                    }
+                )
+                final_join_preview.append(
+                    {
+                        "index": int(preview_index),
+                        "metadata_upc": preview_upc,
+                        "metadata_name": preview_name,
+                        "image_source": "images_pdf" if image_cell else None,
+                        "image_cell_id": str(image_cell.get("cell_id", "")) if image_cell else None,
+                        "image_bbox": list(image_cell.get("bbox")) if image_cell and image_cell.get("bbox") else None,
+                    }
+                )
             detection_debug["active_mid_band_render_path"] = "token_first_mid_band"
+            detection_debug["active_middle_band_path"] = "cell_middle_grid_above_bonus"
             detection_debug["side"] = p.side_letter
             detection_debug["visual_source"] = "images_pdf"
             detection_debug["labels_pdf_visual_crop_used"] = False
             detection_debug["labels_pdf_visual_source_enabled"] = False
             detection_debug["middle_band_binding_mode"] = "image_pdf_crop_i_to_clean_label_slot_i"
             detection_debug["slot_binding_mode"] = "image_pdf_crop_i_to_clean_label_slot_i"
+            detection_debug["binding_mode"] = "image_pdf_crop_i_to_metadata_i"
             detection_debug["raw_middle_candidate_count"] = raw_middle_candidate_count
+            detection_debug["raw_candidate_count"] = raw_middle_candidate_count
             detection_debug["cleaned_middle_candidate_count"] = cleaned_middle_candidate_count
+            detection_debug["clean_metadata_count"] = cleaned_middle_candidate_count
             detection_debug["ordered_label_slot_count"] = len(all_slots)
-            detection_debug["ordered_image_crop_count"] = max(0, min(len(all_slots), len(pixmap_flat_cells)))
+            detection_debug["ordered_image_crop_count"] = ordered_image_crop_count
+            detection_debug["image_crop_count"] = ordered_image_crop_count
             detection_debug["rendered_middle_slot_count"] = slots_drawn
+            detection_debug["rendered_count"] = slots_drawn
             detection_debug["missing_middle_slots"] = missing_middle_count
+            detection_debug["count_is_24"] = bool(
+                len(all_slots) == expected_middle_count
+                and ordered_image_crop_count == expected_middle_count
+                and slots_drawn == expected_middle_count
+            )
             detection_debug["rejected_middle_candidate_count"] = len(rejected_middle_candidates)
+            detection_debug["rejected_candidate_count"] = len(rejected_middle_candidates)
             detection_debug["rejected_middle_candidates"] = rejected_middle_candidates
+            detection_debug["metadata_order_preview"] = metadata_order_preview
+            detection_debug["image_order_preview"] = image_order_preview
+            detection_debug["final_join_preview"] = final_join_preview
             detection_debug["image_crop_sources_by_slot"] = image_crop_sources_by_slot
             detection_debug["invalid_label_text_crop_count"] = 0
             detection_debug["blank_image_count"] = blank_image_count
