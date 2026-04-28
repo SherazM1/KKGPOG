@@ -1416,14 +1416,20 @@ def render_full_pallet_pdf(
                 pixmap_debug: Dict[str, object] = {}
                 render_path_used = "pdf_object_crop"
                 fallback_used = False
+                source_crop_id = f"r{cell.row}c{cell.col}"
+                original_source_bbox = cell.bbox
+                sanitized_source_bbox = cell.bbox
+                source_inset_debug: Dict[str, object] = {}
+                image_sanitize_debug: Dict[str, object] = {}
                 if is_bonus_section and pixmap_page_img is not None:
+                    sanitized_source_bbox, source_inset_debug = _inset_bonus_source_bbox(cell.bbox)
                     pix_img, pix_bbox, pixmap_debug = _crop_mid_band_pixmap_slot(
                         pixmap_page_img,
                         pixmap_page_zoom,
-                        cell.bbox,
+                        sanitized_source_bbox,
                     )
                     if pix_img is not None and pix_bbox is not None:
-                        img = pix_img
+                        img, image_sanitize_debug = _sanitize_bonus_crop_image(pix_img)
                         image_crop_bbox_used = pix_bbox
                         render_path_used = "pixmap_bonus"
                     else:
@@ -1434,10 +1440,13 @@ def render_full_pallet_pdf(
                         img = crop_image_cell(
                             images_doc,
                             p.page_index,
-                            cell.bbox,
+                            sanitized_source_bbox if is_bonus_section else cell.bbox,
                             zoom=float(plan["crop_zoom"]),
                             inset=float(plan["crop_inset"]),
                         )
+                        if is_bonus_section:
+                            img, image_sanitize_debug = _sanitize_bonus_crop_image(img)
+                            image_crop_bbox_used = sanitized_source_bbox
                         render_path_used = "fallback_previous_path" if fallback_used else render_path_used
                     except Exception as exc:
                         img = None
@@ -1484,10 +1493,31 @@ def render_full_pallet_pdf(
                             "row": int(ri),
                             "col": int(ci),
                             "source_page_index": p.page_index,
-                            "slot_id": f"r{cell.row}c{cell.col}",
+                            "slot_id": source_crop_id,
                             "upc12": upc12,
                             "render_path_used": render_path_used,
+                            "source_crop_id": source_crop_id,
+                            "original_source_bbox": list(original_source_bbox) if original_source_bbox else None,
                             "source_crop_bbox": list(image_crop_bbox_used) if image_crop_bbox_used else None,
+                            "cleaned_crop_bbox": list(image_crop_bbox_used) if image_crop_bbox_used else None,
+                            "sanitized_source_bbox": list(sanitized_source_bbox) if sanitized_source_bbox else None,
+                            "source_inset_applied": bool(source_inset_debug.get("source_inset_applied")),
+                            "source_inset_x": source_inset_debug.get("source_inset_x", 0.0),
+                            "source_inset_y": source_inset_debug.get("source_inset_y", 0.0),
+                            "trim_inset_applied": bool(
+                                source_inset_debug.get("source_inset_applied")
+                                or image_sanitize_debug.get("sanitized_crop_used")
+                            ),
+                            "neighboring_edge_contamination_detected": bool(
+                                image_sanitize_debug.get("neighboring_edge_contamination_detected")
+                            ),
+                            "image_edge_trim_bbox": image_sanitize_debug.get("image_edge_trim_bbox"),
+                            "image_edge_trim_px": image_sanitize_debug.get("image_edge_trim_px", [0, 0, 0, 0]),
+                            "crop_clipped_to_hard_bounds": bool(norm_debug.get("hard_clip_applied")),
+                            "sanitized_crop_used": bool(
+                                source_inset_debug.get("source_inset_applied")
+                                or image_sanitize_debug.get("sanitized_crop_used")
+                            ),
                             "source_crop_width": bw,
                             "source_crop_height": bh,
                             "crop_pixel_width": int(getattr(img, "width")) if img is not None and hasattr(img, "width") else None,
@@ -2391,6 +2421,95 @@ def render_full_pallet_pdf(
         )
         return cleaned, chosen_bbox, debug_info
 
+    def _inset_bonus_source_bbox(
+        bbox: Tuple[float, float, float, float],
+    ) -> Tuple[Tuple[float, float, float, float], Dict[str, object]]:
+        x0, y0, x1, y1 = map(float, bbox)
+        w = max(1.0, x1 - x0)
+        h = max(1.0, y1 - y0)
+        inset_x = min(2.0, max(0.7, w * 0.035))
+        inset_y = min(1.8, max(0.5, h * 0.025))
+        cleaned = (x0 + inset_x, y0 + inset_y, x1 - inset_x, y1 - inset_y)
+        if cleaned[2] <= cleaned[0] + 4.0 or cleaned[3] <= cleaned[1] + 4.0:
+            return bbox, {
+                "source_inset_applied": False,
+                "source_inset_x": 0.0,
+                "source_inset_y": 0.0,
+                "source_inset_rejected": True,
+            }
+        return cleaned, {
+            "source_inset_applied": True,
+            "source_inset_x": round(float(inset_x), 2),
+            "source_inset_y": round(float(inset_y), 2),
+            "source_inset_rejected": False,
+        }
+
+    def _sanitize_bonus_crop_image(
+        img: Optional[Image.Image],
+    ) -> Tuple[Optional[Image.Image], Dict[str, object]]:
+        debug_info: Dict[str, object] = {
+            "sanitized_crop_used": False,
+            "neighboring_edge_contamination_detected": False,
+            "image_edge_trim_bbox": None,
+            "image_edge_trim_px": [0, 0, 0, 0],
+        }
+        if img is None:
+            return None, debug_info
+        try:
+            src = img.convert("RGBA")
+            arr = np.asarray(src.convert("RGB"))
+            h_px, w_px = arr.shape[:2]
+            if w_px < 30 or h_px < 30:
+                return src, debug_info
+
+            edge_w = max(2, min(8, int(w_px * 0.035)))
+            edge_h = max(2, min(8, int(h_px * 0.030)))
+            min_rgb = np.min(arr, axis=2)
+            max_rgb = np.max(arr, axis=2)
+            saturation = max_rgb - min_rgb
+            ink = (min_rgb < 245) & ((saturation > 18) | (min_rgb < 120))
+
+            left_density = float(np.mean(ink[:, :edge_w]))
+            right_density = float(np.mean(ink[:, -edge_w:]))
+            top_density = float(np.mean(ink[:edge_h, :]))
+            bottom_density = float(np.mean(ink[-edge_h:, :]))
+            center_density = (
+                float(np.mean(ink[edge_h:-edge_h, edge_w:-edge_w]))
+                if h_px > 2 * edge_h and w_px > 2 * edge_w
+                else 0.0
+            )
+
+            trim_left = edge_w if left_density > max(0.42, center_density * 1.9) else 0
+            trim_right = edge_w if right_density > max(0.42, center_density * 1.9) else 0
+            trim_top = edge_h if top_density > max(0.48, center_density * 2.1) else 0
+            trim_bottom = edge_h if bottom_density > max(0.48, center_density * 2.1) else 0
+
+            max_trim_x = int(w_px * 0.055)
+            max_trim_y = int(h_px * 0.045)
+            trim_left = min(trim_left, max_trim_x)
+            trim_right = min(trim_right, max_trim_x)
+            trim_top = min(trim_top, max_trim_y)
+            trim_bottom = min(trim_bottom, max_trim_y)
+
+            if trim_left or trim_right or trim_top or trim_bottom:
+                l = trim_left
+                t = trim_top
+                r = w_px - trim_right
+                b = h_px - trim_bottom
+                if r > l + max(18, w_px * 0.80) and b > t + max(18, h_px * 0.84):
+                    src = src.crop((l, t, r, b))
+                    debug_info.update(
+                        {
+                            "sanitized_crop_used": True,
+                            "neighboring_edge_contamination_detected": True,
+                            "image_edge_trim_bbox": [l, t, r, b],
+                            "image_edge_trim_px": [trim_left, trim_top, trim_right, trim_bottom],
+                        }
+                    )
+        except Exception:
+            return img, debug_info
+        return src, debug_info
+
     def _validate_mid_band_mapped_cell_bbox(
         mapped_bbox: Optional[Tuple[float, float, float, float]],
         fallback_bbox: Optional[Tuple[float, float, float, float]],
@@ -2899,6 +3018,8 @@ def render_full_pallet_pdf(
         pixmap_page_zoom = 3.0
         pixmap_source_region_bbox: Optional[Tuple[float, float, float, float]] = None
         pixmap_grid_source = ""
+        ac_pixmap_cells: List[dict] = []
+        pixmap_flat_cells: List[dict] = []
         if strict_side_guardrails and cols == 8:
             try:
                 pixmap_page_img, pixmap_page_zoom = _render_page_pixmap_image(img_page, zoom=3.0)
@@ -2911,6 +3032,17 @@ def render_full_pallet_pdf(
                 pixmap_page_img,
                 pixmap_page_zoom,
             )
+            if pixmap_slot_grid:
+                for source_row, row in enumerate(pixmap_slot_grid):
+                    for source_col, bbox in enumerate(row):
+                        pixmap_flat_cells.append(
+                            {
+                                "bbox": bbox,
+                                "cell_id": f"BD_R{source_row + 1}S{source_col + 1}",
+                                "source_row_index": source_row,
+                                "source_slot_index": source_col,
+                            }
+                        )
         elif ac_pixmap_enabled:
             try:
                 pixmap_page_img, pixmap_page_zoom = _render_page_pixmap_image(img_page, zoom=3.0)
@@ -2920,10 +3052,10 @@ def render_full_pallet_pdf(
                 source_cells,
                 expected_count=len(all_slots),
             )
+            pixmap_flat_cells = ac_pixmap_cells
             pixmap_slot_grid = None
         else:
             pixmap_slot_grid = None
-            ac_pixmap_cells = []
         if detection_debug is not None:
             detection_debug["side"] = p.side_letter
             detection_debug["image_page_index"] = p.page_index
@@ -2979,10 +3111,15 @@ def render_full_pallet_pdf(
         pixmap_crop_count = 0
         pixmap_fallback_count = 0
         pixmap_suspicious_count = 0
+        exact_image_binding_count = 0
+        last5_image_binding_count = 0
+        unbound_image_count = 0
+        prevented_wrong_image_count = 0
         render_assignment_debug: List[dict] = []
 
         for idx, slot in enumerate(all_slots):
             selected_candidate = selection.selected_cards[idx] if idx < len(selection.selected_cards) else {}
+            selected_source_index = int(selected_candidate.get("source_index", idx))
             ri = idx // cols
             ci = idx % cols
             x = row_xs[ci]
@@ -3167,17 +3304,25 @@ def render_full_pallet_pdf(
             pixmap_slot_bbox: Optional[Tuple[float, float, float, float]] = None
             pixmap_slot_bbox_before_padding: Optional[Tuple[float, float, float, float]] = None
             ac_pixmap_source_cell: Optional[dict] = None
+            image_binding_method = "fallback_none"
+            image_identity_confident = False
+            wrong_image_fallback_prevented = False
+            selected_image_source_id: Optional[str] = None
             img: Optional[Image.Image] = None
             if (
-                ac_pixmap_enabled
+                (ac_pixmap_enabled or strict_side_guardrails)
                 and pixmap_page_img is not None
-                and idx < len(ac_pixmap_cells)
+                and 0 <= selected_source_index < len(pixmap_flat_cells)
             ):
-                ac_pixmap_source_cell = ac_pixmap_cells[int(idx)]
+                ac_pixmap_source_cell = pixmap_flat_cells[int(selected_source_index)]
                 source_bbox = ac_pixmap_source_cell.get("bbox")
                 if source_bbox and len(source_bbox) == 4:
                     pixmap_slot_bbox_before_padding = tuple(map(float, source_bbox))
-                    pixmap_slot_bbox = pixmap_slot_bbox_before_padding
+                    pixmap_slot_bbox = (
+                        pixmap_slot_bbox_before_padding
+                        if ac_pixmap_enabled
+                        else _pad_mid_band_pixmap_slot_bbox(pixmap_slot_bbox_before_padding)
+                    )
                     pix_img, pix_bbox, pixmap_debug = _crop_mid_band_pixmap_slot(
                         pixmap_page_img,
                         pixmap_page_zoom,
@@ -3188,12 +3333,15 @@ def render_full_pallet_pdf(
                         image_crop_bbox_used = pix_bbox
                         image_crop_source = "pixmap_middle_band"
                         chosen_crop_source_type = "pixmap_middle_band"
-                        crop_selection_path = "pixmap_middle_band_ac_source_order"
+                        crop_selection_path = "pixmap_middle_band_resolved_source_index"
                         fallback_used = False
                         fallback_type = ""
                         final_crop_slot_aligned = True
                         crop_flagged_suspicious = False
                         suspicious_reasons = []
+                        image_binding_method = "exact_last5"
+                        image_identity_confident = True
+                        selected_image_source_id = str(ac_pixmap_source_cell.get("cell_id", ""))
                         pixmap_crop_count += 1
                     else:
                         pixmap_fallback_count += 1
@@ -3210,42 +3358,29 @@ def render_full_pallet_pdf(
                     suspicious_reasons = list(suspicious_reasons) + ["missing_ac_pixmap_source_bbox"]
                     crop_flagged_suspicious = True
                     fallback_used = True
-            elif (
-                strict_side_guardrails
-                and pixmap_page_img is not None
-                and pixmap_slot_grid is not None
-                and int(ri) < len(pixmap_slot_grid)
-                and int(ci) < len(pixmap_slot_grid[int(ri)])
-            ):
-                pixmap_slot_bbox_before_padding = pixmap_slot_grid[int(ri)][int(ci)]
-                pixmap_slot_bbox = _pad_mid_band_pixmap_slot_bbox(pixmap_slot_bbox_before_padding)
-                pix_img, pix_bbox, pixmap_debug = _crop_mid_band_pixmap_slot(
-                    pixmap_page_img,
-                    pixmap_page_zoom,
-                    pixmap_slot_bbox,
-                )
-                if pix_img is not None and pix_bbox is not None:
-                    img = pix_img
-                    image_crop_bbox_used = pix_bbox
-                    image_crop_source = "pixmap_middle_band"
-                    chosen_crop_source_type = "pixmap_middle_band"
-                    crop_selection_path = "pixmap_middle_band"
-                    fallback_used = False
-                    fallback_type = ""
-                    final_crop_slot_aligned = True
-                    crop_flagged_suspicious = False
-                    suspicious_reasons = []
-                    pixmap_crop_count += 1
-                else:
-                    pixmap_fallback_count += 1
-                    pixmap_suspicious_count += 1
-                    if pixmap_debug.get("suspicious_reason"):
-                        rejected_crop_reasons = list(rejected_crop_reasons) + list(pixmap_debug.get("suspicious_reason", []))
-                        suspicious_reasons = list(suspicious_reasons) + list(pixmap_debug.get("suspicious_reason", []))
-                    crop_flagged_suspicious = True
-                    fallback_used = True
+            elif ac_pixmap_enabled or strict_side_guardrails:
+                rejected_crop_reasons = list(rejected_crop_reasons) + ["no_resolved_source_index_image_crop"]
+                suspicious_reasons = list(suspicious_reasons) + ["no_resolved_source_index_image_crop"]
+                crop_flagged_suspicious = True
+                fallback_used = True
 
-            if img is None:
+            if img is None and image_crop_source == "image_cell_match":
+                image_binding_method = "exact_last5"
+                image_identity_confident = True
+                selected_image_source_id = mapped_cell.get("cell_id") if mapped_cell else None
+
+            if img is None and not image_identity_confident:
+                wrong_image_fallback_prevented = bool(image_crop_source != "fallback_none")
+                image_crop_source = "fallback_none"
+                chosen_crop_source_type = "none"
+                crop_selection_path = "fallback_none_identity_unbound"
+                fallback_reason = "no_confident_resolved_item_image_binding"
+                rejected_crop_reasons = list(rejected_crop_reasons) + [fallback_reason]
+                suspicious_reasons = list(suspicious_reasons) + [fallback_reason]
+                crop_flagged_suspicious = True
+                image_crop_bbox_used = None
+
+            if img is None and image_identity_confident:
                 try:
                     img = crop_image_cell(
                         images_doc,
@@ -3265,6 +3400,15 @@ def render_full_pallet_pdf(
                 suspicious_crop_count += 1
             if residual_bad_crop_warning and crop_error is None:
                 residual_bad_crop_warning_count += 1
+            if image_identity_confident:
+                if image_binding_method == "exact_upc":
+                    exact_image_binding_count += 1
+                elif image_binding_method == "exact_last5":
+                    last5_image_binding_count += 1
+            else:
+                unbound_image_count += 1
+            if wrong_image_fallback_prevented:
+                prevented_wrong_image_count += 1
 
             if img is None:
                 missing_image_slots.append(slot.slot_id)
@@ -3284,9 +3428,15 @@ def render_full_pallet_pdf(
                         "slot_in_row": slot.slot_in_row,
                         "slot_order": slot.slot_order,
                         "last5": _to_last5(slot.last5),
+                        "resolved_last5": _to_last5(upc12) if upc12 else _to_last5(slot.last5),
                         "resolved_upc12": upc12,
                         "resolved_display_name": disp_name,
                         "resolved_cpp": cpp,
+                        "selected_source_index": int(selected_source_index),
+                        "selected_image_source_id": selected_image_source_id,
+                        "image_binding_method": image_binding_method,
+                        "metadata_image_identity_matched": bool(image_identity_confident),
+                        "wrong_image_fallback_prevented": bool(wrong_image_fallback_prevented),
                         "token_bbox": list(slot.bbox) if slot.bbox else None,
                         "slot_bbox": list(slot.bbox) if slot.bbox else None,
                         "extraction_bbox": list(slot.extraction_bbox) if slot.extraction_bbox else None,
@@ -3302,7 +3452,7 @@ def render_full_pallet_pdf(
                         "pixmap_slot_bbox": list(pixmap_slot_bbox) if pixmap_slot_bbox else None,
                         "pixmap_slot_bbox_before_padding": list(pixmap_slot_bbox_before_padding) if pixmap_slot_bbox_before_padding else None,
                         "pixmap_slot_bbox_after_padding": list(pixmap_slot_bbox) if pixmap_slot_bbox else None,
-                        "ac_pixmap_source_index": int(idx) if ac_pixmap_source_cell is not None else None,
+                        "ac_pixmap_source_index": int(selected_source_index) if ac_pixmap_source_cell is not None else None,
                         "ac_pixmap_source_cell_id": ac_pixmap_source_cell.get("cell_id") if ac_pixmap_source_cell else None,
                         "ac_pixmap_source_bbox": list(ac_pixmap_source_cell.get("bbox")) if ac_pixmap_source_cell and ac_pixmap_source_cell.get("bbox") else None,
                         "pixmap_crop_pixel_width": int(getattr(img, "width")) if image_crop_source == "pixmap_middle_band" and img is not None else None,
@@ -3351,6 +3501,11 @@ def render_full_pallet_pdf(
                         "resolved_last5": _to_last5(slot.last5),
                         "resolved_upc12": upc12,
                         "resolved_name": disp_name,
+                        "selected_source_index": int(selected_source_index),
+                        "selected_image_source_id": selected_image_source_id,
+                        "image_binding_method": image_binding_method,
+                        "metadata_image_identity_matched": bool(image_identity_confident),
+                        "wrong_image_fallback_prevented": bool(wrong_image_fallback_prevented),
                         "chosen_image_source_page": p.page_index,
                         "chosen_source_image_cell_id": (mapped_cell.get("cell_id") if mapped_cell else None),
                         "row_strip_source_cell_id": row_strip_cell.get("cell_id") if row_strip_cell else None,
@@ -3362,7 +3517,7 @@ def render_full_pallet_pdf(
                         "pixmap_slot_bbox": list(pixmap_slot_bbox) if pixmap_slot_bbox else None,
                         "pixmap_slot_bbox_before_padding": list(pixmap_slot_bbox_before_padding) if pixmap_slot_bbox_before_padding else None,
                         "pixmap_slot_bbox_after_padding": list(pixmap_slot_bbox) if pixmap_slot_bbox else None,
-                        "ac_pixmap_source_index": int(idx) if ac_pixmap_source_cell is not None else None,
+                        "ac_pixmap_source_index": int(selected_source_index) if ac_pixmap_source_cell is not None else None,
                         "ac_pixmap_source_cell_id": ac_pixmap_source_cell.get("cell_id") if ac_pixmap_source_cell else None,
                         "ac_pixmap_source_bbox": list(ac_pixmap_source_cell.get("bbox")) if ac_pixmap_source_cell and ac_pixmap_source_cell.get("bbox") else None,
                         "pixmap_whitespace_score": pixmap_debug.get("whitespace_score"),
@@ -3474,6 +3629,13 @@ def render_full_pallet_pdf(
             detection_debug["suspicious_crop_count"] = suspicious_crop_count
             detection_debug["fallback_used_count"] = mapped_fallback
             detection_debug["residual_bad_crop_warning_count"] = residual_bad_crop_warning_count
+            detection_debug["image_binding_summary"] = {
+                "total_middle_band_slots": len(all_slots),
+                "slots_with_exact_image_binding": exact_image_binding_count,
+                "slots_with_last5_based_binding": last5_image_binding_count,
+                "slots_with_no_confident_image_binding": unbound_image_count,
+                "slots_where_legacy_positional_fallback_was_prevented": prevented_wrong_image_count,
+            }
         if selection_debug is not None:
             selected_ids = [r.get("slot_id") for r in selection_debug.get("selected_order", [])]
             rendered_ids = [r.get("slot_id") for r in render_assignment_debug]
@@ -4761,6 +4923,28 @@ def render_full_pallet_pdf(
                                 "blank_or_missing_crop_count": sum(
                                     1 for r in bonus_crop_debug_rows if bool(r.get("blank_or_missing_crop"))
                                 ),
+                                "clean_crop_count": sum(
+                                    1
+                                    for r in bonus_crop_debug_rows
+                                    if not bool(r.get("suspicious_crop"))
+                                    and not bool(r.get("blank_or_missing_crop"))
+                                ),
+                                "sanitized_crop_count": sum(
+                                    1 for r in bonus_crop_debug_rows if bool(r.get("sanitized_crop_used"))
+                                ),
+                                "edge_contamination_detected_count": sum(
+                                    1
+                                    for r in bonus_crop_debug_rows
+                                    if bool(r.get("neighboring_edge_contamination_detected"))
+                                ),
+                                "average_source_inset_x": round(
+                                    float(np.mean([float(r.get("source_inset_x") or 0.0) for r in bonus_crop_debug_rows])),
+                                    2,
+                                ),
+                                "average_source_inset_y": round(
+                                    float(np.mean([float(r.get("source_inset_y") or 0.0) for r in bonus_crop_debug_rows])),
+                                    2,
+                                ),
                                 "contain_fit_used": True,
                                 "slot_to_crop_assignment": [
                                     {
@@ -4835,6 +5019,7 @@ def render_full_pallet_pdf(
                             "pixmap_middle_band_fallback_count": pixmap_fallback_count,
                             "suspicious_crop_count": suspicious_crop_count,
                             "residual_bad_crop_warning_count": residual_bad_crop_warning_count,
+                            "image_binding_summary": token_first_detection_debug.get("image_binding_summary", {}),
                             "crop_success_count": crop_success_count,
                             "crop_failure_count": crop_failure_count,
                             "tiny_bbox_count": tiny_bbox_count,
@@ -4874,6 +5059,7 @@ def render_full_pallet_pdf(
                                 "previous_fallback_used": token_first_detection_debug.get("previous_fallback_used_count", 0),
                                 "suspicious_crop_count": token_first_detection_debug.get("suspicious_crop_count", 0),
                                 "residual_bad_crop_warning_count": token_first_detection_debug.get("residual_bad_crop_warning_count", 0),
+                                "image_binding_summary": token_first_detection_debug.get("image_binding_summary", {}),
                             },
                         }
                     )
