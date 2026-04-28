@@ -1105,6 +1105,61 @@ def render_full_pallet_pdf(
                 ]
 
         image_draw_bbox = draw_plan.get("proposed_image_draw_bbox")
+        overflow_before_clamp = False
+        clamped_to_fit = False
+        final_contained = True
+        residual_bleed_warning = False
+        if section == "mid_band" and image_draw_bbox is not None:
+            ax0, ay0, ax1, ay1 = image_area_bbox
+            cx0, cy0, cx1, cy1 = card_bbox
+            dx0, dy0, dx1, dy1 = [float(v) for v in image_draw_bbox]
+            overflow_before_clamp = bool(
+                dx0 < ax0 - 0.001
+                or dy0 < ay0 - 0.001
+                or dx1 > ax1 + 0.001
+                or dy1 > ay1 + 0.001
+                or dx0 < cx0 - 0.001
+                or dy0 < cy0 - 0.001
+                or dx1 > cx1 + 0.001
+                or dy1 > cy1 + 0.001
+            )
+
+            src_w = max(1.0, dx1 - dx0)
+            src_h = max(1.0, dy1 - dy0)
+            max_w = max(1.0, ax1 - ax0)
+            max_h = max(1.0, ay1 - ay0)
+            scale = min(1.0, max_w / src_w, max_h / src_h) * 0.985
+            new_w = max(1.0, src_w * scale)
+            new_h = max(1.0, src_h * scale)
+            ndx0 = ax0 + (max_w - new_w) / 2.0
+            ndy0 = ay0 + (max_h - new_h) / 2.0
+            ndx1 = ndx0 + new_w
+            ndy1 = ndy0 + new_h
+            clamped_to_fit = bool(
+                overflow_before_clamp
+                or abs(ndx0 - dx0) > 0.01
+                or abs(ndy0 - dy0) > 0.01
+                or abs(ndx1 - dx1) > 0.01
+                or abs(ndy1 - dy1) > 0.01
+            )
+            image_draw_bbox = [round(ndx0, 2), round(ndy0, 2), round(ndx1, 2), round(ndy1, 2)]
+            draw_plan["proposed_image_draw_bbox"] = image_draw_bbox
+            draw_plan["image_draw_bbox"] = image_draw_bbox
+            draw_plan["normalization_notes"] = list(draw_plan.get("normalization_notes", [])) + (
+                ["mid_band_containment_clamp"] if clamped_to_fit else []
+            )
+            final_contained = bool(
+                image_draw_bbox[0] >= ax0 - 0.001
+                and image_draw_bbox[1] >= ay0 - 0.001
+                and image_draw_bbox[2] <= ax1 + 0.001
+                and image_draw_bbox[3] <= ay1 + 0.001
+                and image_draw_bbox[0] >= cx0 - 0.001
+                and image_draw_bbox[1] >= cy0 - 0.001
+                and image_draw_bbox[2] <= cx1 + 0.001
+                and image_draw_bbox[3] <= cy1 + 0.001
+            )
+            residual_bleed_warning = not final_contained
+
         if draw_img is not None and image_draw_bbox is not None:
             dx0, dy0, dx1, dy1 = [float(v) for v in image_draw_bbox]
             c.drawImage(
@@ -1146,8 +1201,17 @@ def render_full_pallet_pdf(
         draw_plan["section"] = section
         draw_plan["text_bbox"] = text_bbox
         draw_plan["image_draw_bbox"] = draw_plan.get("proposed_image_draw_bbox")
+        draw_plan["overflow_before_clamp"] = bool(overflow_before_clamp)
+        draw_plan["clamped_to_fit"] = bool(clamped_to_fit)
+        draw_plan["final_contained"] = bool(final_contained)
+        draw_plan["residual_bleed_warning"] = bool(residual_bleed_warning)
+        if section == "mid_band":
+            draw_plan["overflow_or_bleed_detected"] = bool(residual_bleed_warning)
         draw_plan["normalization_applied"] = bool(
-            trim_applied or draw_plan.get("thin_crop_detected") or draw_plan.get("excessive_whitespace_detected")
+            trim_applied
+            or clamped_to_fit
+            or draw_plan.get("thin_crop_detected")
+            or draw_plan.get("excessive_whitespace_detected")
         )
         draw_plan["trim_applied"] = bool(trim_applied)
         draw_plan.setdefault("trimmed_crop_bbox", trim_bbox if trim_applied else None)
@@ -3635,15 +3699,25 @@ def render_full_pallet_pdf(
                     "side": pdata.side_letter,
                     "section": section_name,
                     "rendered_count": len(rows),
+                    "rendered_mid_band_count": len(rows) if section_name == "mid_band" else 0,
                     "normalized_count": sum(1 for r in rows if bool(r.get("normalization_applied"))),
                     "trim_applied_count": sum(1 for r in rows if bool(r.get("trim_applied"))),
                     "thin_crop_count": sum(1 for r in rows if bool(r.get("thin_crop_detected"))),
                     "whitespace_heavy_count": sum(1 for r in rows if bool(r.get("excessive_whitespace_detected"))),
+                    "overflow_before_clamp_count": sum(
+                        1 for r in rows if bool(r.get("overflow_before_clamp"))
+                    ),
+                    "clamped_to_fit_count": sum(1 for r in rows if bool(r.get("clamped_to_fit"))),
                     "overflow_or_bleed_warning_count": sum(
-                        1 for r in rows if bool(r.get("overflow_or_bleed_detected"))
+                        1
+                        for r in rows
+                        if bool(r.get("residual_bleed_warning", r.get("overflow_or_bleed_detected")))
                     ),
                     "trim_applied_indices": [
                         r.get("final_index") for r in rows if bool(r.get("trim_applied"))
+                    ],
+                    "clamped_to_fit_indices": [
+                        r.get("final_index") for r in rows if bool(r.get("clamped_to_fit"))
                     ],
                     "overflow_or_bleed_indices": [
                         r.get("final_index") for r in rows if bool(r.get("overflow_or_bleed_detected"))
