@@ -1256,12 +1256,12 @@ def render_full_pallet_pdf(
             }
 
         return {
-            "desired_card_w": 82.0,
+            "desired_card_w": 78.0,
             "desired_gap": 5.0,
             "row_gutter": 8.0,
-            "card_ratio": 1.30,   # h / w
-            "min_card_h": 76.0,
-            "max_card_h": 118.0,
+            "card_ratio": 1.28,   # h / w
+            "min_card_h": 72.0,
+            "max_card_h": 112.0,
             "crop_zoom": 3.00,
             "crop_inset": 0.018,
         }
@@ -2561,31 +2561,35 @@ def render_full_pallet_pdf(
 
     def _inset_bonus_source_bbox(
         bbox: Tuple[float, float, float, float],
-            ) -> Tuple[Tuple[float, float, float, float], Dict[str, object]]:
+    ) -> Tuple[Tuple[float, float, float, float], Dict[str, object]]:
         x0, y0, x1, y1 = bbox
         w = max(1.0, float(x1 - x0))
         h = max(1.0, float(y1 - y0))
 
-    # Source-crop tightening only.
-    # This prevents bonus crops from grabbing slivers of neighboring cards/boxes.
+        # Asymmetric source-crop cleanup for BONUS.
+        # Most contamination is bottom-edge barcode/neighbor-card junk,
+        # so trim bottom slightly more than top.
         inset_x = max(2.0, min(4.5, w * 0.060))
-        inset_y = max(2.0, min(4.25, h * 0.065))
+        inset_top = max(1.25, min(3.0, h * 0.040))
+        inset_bottom = max(2.5, min(5.0, h * 0.075))
 
         sanitized = (
             float(x0 + inset_x),
-            float(y0 + inset_y),
+            float(y0 + inset_top),
             float(x1 - inset_x),
-            float(y1 - inset_y),
-            )
+            float(y1 - inset_bottom),
+        )
 
         return sanitized, {
             "source_inset_applied": True,
             "source_inset_x": float(inset_x),
-            "source_inset_y": float(inset_y),
-            "source_inset_reason": "bonus_neighbor_contamination_guard",
+            "source_inset_y": float(max(inset_top, inset_bottom)),
+            "source_inset_top": float(inset_top),
+            "source_inset_bottom": float(inset_bottom),
+            "source_inset_reason": "bonus_asymmetric_bottom_neighbor_contamination_guard",
             "original_source_bbox": [float(x0), float(y0), float(x1), float(y1)],
             "sanitized_source_bbox": list(sanitized),
-    }
+        }
 
     def _sanitize_bonus_crop_image(
         img: Optional[Image.Image],
