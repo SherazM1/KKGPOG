@@ -2561,26 +2561,31 @@ def render_full_pallet_pdf(
 
     def _inset_bonus_source_bbox(
         bbox: Tuple[float, float, float, float],
-    ) -> Tuple[Tuple[float, float, float, float], Dict[str, object]]:
-        x0, y0, x1, y1 = map(float, bbox)
-        w = max(1.0, x1 - x0)
-        h = max(1.0, y1 - y0)
-        inset_x = min(2.0, max(0.7, w * 0.035))
-        inset_y = min(1.8, max(0.5, h * 0.025))
-        cleaned = (x0 + inset_x, y0 + inset_y, x1 - inset_x, y1 - inset_y)
-        if cleaned[2] <= cleaned[0] + 4.0 or cleaned[3] <= cleaned[1] + 4.0:
-            return bbox, {
-                "source_inset_applied": False,
-                "source_inset_x": 0.0,
-                "source_inset_y": 0.0,
-                "source_inset_rejected": True,
-            }
-        return cleaned, {
+            ) -> Tuple[Tuple[float, float, float, float], Dict[str, object]]:
+        x0, y0, x1, y1 = bbox
+        w = max(1.0, float(x1 - x0))
+        h = max(1.0, float(y1 - y0))
+
+    # Source-crop tightening only.
+    # This prevents bonus crops from grabbing slivers of neighboring cards/boxes.
+        inset_x = max(2.0, min(4.5, w * 0.060))
+        inset_y = max(1.25, min(3.0, h * 0.045))
+
+        sanitized = (
+            float(x0 + inset_x),
+            float(y0 + inset_y),
+            float(x1 - inset_x),
+            float(y1 - inset_y),
+            )
+
+        return sanitized, {
             "source_inset_applied": True,
-            "source_inset_x": round(float(inset_x), 2),
-            "source_inset_y": round(float(inset_y), 2),
-            "source_inset_rejected": False,
-        }
+            "source_inset_x": float(inset_x),
+            "source_inset_y": float(inset_y),
+            "source_inset_reason": "bonus_neighbor_contamination_guard",
+            "original_source_bbox": [float(x0), float(y0), float(x1), float(y1)],
+            "sanitized_source_bbox": list(sanitized),
+    }
 
     def _sanitize_bonus_crop_image(
         img: Optional[Image.Image],
