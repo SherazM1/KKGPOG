@@ -2627,18 +2627,24 @@ def render_full_pallet_pdf(
         cleaned: List[dict] = []
         rejected: List[dict] = []
 
-        def _is_non_product_fixture_or_signage(slot: Optional[FullPalletMidBandSlot]) -> bool:
+        def _is_non_product_fixture_or_signage(candidate: dict) -> bool:
+            slot = candidate.get("slot")
             if slot is None:
                 return False
+            match = candidate.get("resolved_match")
             text = " ".join(
                 [
                     str(getattr(slot, "raw_label_text", "") or ""),
                     str(getattr(slot, "parsed_name", "") or ""),
                     str(getattr(slot, "block_name", "") or ""),
+                    str(candidate.get("resolved_name") or ""),
+                    str(candidate.get("display_name") or ""),
+                    str(getattr(match, "display_name", "") or ""),
                 ]
             ).upper()
             normalized = re.sub(r"[^A-Z0-9]+", " ", text)
             tokens = set(normalized.split())
+            upc12 = str(candidate.get("upc12") or getattr(match, "upc12", "") or "").strip()
 
             phrase_markers = (
                 "MARKETING MESSAGE",
@@ -2648,10 +2654,43 @@ def render_full_pallet_pdf(
                 "GIFT CARD D",
                 "GIFT CARD IN NEW",
                 "GIFT CARD D IN NEW",
+                "GCI TALL",
+                "GCI THIN",
+                "GCI 3PK",
+                "GCI 3 PK",
+                "TALL LID",
+                "THIN LID",
+                "XL PRESENT",
+                "XL ENV",
+                "3 PK WRAP",
+                "3 PK DIECUT",
+                "3PK SHAPED",
+                "2 PK",
+                "BOX TRUCK",
+                "GIFT CARD PKG",
+                "GIFT CARD  PKG",
             )
             if any(marker in normalized for marker in phrase_markers):
                 return True
 
+            seasonal_fixture_tokens = {
+                "SNOWFLAKE",
+                "SNOWMAN",
+                "HOHOHO",
+                "REINDEER",
+                "PEEKING",
+                "HOLDER",
+                "HOLDERS",
+                "FIXTURE",
+                "HEADER",
+                "SIGN",
+                "PKG",
+                "LID",
+                "WRAP",
+                "DIECUT",
+            }
+            if upc12.startswith("084921908") and ("GCI" in tokens or bool(tokens & seasonal_fixture_tokens)):
+                return True
             if "GCI" in tokens:
                 return True
             if "PKG" in tokens:
@@ -2681,7 +2720,7 @@ def render_full_pallet_pdf(
             match = candidate.get("resolved_match")
             reason = ""
 
-            if _is_non_product_fixture_or_signage(slot):
+            if _is_non_product_fixture_or_signage(candidate):
                 reason = "non_product_fixture_or_signage"
             elif match is None or not upc12:
                 reason = "unresolved_no_matrix_match"
@@ -3723,6 +3762,10 @@ def render_full_pallet_pdf(
 
         if detection_debug is not None:
             rejected_middle_candidates = list(selection_debug.get("rejected_middle_candidates", [])) if selection_debug else []
+            raw_middle_candidate_count = int(selection_debug.get("raw_middle_candidate_count", len(all_candidate_slots))) if selection_debug else len(all_candidate_slots)
+            cleaned_middle_candidate_count = int(selection_debug.get("cleaned_middle_candidate_count", len(all_slots))) if selection_debug else len(all_slots)
+            expected_middle_count = int(selection_debug.get("expected_selected_count", 24)) if selection_debug else 24
+            missing_middle_count = max(0, expected_middle_count - slots_drawn)
             detection_debug["active_mid_band_render_path"] = "token_first_mid_band"
             detection_debug["side"] = p.side_letter
             detection_debug["visual_source"] = "images_pdf"
@@ -3730,9 +3773,12 @@ def render_full_pallet_pdf(
             detection_debug["labels_pdf_visual_source_enabled"] = False
             detection_debug["middle_band_binding_mode"] = "image_pdf_crop_i_to_clean_label_slot_i"
             detection_debug["slot_binding_mode"] = "image_pdf_crop_i_to_clean_label_slot_i"
+            detection_debug["raw_middle_candidate_count"] = raw_middle_candidate_count
+            detection_debug["cleaned_middle_candidate_count"] = cleaned_middle_candidate_count
             detection_debug["ordered_label_slot_count"] = len(all_slots)
             detection_debug["ordered_image_crop_count"] = max(0, min(len(all_slots), len(pixmap_flat_cells)))
             detection_debug["rendered_middle_slot_count"] = slots_drawn
+            detection_debug["missing_middle_slots"] = missing_middle_count
             detection_debug["rejected_middle_candidate_count"] = len(rejected_middle_candidates)
             detection_debug["rejected_middle_candidates"] = rejected_middle_candidates
             detection_debug["image_crop_sources_by_slot"] = image_crop_sources_by_slot
@@ -5165,9 +5211,12 @@ def render_full_pallet_pdf(
                                 "labels_pdf_visual_crop_used": token_first_detection_debug.get("labels_pdf_visual_crop_used"),
                                 "labels_pdf_visual_source_enabled": token_first_detection_debug.get("labels_pdf_visual_source_enabled"),
                                 "middle_band_binding_mode": token_first_detection_debug.get("middle_band_binding_mode"),
+                                "raw_middle_candidate_count": token_first_detection_debug.get("raw_middle_candidate_count"),
+                                "cleaned_middle_candidate_count": token_first_detection_debug.get("cleaned_middle_candidate_count"),
                                 "ordered_label_slot_count": token_first_detection_debug.get("ordered_label_slot_count"),
                                 "ordered_image_crop_count": token_first_detection_debug.get("ordered_image_crop_count"),
                                 "rendered_middle_slot_count": token_first_detection_debug.get("rendered_middle_slot_count"),
+                                "missing_middle_slots": token_first_detection_debug.get("missing_middle_slots"),
                                 "rejected_middle_candidate_count": token_first_detection_debug.get("rejected_middle_candidate_count"),
                                 "rejected_middle_candidates": token_first_detection_debug.get("rejected_middle_candidates", []),
                                 "image_crop_sources_by_slot": token_first_detection_debug.get("image_crop_sources_by_slot", []),
