@@ -1766,6 +1766,44 @@ def render_full_pallet_pdf(
             )
         return rows
 
+    def _split_bbox_to_fixed_grid(
+        bbox: Tuple[float, float, float, float],
+        rows: int,
+        cols: int,
+        *,
+        cell_id_prefix: str,
+        x_inset_ratio: float = 0.035,
+        y_inset_ratio: float = 0.045,
+    ) -> List[dict]:
+        x0, y0, x1, y1 = map(float, bbox)
+        w = max(1.0, x1 - x0)
+        h = max(1.0, y1 - y0)
+        cell_w = w / float(cols)
+        cell_h = h / float(rows)
+        cells: List[dict] = []
+        for row_idx in range(rows):
+            for col_idx in range(cols):
+                cx0 = x0 + col_idx * cell_w
+                cy0 = y0 + row_idx * cell_h
+                cx1 = x0 + (col_idx + 1) * cell_w
+                cy1 = y0 + (row_idx + 1) * cell_h
+                x_pad = min(4.0, max(0.0, cell_w * x_inset_ratio))
+                y_pad = min(4.0, max(0.0, cell_h * y_inset_ratio))
+                cell_bbox = (cx0 + x_pad, cy0 + y_pad, cx1 - x_pad, cy1 - y_pad)
+                cells.append(
+                    {
+                        "bbox": cell_bbox,
+                        "cell_id": f"{cell_id_prefix}_R{row_idx + 1}S{col_idx + 1}",
+                        "source_row_index": row_idx,
+                        "source_slot_index": col_idx,
+                        "cx": (cell_bbox[0] + cell_bbox[2]) / 2.0,
+                        "cy": (cell_bbox[1] + cell_bbox[3]) / 2.0,
+                        "w": cell_bbox[2] - cell_bbox[0],
+                        "h": cell_bbox[3] - cell_bbox[1],
+                    }
+                )
+        return cells
+
     def _derive_token_first_fallback_image_bbox(
         slot: FullPalletMidBandSlot,
         section: FullPalletMidBandSection,
@@ -3387,6 +3425,26 @@ def render_full_pallet_pdf(
         all_slots: List[FullPalletMidBandSlot] = [
             candidate["slot"] for candidate in selection.selected_cards if candidate.get("slot") is not None
         ]
+        image_only_slot_count = 24
+        if len(all_slots) < image_only_slot_count:
+            for idx in range(len(all_slots), image_only_slot_count):
+                all_slots.append(
+                    FullPalletMidBandSlot(
+                        slot_id=f"{p.side_letter}-MB-IMAGE-R{idx // 8 + 1}-S{idx % 8 + 1}",
+                        side_letter=p.side_letter,
+                        row_index=idx // 8,
+                        block_name=("left" if (idx % 8) <= 1 else "center" if (idx % 8) <= 5 else "right"),
+                        block_pos_index=((idx % 8) if (idx % 8) <= 1 else (idx % 8) - 2 if (idx % 8) <= 5 else (idx % 8) - 6),
+                        slot_order=idx,
+                        slot_in_row=idx % 8,
+                        bbox=(0.0, 0.0, 1.0, 1.0),
+                        raw_label_text="",
+                        parsed_name="",
+                        last5="",
+                        qty=None,
+                    )
+                )
+        all_slots = all_slots[:image_only_slot_count]
         if selection_debug is not None:
             selection_debug.update(selection.debug_summary)
             selection_debug["active_middle_band_path"] = "cell_middle_grid_above_bonus"
@@ -3398,48 +3456,8 @@ def render_full_pallet_pdf(
             selection_debug["rejected_candidate_count"] = len(rejected_middle_candidates)
             selection_debug["rejected_middle_candidates"] = rejected_middle_candidates
             selection_debug.update(middle_grid_row_debug)
-        if not all_slots:
-            if detection_debug is not None:
-                detection_debug.update(
-                    {
-                        "side": p.side_letter,
-                        "active_mid_band_render_path": "token_first_mid_band",
-                        "active_middle_band_path": "cell_middle_grid_above_bonus",
-                        "raw_middle_candidate_count": raw_middle_candidate_count,
-                        "raw_candidate_count": raw_middle_candidate_count,
-                        "rejected_middle_candidate_count": len(rejected_middle_candidates),
-                        "rejected_candidate_count": len(rejected_middle_candidates),
-                        "rejected_middle_candidates": rejected_middle_candidates,
-                        "cleaned_middle_candidate_count": 0,
-                        "clean_metadata_count": 0,
-                        "ordered_label_slot_count": 0,
-                        "ordered_image_crop_count": 0,
-                        "image_crop_count": 0,
-                        "rendered_middle_slot_count": 0,
-                        "rendered_count": 0,
-                        "count_is_24": False,
-                        "metadata_order_preview": [],
-                        "image_order_preview": [],
-                        "final_join_preview": [],
-                        "all_detected_rows": middle_grid_row_debug.get("all_detected_rows", []),
-                        "selected_3x8_rows": middle_grid_row_debug.get("selected_3x8_rows", []),
-                        "rejected_rows": middle_grid_row_debug.get("rejected_rows", []),
-                        "labels_pdf_visual_crop_used": False,
-                        "labels_pdf_visual_source_enabled": False,
-                        "visual_source": "images_pdf",
-                        "image_source": "images_pdf_pixmap",
-                        "binding_mode": "metadata_i_to_images_pdf_pixmap_i",
-                        "middle_band_binding_mode": "metadata_i_to_images_pdf_pixmap_i",
-                        "slot_binding_mode": "metadata_i_to_images_pdf_pixmap_i",
-                    }
-                )
-            return 0, 0, False, sec_top, 0, 0
-
-        cols = int(plan.get("cols", 0))
-        rows = int(plan.get("rows", 0))
-        if cols <= 0:
-            cols = min(8, max(1, len(all_slots)))
-        rows = int(math.ceil(len(all_slots) / cols))
+        cols = 8
+        rows = 3
 
         card_w = float(plan["card_w"])
         card_h = float(plan["card_h"])
@@ -3488,48 +3506,19 @@ def render_full_pallet_pdf(
         pixmap_grid_source = ""
         ac_pixmap_cells: List[dict] = []
         pixmap_flat_cells: List[dict] = []
-        if strict_side_guardrails and cols == 8:
-            try:
-                pixmap_page_img, pixmap_page_zoom = _render_page_pixmap_image(img_page, zoom=3.0)
-            except Exception:
-                pixmap_page_img = None
-            pixmap_slot_grid, pixmap_source_region_bbox, pixmap_grid_source = _build_bd_mid_band_pixmap_grid(
-                source_cells,
-                page_width,
-                page_height,
-                pixmap_page_img,
-                pixmap_page_zoom,
-            )
-            if pixmap_slot_grid:
-                for source_row, row in enumerate(pixmap_slot_grid):
-                    for source_col, bbox in enumerate(row):
-                        pixmap_flat_cells.append(
-                            {
-                                "bbox": bbox,
-                                "cell_id": f"BD_R{source_row + 1}S{source_col + 1}",
-                                "source_row_index": source_row,
-                                "source_slot_index": source_col,
-                            }
-                        )
-            if not pixmap_flat_cells:
-                ac_pixmap_cells, pixmap_source_region_bbox, pixmap_grid_source = _build_ac_mid_band_pixmap_cells(
-                    source_cells,
-                    expected_count=len(all_slots),
-                )
-                pixmap_flat_cells = ac_pixmap_cells
-        elif ac_pixmap_enabled:
-            try:
-                pixmap_page_img, pixmap_page_zoom = _render_page_pixmap_image(img_page, zoom=3.0)
-            except Exception:
-                pixmap_page_img = None
-            ac_pixmap_cells, pixmap_source_region_bbox, pixmap_grid_source = _build_ac_mid_band_pixmap_cells(
-                source_cells,
-                expected_count=len(all_slots),
-            )
-            pixmap_flat_cells = ac_pixmap_cells
-            pixmap_slot_grid = None
-        else:
-            pixmap_slot_grid = None
+        try:
+            pixmap_page_img, pixmap_page_zoom = _render_page_pixmap_image(img_page, zoom=3.0)
+        except Exception:
+            pixmap_page_img = None
+        pixmap_source_region_bbox = region_bbox
+        pixmap_grid_source = "fixed_3x8_images_pdf_region_split"
+        pixmap_flat_cells = _split_bbox_to_fixed_grid(
+            region_bbox,
+            rows=3,
+            cols=8,
+            cell_id_prefix=f"{p.side_letter}_MID_FIXED",
+        )
+        pixmap_slot_grid = None
         if detection_debug is not None:
             detection_debug["side"] = p.side_letter
             detection_debug["image_page_index"] = p.page_index
@@ -3544,6 +3533,9 @@ def render_full_pallet_pdf(
             detection_debug["pixmap_middle_band_available"] = bool(pixmap_page_img is not None)
             detection_debug["pixmap_source_region_bbox"] = list(pixmap_source_region_bbox) if pixmap_source_region_bbox else None
             detection_debug["pixmap_grid_source"] = pixmap_grid_source
+            detection_debug["image_count_source"] = "fixed_3x8_images_pdf_region_split"
+            detection_debug["metadata_ignored_for_image_count"] = True
+            detection_debug["fixed_pixmap_grid_cell_count"] = len(pixmap_flat_cells)
             if ac_pixmap_enabled:
                 detection_debug["ac_pixmap_crop_count"] = len(ac_pixmap_cells)
                 detection_debug["ac_pixmap_crop_order"] = [
@@ -3601,65 +3593,12 @@ def render_full_pallet_pdf(
             x = row_xs[ci]
             y = grid_top - (ri + 1) * card_h - ri * row_gutter
 
-            match = selected_candidate.get("resolved_match")
-            resolve_trace = dict(selected_candidate.get("resolve_trace") or {})
-            if match is None:
-                match, resolve_trace = _resolve_mid_band_slot(p, slot)
-            if (
-                position_fallback_debug_rows is not None
-                and str(resolve_trace.get("fallback_path", "")).startswith("template_position_")
-            ):
-                position_fallback_debug_rows.append(
-                    {
-                        "side": p.side_letter,
-                        "slot_id": slot.slot_id,
-                        "row_index": slot.row_index,
-                        "slot_in_row": slot.slot_in_row,
-                        "fallback_scope": resolve_trace.get("position_fallback_scope"),
-                        "fallback_candidate_upcs": resolve_trace.get("fallback_candidate_upcs", []),
-                        "fallback_similarity_scores": resolve_trace.get("fallback_similarity_scores", {}),
-                        "chosen_candidate": resolve_trace.get("chosen_candidate"),
-                    }
-                )
-
-            upc12 = match.upc12 if match else None
-            cpp = match.cpp_qty if match else None
-            disp_name = (
-                match.display_name
-                if match and match.display_name
-                else (slot.parsed_name or slot.raw_label_text or "").strip()
-            )
-
-            if upc12:
-                upc_str = upc12
-                matched_cells += 1
-            else:
-                last5_key = _to_last5(slot.last5)
-                upc_str = f"LAST5 {last5_key}" if last5_key else "LAST5 MISSING"
-                disp_name = f"UNRESOLVED {last5_key}" if last5_key else "UNRESOLVED"
-                unresolved_bucket.append(last5_key or slot.slot_id)
-                if unresolved_debug_rows is not None:
-                    unresolved_debug_rows.append(
-                        {
-                            "page_index": p.page_index,
-                            "side": p.side_letter,
-                            "slot_id": slot.slot_id,
-                            "row_index": slot.row_index,
-                            "slot_in_row": slot.slot_in_row,
-                            "block_name": slot.block_name,
-                            "labels_last5": resolve_trace.get("labels_last5"),
-                            "labels_text": (slot.raw_label_text or "").strip(),
-                            "fallback_path": resolve_trace.get("fallback_path"),
-                            "label_hint_upc_candidates": resolve_trace.get("label_hint_upc_candidates", []),
-                            "label_hint_last5_candidates": resolve_trace.get("label_hint_last5_candidates", []),
-                            "fallback_candidate_upcs": resolve_trace.get("fallback_candidate_upcs", []),
-                            "fallback_similarity_scores": resolve_trace.get("fallback_similarity_scores", {}),
-                            "chosen_candidate": resolve_trace.get("chosen_candidate"),
-                            "position_fallback_scope": resolve_trace.get("position_fallback_scope"),
-                            "excel_lookup_succeeded": bool(resolve_trace.get("excel_lookup_succeeded")),
-                        }
-                    )
-                unmatched_cells += 1
+            match = None
+            resolve_trace: Dict[str, object] = {"fallback_path": "image_only_middle_band"}
+            upc12 = None
+            cpp = None
+            disp_name = ""
+            upc_str = ""
 
             mapped_cell = slot_to_cell.get(slot.slot_id)
             candidate_crop_count = 1  # always include slot-geometry fallback candidate
@@ -3813,13 +3752,13 @@ def render_full_pallet_pdf(
                         image_crop_bbox_used = pix_bbox
                         image_crop_source = "images_pdf_pixmap"
                         chosen_crop_source_type = "images_pdf_pixmap"
-                        crop_selection_path = "metadata_i_to_images_pdf_pixmap_i"
+                        crop_selection_path = "fixed_middle_slot_i_to_images_pdf_pixmap_i"
                         fallback_used = False
                         fallback_type = ""
                         final_crop_slot_aligned = True
                         crop_flagged_suspicious = False
                         suspicious_reasons = []
-                        image_binding_method = "metadata_i_to_images_pdf_pixmap_i"
+                        image_binding_method = "fixed_middle_slot_i_to_images_pdf_pixmap_i"
                         image_identity_confident = True
                         selected_image_source_id = str(ac_pixmap_source_cell.get("cell_id", ""))
                         pixmap_crop_count += 1
@@ -4168,9 +4107,9 @@ def render_full_pallet_pdf(
             detection_debug["image_source"] = "images_pdf_pixmap"
             detection_debug["labels_pdf_visual_crop_used"] = False
             detection_debug["labels_pdf_visual_source_enabled"] = False
-            detection_debug["middle_band_binding_mode"] = "metadata_i_to_images_pdf_pixmap_i"
-            detection_debug["slot_binding_mode"] = "metadata_i_to_images_pdf_pixmap_i"
-            detection_debug["binding_mode"] = "metadata_i_to_images_pdf_pixmap_i"
+            detection_debug["middle_band_binding_mode"] = "fixed_middle_slot_i_to_images_pdf_pixmap_i"
+            detection_debug["slot_binding_mode"] = "fixed_middle_slot_i_to_images_pdf_pixmap_i"
+            detection_debug["binding_mode"] = "fixed_middle_slot_i_to_images_pdf_pixmap_i"
             detection_debug["raw_middle_candidate_count"] = raw_middle_candidate_count
             detection_debug["raw_candidate_count"] = raw_middle_candidate_count
             detection_debug["cleaned_middle_candidate_count"] = cleaned_middle_candidate_count
@@ -5606,7 +5545,7 @@ def render_full_pallet_pdf(
                                 "pixmap_crop_count": pixmap_crop_count,
                                 "missing_image_slots": token_first_detection_debug.get("blank_image_count", empty_crop_count),
                                 "labels_pdf_visual_crop_used": False,
-                                "binding_mode": "metadata_i_to_images_pdf_pixmap_i",
+                                "binding_mode": "fixed_middle_slot_i_to_images_pdf_pixmap_i",
                                 "issue": issue,
                             }
                         }
