@@ -2090,6 +2090,47 @@ def render_full_pallet_pdf(
         pix = image_page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
         return Image.frombytes("RGB", (pix.width, pix.height), pix.samples), zoom
 
+    def _extract_images_pdf_pixmap_crop(
+        image_page: Optional[fitz.Page],
+        page_bbox: Optional[Tuple[float, float, float, float]],
+        zoom: float = 3.0,
+    ) -> Tuple[Optional[Image.Image], Optional[Tuple[float, float, float, float]], Dict[str, object]]:
+        debug_info: Dict[str, object] = {
+            "pixmap_clip_attempted": False,
+            "pixmap_clip_success": False,
+            "pixmap_clip_error": None,
+        }
+        if image_page is None or page_bbox is None:
+            debug_info["pixmap_clip_error"] = "missing_image_page_or_bbox"
+            return None, None, debug_info
+
+        try:
+            x0, y0, x1, y1 = map(float, page_bbox)
+            page_rect = image_page.rect
+            clip = fitz.Rect(x0, y0, x1, y1) & page_rect
+            if clip.is_empty or clip.width <= 2.0 or clip.height <= 2.0:
+                debug_info["pixmap_clip_error"] = "empty_or_tiny_clip"
+                return None, None, debug_info
+
+            debug_info["pixmap_clip_attempted"] = True
+            pix = image_page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip, alpha=False)
+            if pix.width <= 2 or pix.height <= 2:
+                debug_info["pixmap_clip_error"] = "tiny_pixmap"
+                return None, None, debug_info
+            mode = "RGB" if pix.n < 4 else "RGBA"
+            img = Image.frombytes(mode, (pix.width, pix.height), pix.samples).convert("RGBA")
+            debug_info.update(
+                {
+                    "pixmap_clip_success": True,
+                    "pixmap_clip_bbox": [float(clip.x0), float(clip.y0), float(clip.x1), float(clip.y1)],
+                    "pixmap_clip_pixel_size": [int(pix.width), int(pix.height)],
+                }
+            )
+            return img, (float(clip.x0), float(clip.y0), float(clip.x1), float(clip.y1)), debug_info
+        except Exception as exc:
+            debug_info["pixmap_clip_error"] = str(exc)
+            return None, None, debug_info
+
     def _tighten_pixmap_region_to_visible_art(
         page_img: Optional[Image.Image],
         page_zoom: float,
@@ -2281,7 +2322,8 @@ def render_full_pallet_pdf(
             x0, y0, x1, y1 = map(float, bbox)
             w = x1 - x0
             h = y1 - y0
-            if 18.0 <= w <= 48.0 and 24.0 <= h <= 58.0 and 235.0 <= y0 <= 370.0:
+            aspect = (w / h) if h > 0.0 else 99.0
+            if 12.0 <= w <= 90.0 and 16.0 <= h <= 90.0 and 0.18 <= aspect <= 2.8:
                 c = dict(cell)
                 c["bbox"] = (x0, y0, x1, y1)
                 c["cx"] = (x0 + x1) / 2.0
@@ -2306,12 +2348,70 @@ def render_full_pallet_pdf(
             else:
                 rows.append([c])
 
-        visual_rows = [sorted(row, key=lambda c: float(c["cx"])) for row in rows if len(row) >= 6]
+        def _best_eight_cells(row: List[dict]) -> List[dict]:
+            row = sorted(row, key=lambda c: float(c["cx"]))
+            if len(row) <= 8:
+                return row
+            best = row[:8]
+            best_score = float("inf")
+            for start_idx in range(0, len(row) - 7):
+                window = row[start_idx : start_idx + 8]
+                centers = [float(c["cx"]) for c in window]
+                gaps = [centers[i + 1] - centers[i] for i in range(7)]
+                widths = [max(1.0, float(c["w"])) for c in window]
+                heights = [max(1.0, float(c["h"])) for c in window]
+                score = (
+                    (float(np.std(gaps)) / max(1.0, float(np.mean(gaps))) if gaps else 0.0)
+                    + float(np.std(widths)) / max(1.0, float(np.mean(widths)))
+                    + float(np.std(heights)) / max(1.0, float(np.mean(heights)))
+                )
+                if score < best_score:
+                    best_score = score
+                    best = window
+            return best
+
+        def _score_window(window_rows: List[List[dict]]) -> float:
+            score = 0.0
+            for row in window_rows:
+                count = len(row)
+                if count < 8:
+                    score += 10000.0 + float(8 - count) * 1000.0
+                else:
+                    score += float(abs(count - 8)) * 250.0
+            row_y = [float(np.mean([c["cy"] for c in row])) for row in window_rows]
+            if len(row_y) == 3:
+                spacing_a = row_y[1] - row_y[0]
+                spacing_b = row_y[2] - row_y[1]
+                score += abs(spacing_a - spacing_b) / max(1.0, float(np.median([spacing_a, spacing_b]))) * 500.0
+            selected_rows = [_best_eight_cells(row) for row in window_rows]
+            if all(len(row) >= 8 for row in selected_rows):
+                template = [
+                    float(np.median([float(row[col]["cx"]) for row in selected_rows]))
+                    for col in range(8)
+                ]
+                align_errors = [
+                    abs(float(row[col]["cx"]) - template[col])
+                    for row in selected_rows
+                    for col in range(8)
+                ]
+                widths = [max(1.0, float(c["w"])) for row in selected_rows for c in row[:8]]
+                score += float(np.mean(align_errors)) / max(1.0, float(np.median(widths))) * 1000.0
+            return score
+
+        visual_rows = [sorted(row, key=lambda c: float(c["cx"])) for row in rows if len(row) >= 4]
         visual_rows = sorted(visual_rows, key=lambda row: float(np.mean([c["cy"] for c in row])))
         needed_rows = int(math.ceil(expected_count / 8.0))
+        if len(visual_rows) >= needed_rows and needed_rows == 3:
+            scored = [
+                (_score_window(visual_rows[start_idx : start_idx + 3]), start_idx)
+                for start_idx in range(0, len(visual_rows) - 2)
+            ]
+            scored.sort(key=lambda item: (item[0], item[1]))
+            best_start = scored[0][1]
+            visual_rows = visual_rows[best_start : best_start + 3]
         selected_cells: List[dict] = []
         for row in visual_rows[:needed_rows]:
-            selected_cells.extend(row[:8])
+            selected_cells.extend(_best_eight_cells(row)[:8])
         selected_cells = selected_cells[:expected_count]
         if len(selected_cells) < expected_count:
             return selected_cells, None, "ac_pixmap_cell_shortage"
@@ -3327,9 +3427,10 @@ def render_full_pallet_pdf(
                         "labels_pdf_visual_crop_used": False,
                         "labels_pdf_visual_source_enabled": False,
                         "visual_source": "images_pdf",
-                        "binding_mode": "image_pdf_crop_i_to_metadata_i",
-                        "middle_band_binding_mode": "image_pdf_crop_i_to_clean_label_slot_i",
-                        "slot_binding_mode": "image_pdf_crop_i_to_clean_label_slot_i",
+                        "image_source": "images_pdf_pixmap",
+                        "binding_mode": "metadata_i_to_images_pdf_pixmap_i",
+                        "middle_band_binding_mode": "metadata_i_to_images_pdf_pixmap_i",
+                        "slot_binding_mode": "metadata_i_to_images_pdf_pixmap_i",
                     }
                 )
             return 0, 0, False, sec_top, 0, 0
@@ -3410,6 +3511,12 @@ def render_full_pallet_pdf(
                                 "source_slot_index": source_col,
                             }
                         )
+            if not pixmap_flat_cells:
+                ac_pixmap_cells, pixmap_source_region_bbox, pixmap_grid_source = _build_ac_mid_band_pixmap_cells(
+                    source_cells,
+                    expected_count=len(all_slots),
+                )
+                pixmap_flat_cells = ac_pixmap_cells
         elif ac_pixmap_enabled:
             try:
                 pixmap_page_img, pixmap_page_zoom = _render_page_pixmap_image(img_page, zoom=3.0)
@@ -3696,23 +3803,23 @@ def render_full_pallet_pdf(
                         if ac_pixmap_enabled
                         else _pad_mid_band_pixmap_slot_bbox(pixmap_slot_bbox_before_padding)
                     )
-                    pix_img, pix_bbox, pixmap_debug = _crop_mid_band_pixmap_slot(
-                        pixmap_page_img,
-                        pixmap_page_zoom,
+                    pix_img, pix_bbox, pixmap_debug = _extract_images_pdf_pixmap_crop(
+                        img_page,
                         pixmap_slot_bbox,
+                        zoom=pixmap_page_zoom,
                     )
                     if pix_img is not None and pix_bbox is not None:
                         img = pix_img
                         image_crop_bbox_used = pix_bbox
-                        image_crop_source = "pixmap_middle_band"
-                        chosen_crop_source_type = "pixmap_middle_band"
-                        crop_selection_path = "image_pdf_crop_i_to_clean_label_slot_i"
+                        image_crop_source = "images_pdf_pixmap"
+                        chosen_crop_source_type = "images_pdf_pixmap"
+                        crop_selection_path = "metadata_i_to_images_pdf_pixmap_i"
                         fallback_used = False
                         fallback_type = ""
                         final_crop_slot_aligned = True
                         crop_flagged_suspicious = False
                         suspicious_reasons = []
-                        image_binding_method = "ordered_clean_slot_index"
+                        image_binding_method = "metadata_i_to_images_pdf_pixmap_i"
                         image_identity_confident = True
                         selected_image_source_id = str(ac_pixmap_source_cell.get("cell_id", ""))
                         pixmap_crop_count += 1
@@ -3840,8 +3947,8 @@ def render_full_pallet_pdf(
                         "ac_pixmap_source_index": int(selected_source_index) if ac_pixmap_source_cell is not None else None,
                         "ac_pixmap_source_cell_id": ac_pixmap_source_cell.get("cell_id") if ac_pixmap_source_cell else None,
                         "ac_pixmap_source_bbox": list(ac_pixmap_source_cell.get("bbox")) if ac_pixmap_source_cell and ac_pixmap_source_cell.get("bbox") else None,
-                        "pixmap_crop_pixel_width": int(getattr(img, "width")) if image_crop_source == "pixmap_middle_band" and img is not None else None,
-                        "pixmap_crop_pixel_height": int(getattr(img, "height")) if image_crop_source == "pixmap_middle_band" and img is not None else None,
+                        "pixmap_crop_pixel_width": int(getattr(img, "width")) if image_crop_source == "images_pdf_pixmap" and img is not None else None,
+                        "pixmap_crop_pixel_height": int(getattr(img, "height")) if image_crop_source == "images_pdf_pixmap" and img is not None else None,
                         "pixmap_whitespace_score": pixmap_debug.get("whitespace_score"),
                         "pixmap_suspicious_crop": bool(pixmap_debug.get("suspicious_crop", False)),
                         "pixmap_suspicious_reason": pixmap_debug.get("suspicious_reason", []),
@@ -4058,11 +4165,12 @@ def render_full_pallet_pdf(
             detection_debug["active_middle_band_path"] = "cell_middle_grid_above_bonus"
             detection_debug["side"] = p.side_letter
             detection_debug["visual_source"] = "images_pdf"
+            detection_debug["image_source"] = "images_pdf_pixmap"
             detection_debug["labels_pdf_visual_crop_used"] = False
             detection_debug["labels_pdf_visual_source_enabled"] = False
-            detection_debug["middle_band_binding_mode"] = "image_pdf_crop_i_to_clean_label_slot_i"
-            detection_debug["slot_binding_mode"] = "image_pdf_crop_i_to_clean_label_slot_i"
-            detection_debug["binding_mode"] = "image_pdf_crop_i_to_metadata_i"
+            detection_debug["middle_band_binding_mode"] = "metadata_i_to_images_pdf_pixmap_i"
+            detection_debug["slot_binding_mode"] = "metadata_i_to_images_pdf_pixmap_i"
+            detection_debug["binding_mode"] = "metadata_i_to_images_pdf_pixmap_i"
             detection_debug["raw_middle_candidate_count"] = raw_middle_candidate_count
             detection_debug["raw_candidate_count"] = raw_middle_candidate_count
             detection_debug["cleaned_middle_candidate_count"] = cleaned_middle_candidate_count
@@ -5467,12 +5575,12 @@ def render_full_pallet_pdf(
                         1 for r in token_first_crop_debug_rows if bool(r.get("residual_bad_crop_warning"))
                     )
                     pixmap_crop_count = sum(
-                        1 for r in token_first_crop_debug_rows if str(r.get("image_crop_source", "")) == "pixmap_middle_band"
+                        1 for r in token_first_crop_debug_rows if str(r.get("image_crop_source", "")) == "images_pdf_pixmap"
                     )
                     pixmap_fallback_count = sum(
                         1
                         for r in token_first_crop_debug_rows
-                        if bool(r.get("pixmap_slot_bbox")) and str(r.get("image_crop_source", "")) != "pixmap_middle_band"
+                        if bool(r.get("pixmap_slot_bbox")) and str(r.get("image_crop_source", "")) != "images_pdf_pixmap"
                     )
                     empty_crop_count = sum(
                         1 for r in token_first_crop_debug_rows if str(r.get("image_crop_source", "")) == "fallback_none"
@@ -5483,6 +5591,26 @@ def render_full_pallet_pdf(
                     heights = [float(r["crop_image_height"]) for r in token_first_crop_debug_rows if r.get("crop_image_height") is not None]
                     avg_crop_width = round(float(np.mean(widths)), 2) if widths else None
                     avg_crop_height = round(float(np.mean(heights)), 2) if heights else None
+                    issue = ""
+                    if pixmap_crop_count != len(token_first_crop_debug_rows):
+                        issue = "missing_or_failed_pixmap_crops"
+                    elif empty_crop_count:
+                        issue = "blank_image_slots_present"
+                    else:
+                        issue = "none"
+                    st.write("FULL PALLET IMAGE EXTRACTION SUMMARY")
+                    st.write(
+                        {
+                            f"Side {pdata.side_letter}": {
+                                "image_source": "images_pdf_pixmap",
+                                "pixmap_crop_count": pixmap_crop_count,
+                                "missing_image_slots": token_first_detection_debug.get("blank_image_count", empty_crop_count),
+                                "labels_pdf_visual_crop_used": False,
+                                "binding_mode": "metadata_i_to_images_pdf_pixmap_i",
+                                "issue": issue,
+                            }
+                        }
+                    )
                     st.write(f"FULL_PALLET token-first mid-band crop debug - Side {pdata.side_letter}")
                     st.write(
                         {
@@ -5492,8 +5620,8 @@ def render_full_pallet_pdf(
                             "row_strip_slice_rejected_count": row_strip_slice_rejected_count,
                             "fallback_crop_path_count": fallback_crop_count,
                             "empty_crop_path_count": empty_crop_count,
-                            "pixmap_middle_band_crop_count": pixmap_crop_count,
-                            "pixmap_middle_band_fallback_count": pixmap_fallback_count,
+                            "images_pdf_pixmap_crop_count": pixmap_crop_count,
+                            "images_pdf_pixmap_fallback_count": pixmap_fallback_count,
                             "suspicious_crop_count": suspicious_crop_count,
                             "residual_bad_crop_warning_count": residual_bad_crop_warning_count,
                             "image_binding_summary": token_first_detection_debug.get("image_binding_summary", {}),
@@ -5520,9 +5648,11 @@ def render_full_pallet_pdf(
                                 "pixmap_grid_source": token_first_detection_debug.get("pixmap_grid_source"),
                                 "active_mid_band_render_path": token_first_detection_debug.get("active_mid_band_render_path"),
                                 "visual_source": token_first_detection_debug.get("visual_source"),
+                                "image_source": token_first_detection_debug.get("image_source"),
                                 "labels_pdf_visual_crop_used": token_first_detection_debug.get("labels_pdf_visual_crop_used"),
                                 "labels_pdf_visual_source_enabled": token_first_detection_debug.get("labels_pdf_visual_source_enabled"),
                                 "middle_band_binding_mode": token_first_detection_debug.get("middle_band_binding_mode"),
+                                "binding_mode": token_first_detection_debug.get("binding_mode"),
                                 "raw_middle_candidate_count": token_first_detection_debug.get("raw_middle_candidate_count"),
                                 "cleaned_middle_candidate_count": token_first_detection_debug.get("cleaned_middle_candidate_count"),
                                 "ordered_label_slot_count": token_first_detection_debug.get("ordered_label_slot_count"),
