@@ -562,7 +562,7 @@ def _generate_ticket_html(segment: SamsPriceStripSegment, x: float, y: float, w:
     item_x = cents_x + (_SAMS_PRICE_SIZE * 0.40) + 0.1 * inch
     item_y = price_y + (_SAMS_PRICE_SIZE * 0.16)
 
-    html = f'''
+    ticket_html = f'''
 <div class="ticket" style="left: {x}pt; top: {y}pt; width: {w}pt; height: {h}pt;">
 <div class="brand" style="left: {pad_x}pt; top: {pad_top}pt;">{html.escape(segment.brand or "")}</div>
 <div class="desc" style="left: {pad_x}pt; top: {desc1_y - y}pt;">{html.escape(segment.desc_1 or "")}</div>
@@ -574,7 +574,7 @@ def _generate_ticket_html(segment: SamsPriceStripSegment, x: float, y: float, w:
 </div>
 '''
 
-    return html.strip()
+    return ticket_html.strip()
 
 
 def _font_file_to_data_uri(font_path: Path) -> str:
