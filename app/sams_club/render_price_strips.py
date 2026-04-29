@@ -195,7 +195,7 @@ def register_sams_strip_fonts() -> None:
         _SAMS_GIBSON_AVAILABLE = False
         detail = "; ".join(issues) if issues else "font names unavailable after registration attempt"
         _SAMS_FONT_WARNING = (
-            "Sam's strip Gibson TTF font load failed. "
+            "Sam's strip Gibson font load failed. "
             "Expected assets/Gibson-Regular.otf and assets/Gibson-SemiBold.otf. "
             f"Using fallback fonts. Details: {detail}"
         )
