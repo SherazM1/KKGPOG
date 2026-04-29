@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING
 
 from reportlab.lib.units import inch
 
+import fitz
+
 from app.sams_club.price_strip_models import SamsPriceStripPdfResult, SamsPriceStripRow, SamsPriceStripSegment
 
 if TYPE_CHECKING:
@@ -205,6 +207,36 @@ def _ensure_playwright_chromium_installed() -> str | None:
         return f"Playwright Chromium install failed: {exc}"
 
 
+def _merge_pdf_bytes(pdf_pages: list[bytes]) -> bytes:
+    """
+    Merge multiple PDF bytes into a single valid PDF document.
+
+    Args:
+        pdf_pages: List of PDF byte strings, one per page.
+
+    Returns:
+        Merged PDF bytes.
+
+    Raises:
+        ValueError: If pdf_pages is empty or if merge fails.
+    """
+    if not pdf_pages:
+        raise ValueError("Cannot merge empty PDF list")
+
+    merged = fitz.open()
+    try:
+        for pdf_bytes in pdf_pages:
+            src = fitz.open(stream=pdf_bytes, filetype="pdf")
+            try:
+                merged.insert_pdf(src)
+            finally:
+                src.close()
+
+        return merged.tobytes()
+    finally:
+        merged.close()
+
+
 def render_sams_price_strips_pdf(
     strip_rows: list[SamsPriceStripRow],
     generated_by: str = "Kendal King",
@@ -291,11 +323,11 @@ async def _render_strips_async(
     strip_rows: list[SamsPriceStripRow],
     warnings: list[str],
 ) -> tuple[bytes, int]:
-    """Render strips asynchronously using Playwright."""
+    """Render strips asynchronously using Playwright and merge into one PDF."""
     from playwright.async_api import async_playwright
 
     rendered_segments = 0
-    all_pdf_bytes = b""
+    page_pdfs: list[bytes] = []
 
     async with async_playwright() as p:
         browser = await p.chromium.launch()
@@ -304,19 +336,19 @@ async def _render_strips_async(
                 html_content = htmls[idx]
                 strip_w, strip_h, footer_h = compute_strip_canvas(row_data, warnings)
                 page_pdf = await _render_page_to_pdf(browser, html_content, strip_w, strip_h)
-
-                if idx == 0:
-                    all_pdf_bytes = page_pdf
-                else:
-                    # Merge PDFs by concatenating bytes (simple approach for now).
-                    # In production, use PyPDF2 or similar for proper PDF merging.
-                    all_pdf_bytes += page_pdf
-
+                page_pdfs.append(page_pdf)
                 rendered_segments += len(row_data.segments)
         finally:
             await browser.close()
 
-    return all_pdf_bytes, rendered_segments
+    # Merge all individual PDFs into one valid multi-page PDF
+    try:
+        merged_pdf_bytes = _merge_pdf_bytes(page_pdfs)
+        warnings.append(f"HTML renderer merged {len(page_pdfs)} strip page PDFs into one final PDF.")
+        return merged_pdf_bytes, rendered_segments
+    except Exception as exc:
+        warnings.append(f"PDF merge failed: {exc}")
+        return b"", rendered_segments
 
 
 async def _render_page_to_pdf(
