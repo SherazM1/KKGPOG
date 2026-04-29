@@ -250,9 +250,18 @@ def render_sams_price_strips_pdf(
         if chromium_status:
             warnings.append(chromium_status)
 
+    if not strip_rows:
+        return SamsPriceStripPdfResult(
+            pdf_bytes=b"",
+            rendered_pages=0,
+            rendered_segments=0,
+            warnings=warnings,
+        )
+
     try:
+        htmls = _build_full_html(strip_rows, warnings)
         pdf_bytes, rendered_segments = asyncio.run(
-            _render_strips_async(strip_rows, warnings)
+            _render_strips_async(htmls, strip_rows, warnings)
         )
     except Exception as exc:
         warnings.append(f"HTML/Playwright renderer failed: {exc}")
@@ -267,7 +276,18 @@ def render_sams_price_strips_pdf(
     )
 
 
+def _build_full_html(strip_rows: list[SamsPriceStripRow], warnings: list[str]) -> list[str]:
+    """Build all HTML strings synchronously before Playwright processing."""
+    htmls = []
+    for row_data in strip_rows:
+        strip_w, strip_h, footer_h = compute_strip_canvas(row_data, warnings)
+        html_content = _generate_strip_html(row_data, strip_w, strip_h, footer_h, warnings)
+        htmls.append(html_content)
+    return htmls
+
+
 async def _render_strips_async(
+    htmls: list[str],
     strip_rows: list[SamsPriceStripRow],
     warnings: list[str],
 ) -> tuple[bytes, int]:
@@ -280,12 +300,12 @@ async def _render_strips_async(
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         try:
-            for row_idx, row_data in enumerate(strip_rows):
+            for idx, row_data in enumerate(strip_rows):
+                html_content = htmls[idx]
                 strip_w, strip_h, footer_h = compute_strip_canvas(row_data, warnings)
-                html_content = _generate_strip_html(row_data, strip_w, strip_h, footer_h, warnings)
                 page_pdf = await _render_page_to_pdf(browser, html_content, strip_w, strip_h)
 
-                if row_idx == 0:
+                if idx == 0:
                     all_pdf_bytes = page_pdf
                 else:
                     # Merge PDFs by concatenating bytes (simple approach for now).
