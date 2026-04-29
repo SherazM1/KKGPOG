@@ -166,8 +166,8 @@ def register_sams_strip_fonts() -> None:
     if _FONTS_READY:
         return
     root = Path(__file__).resolve().parents[2]
-    regular_path = root / "assets" / "24354.ttf"
-    semibold_path = root / "assets" / "24355.ttf"
+    regular_path = root / "assets" / "Gibson-Regular.otf"
+    semibold_path = root / "assets" / "Gibson-SemiBold.otf"
     issues: list[str] = []
 
     if not regular_path.is_file():
@@ -196,7 +196,7 @@ def register_sams_strip_fonts() -> None:
         detail = "; ".join(issues) if issues else "font names unavailable after registration attempt"
         _SAMS_FONT_WARNING = (
             "Sam's strip Gibson TTF font load failed. "
-            "Expected assets/24354.ttf and assets/24355.ttf. "
+            "Expected assets/Gibson-Regular.otf and assets/Gibson-SemiBold.otf. "
             f"Using fallback fonts. Details: {detail}"
         )
     _FONTS_READY = True
