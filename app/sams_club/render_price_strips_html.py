@@ -2,7 +2,7 @@
 HTML/Playwright-based PDF renderer for Sam's Club price strips.
 
 This is a parallel implementation to render_price_strips.py (ReportLab-based).
-Uses Playwright/Chromium to render HTML/CSS to PDF with native Gibson OTF fonts.
+Uses Playwright/Chromium to render HTML/SVG to PDF with native Gibson OTF fonts.
 
 To use this renderer, install Playwright:
     pip install playwright
@@ -19,16 +19,15 @@ import subprocess
 import sys
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-from reportlab.lib.units import inch
+from typing import TYPE_CHECKING, NamedTuple
 
 import fitz
+from reportlab.lib.units import inch
 
 from app.sams_club.price_strip_models import SamsPriceStripPdfResult, SamsPriceStripRow, SamsPriceStripSegment
 
 if TYPE_CHECKING:
-    from playwright.async_api import Browser, Page
+    from playwright.async_api import Browser
 
 try:
     from playwright.async_api import async_playwright
@@ -61,6 +60,25 @@ _DEFAULT_INNER_PAD_TOP = 0.045 * inch
 _DEFAULT_INNER_PAD_BOTTOM = 0.05 * inch
 _MIN_TICKET_GAP = 0.0
 _DEFAULT_TICKET_GAP = 0.02 * inch
+_PRICE_OBJECT_BAND_ANCHOR_RATIO = 0.30
+_TICKET_VERTICAL_LIFT_RATIO = 0.08
+_TICKET_VERTICAL_LIFT_MAX = 0.16 * inch
+
+
+class _PriceObjectLayout(NamedTuple):
+    dollar_sign_x: float
+    dollar_sign_baseline_y: float
+    dollar_sign_size: float
+    dollars_x: float
+    dollars_baseline_y: float
+    dollars_size: float
+    cents_x: float
+    cents_baseline_y: float
+    cents_size: float
+    object_left_x: float
+    object_bottom_y: float
+    object_right_x: float
+    object_top_y: float
 
 
 def parse_strip_length(length_text: str) -> tuple[float, float] | None:
@@ -194,9 +212,158 @@ def _resolve_strip_footer_text(row_data: SamsPriceStripRow) -> str:
     return f"Side: {row_data.side}, Row: {row_data.row} - POG: {row_data.pog}"
 
 
+def _estimate_text_width(text: str, font_size: float, weight: str = "regular") -> float:
+    """
+    Approximate Gibson text width in points for fitting/truncation only.
+
+    Browser/SVG performs the actual render, but we need a deterministic estimate
+    while calculating price object placement and truncation server-side.
+    """
+    value = text or ""
+    if not value:
+        return 0.0
+    factor = 0.54 if weight == "semibold" else 0.50
+    return len(value) * font_size * factor
+
+
+def _truncate_svg_text(text: str, font_size: float, max_width: float, weight: str = "regular") -> str:
+    value = (text or "").strip()
+    if not value:
+        return ""
+
+    if _estimate_text_width(value, font_size, weight) <= max_width:
+        return value
+
+    suffix = "..."
+    suffix_w = _estimate_text_width(suffix, font_size, weight)
+    available = max(0.0, max_width - suffix_w)
+
+    out = value
+    while out and _estimate_text_width(out, font_size, weight) > available:
+        out = out[:-1]
+
+    return f"{out}{suffix}" if out else suffix
+
+
+def _svg_y(page_h: float, reportlab_baseline_y: float) -> float:
+    """
+    Convert ReportLab-style bottom-origin baseline y into SVG top-origin baseline y.
+    SVG <text y="..."> is baseline-based, so this preserves text sitting behavior.
+    """
+    return page_h - reportlab_baseline_y
+
+
+def _compute_content_box_metrics(y: float, h: float) -> tuple[float, float, float]:
+    inner_top = _DEFAULT_INNER_PAD_TOP * 0.55
+    inner_bottom = _DEFAULT_INNER_PAD_BOTTOM * 0.55
+    available_h = max(12.0, h - inner_bottom - inner_top)
+    content_h = max(12.0, available_h * 0.92)
+    min_content_y = y + inner_bottom
+    max_content_y = max(min_content_y, y + h - inner_top - content_h)
+    return min_content_y, max_content_y, content_h
+
+
+def _compute_row_content_y(ticket_y: float, strip_content_h: float) -> tuple[float, float]:
+    """Mirror the old centered content box behavior for the HTML/SVG renderer."""
+    min_content_y, max_content_y, content_h = _compute_content_box_metrics(ticket_y, strip_content_h)
+    lift = min(_TICKET_VERTICAL_LIFT_MAX, max(0.0, strip_content_h * _TICKET_VERTICAL_LIFT_RATIO))
+    centered_content_y = ticket_y + ((strip_content_h - content_h) / 2.0)
+    content_y = min(max(centered_content_y + lift, min_content_y), max_content_y)
+    return content_y, content_h
+
+
+def _layout_price_object_svg(retail: str, x: float, y: float, w: float, h: float) -> _PriceObjectLayout:
+    dollars, cents = _normalize_price_parts(retail)
+
+    pad_x = min(max(_DEFAULT_INNER_PAD_X, w * 0.052), max(_DEFAULT_INNER_PAD_X, w * 0.095))
+    price_left = x + max(_RETAIL_MARGIN_PAD, pad_x * 0.35)
+    price_right = x + w - pad_x
+    max_object_w = max(12.0, price_right - price_left)
+    max_object_h = max(15.0, h * 0.60)
+
+    base_dollars_size = _SAMS_PRICE_SIZE
+    base_sign_size = _SAMS_PRICE_SIZE * 0.33
+    base_cents_size = _SAMS_PRICE_SIZE * 0.40
+    base_sign_gap = max(0.9, base_dollars_size * _SAMS_PRICE_SIGN_GAP_RATIO)
+    base_cents_gap = max(0.7, base_dollars_size * _SAMS_PRICE_CENTS_GAP_RATIO)
+    base_sign_rise = base_dollars_size * _SAMS_PRICE_SIGN_RISE_RATIO
+    base_cents_rise = base_dollars_size * _SAMS_PRICE_CENTS_RISE_RATIO
+
+    sign_w = _estimate_text_width("$", base_sign_size, "semibold")
+    dollars_w = _estimate_text_width(dollars, base_dollars_size, "semibold")
+    cents_w = _estimate_text_width(cents, base_cents_size, "semibold")
+
+    base_object_w = sign_w + base_sign_gap + dollars_w + base_cents_gap + cents_w
+    base_object_ascent = max(
+        base_dollars_size * 0.86,
+        base_sign_rise + (base_sign_size * 0.82),
+        base_cents_rise + (base_cents_size * 0.82),
+    )
+    base_object_descent = max(base_dollars_size * 0.16, base_sign_size * 0.12, base_cents_size * 0.12)
+    base_object_h = base_object_ascent + base_object_descent
+
+    scale = min(1.0, max_object_w / max(base_object_w, 1.0), max_object_h / max(base_object_h, 1.0))
+    scale = max(0.32, scale)
+
+    dollars_size = base_dollars_size * scale
+    sign_size = base_sign_size * scale
+    cents_size = base_cents_size * scale
+    sign_gap = base_sign_gap * scale
+    cents_gap = base_cents_gap * scale
+    sign_rise = base_sign_rise * scale
+    cents_rise = base_cents_rise * scale
+
+    sign_gap = min(max(sign_gap, dollars_size * 0.018), dollars_size * 0.036)
+    cents_gap = min(max(cents_gap, dollars_size * 0.005), dollars_size * 0.014)
+    sign_rise = min(max(sign_rise, dollars_size * 0.355), dollars_size * 0.425)
+    cents_rise = min(max(cents_rise, dollars_size * 0.415), dollars_size * 0.465)
+
+    sign_w = _estimate_text_width("$", sign_size, "semibold")
+    dollars_w = _estimate_text_width(dollars, dollars_size, "semibold")
+    cents_w = _estimate_text_width(cents, cents_size, "semibold")
+
+    object_w = sign_w + sign_gap + dollars_w + cents_gap + cents_w
+    object_ascent = max(
+        dollars_size * 0.86,
+        sign_rise + (sign_size * 0.82),
+        cents_rise + (cents_size * 0.82),
+    )
+    object_descent = max(dollars_size * 0.16, sign_size * 0.12, cents_size * 0.12)
+
+    object_bottom_y = y + max(1.25, h * _PRICE_OBJECT_BAND_ANCHOR_RATIO)
+    dollars_baseline = object_bottom_y + object_descent
+
+    object_left = price_left
+    dollar_sign_x = object_left
+    dollars_x = object_left + sign_w + sign_gap
+    cents_x = dollars_x + dollars_w + cents_gap
+
+    sign_baseline = dollars_baseline + sign_rise
+    cents_baseline = dollars_baseline + cents_rise
+
+    object_right_x = object_left + object_w
+    object_top_y = dollars_baseline + object_ascent
+
+    return _PriceObjectLayout(
+        dollar_sign_x=dollar_sign_x,
+        dollar_sign_baseline_y=sign_baseline,
+        dollar_sign_size=sign_size,
+        dollars_x=dollars_x,
+        dollars_baseline_y=dollars_baseline,
+        dollars_size=dollars_size,
+        cents_x=cents_x,
+        cents_baseline_y=cents_baseline,
+        cents_size=cents_size,
+        object_left_x=object_left,
+        object_bottom_y=object_bottom_y,
+        object_right_x=object_right_x,
+        object_top_y=object_top_y,
+    )
+
+
 def _ensure_playwright_chromium_installed() -> str | None:
     try:
-        result = subprocess.run(
+        subprocess.run(
             [sys.executable, "-m", "playwright", "install", "chromium"],
             check=True,
             capture_output=True,
@@ -258,7 +425,6 @@ def render_sams_price_strips_pdf(
         "HTML/Playwright renderer with Gibson OTF fonts"
     )
 
-    # Debug: Confirm rows received
     warnings.append(f"HTML renderer received {len(strip_rows)} strip rows.")
 
     if not PLAYWRIGHT_AVAILABLE:
@@ -281,9 +447,8 @@ def render_sams_price_strips_pdf(
             rendered_segments=0,
             warnings=warnings,
         )
-    else:
-        if chromium_status:
-            warnings.append(chromium_status)
+    if chromium_status:
+        warnings.append(chromium_status)
 
     if not strip_rows:
         return SamsPriceStripPdfResult(
@@ -329,8 +494,6 @@ async def _render_strips_async(
     warnings: list[str],
 ) -> tuple[bytes, int, int]:
     """Render strips asynchronously using Playwright and merge into one PDF."""
-    from playwright.async_api import async_playwright
-
     rendered_segments = 0
     page_pdfs: list[bytes] = []
 
@@ -339,7 +502,7 @@ async def _render_strips_async(
         try:
             for idx, row_data in enumerate(strip_rows):
                 html_content = htmls[idx]
-                strip_w, strip_h, footer_h = compute_strip_canvas(row_data, warnings)
+                strip_w, strip_h, _footer_h = compute_strip_canvas(row_data, warnings)
                 page_pdf = await _render_page_to_pdf(browser, html_content, strip_w, strip_h)
                 page_pdfs.append(page_pdf)
                 rendered_segments += len(row_data.segments)
@@ -348,27 +511,22 @@ async def _render_strips_async(
 
     warnings.append(f"HTML renderer rendered {len(page_pdfs)} row PDF pages.")
 
-    # Merge all individual PDFs into one valid multi-page PDF
-    merged_pdf_bytes = b""
-    rendered_pages = 0
     try:
         merged_pdf_bytes = _merge_pdf_bytes(page_pdfs)
-        
-        # Validate merged PDF page count
         merged_doc = fitz.open(stream=merged_pdf_bytes, filetype="pdf")
         try:
             page_count = merged_doc.page_count
             warnings.append(f"HTML renderer final merged PDF page count: {page_count}")
-            
+
             if page_count != len(strip_rows):
                 warnings.append(
                     f"ERROR: expected {len(strip_rows)} pages but merged PDF has {page_count} pages."
                 )
-            
+
             rendered_pages = page_count
         finally:
             merged_doc.close()
-            
+
     except Exception as exc:
         warnings.append(f"PDF merge failed: {exc}")
         return b"", 0, rendered_segments
@@ -383,7 +541,7 @@ async def _render_page_to_pdf(
     height: float,
 ) -> bytes:
     """
-    Render HTML content to PDF using Playwright.
+    Render HTML/SVG content to PDF using Playwright.
 
     Args:
         browser: Playwright browser instance.
@@ -397,12 +555,11 @@ async def _render_page_to_pdf(
     page = await browser.new_page()
     try:
         await page.set_content(html_content)
-        # Make sure document fonts are loaded before exporting.
         await page.evaluate("() => document.fonts.ready")
         pdf_bytes = await page.pdf(
             width=f"{width / inch}in",
             height=f"{height / inch}in",
-            print_background=True
+            print_background=True,
         )
         return pdf_bytes
     finally:
@@ -411,39 +568,25 @@ async def _render_page_to_pdf(
 
 def _generate_strip_html(row_data: SamsPriceStripRow, strip_w: float, strip_h: float, footer_h: float, warnings: list[str]) -> str:
     """
-    Generate HTML for a single price strip row.
+    Generate HTML containing one SVG price strip.
 
-    Layout:
-    - One PDF page per row
-    - Repeated ticket blocks across the page horizontally
-    - Each ticket has: brand, description (2 lines), price, item number
-    - Footer text at the bottom
-
-    Args:
-        row_data: SamsPriceStripRow data.
-        strip_w: Strip width in points.
-        strip_h: Strip height in points.
-        footer_h: Footer height in points.
-        warnings: List to append warnings.
-
-    Returns:
-        HTML string with embedded Gibson font faces.
+    SVG is used because SVG text placement is baseline-based, which more closely
+    matches the original ReportLab renderer and the reference PDF.
     """
     root_path = Path(__file__).resolve().parents[2]
     gibson_regular_path = root_path / "assets" / "Gibson-Regular.otf"
     gibson_semibold_path = root_path / "assets" / "Gibson-SemiBold.otf"
 
-    # Encode font files as data URIs for embedding in HTML.
     try:
         regular_data_uri = _font_file_to_data_uri(gibson_regular_path)
         semibold_data_uri = _font_file_to_data_uri(gibson_semibold_path)
         fonts_available = True
-    except Exception:
+    except Exception as exc:
         regular_data_uri = ""
         semibold_data_uri = ""
         fonts_available = False
+        warnings.append(f"Gibson font data URI load failed in HTML renderer: {exc}")
 
-    # Build CSS with @font-face for Gibson fonts.
     font_face_css = ""
     if fonts_available:
         font_face_css = f"""
@@ -463,23 +606,47 @@ def _generate_strip_html(row_data: SamsPriceStripRow, strip_w: float, strip_h: f
     positions = compute_ticket_positions_across_strip(strip_w, len(row_data.segments))
     ticket_y = footer_h
     ticket_h = strip_h - footer_h
+    row_content_y, row_content_h = _compute_row_content_y(ticket_y, ticket_h)
 
-    ticket_htmls = []
+    svg_parts: list[str] = [
+        f'<svg class="strip-svg" width="{strip_w}pt" height="{strip_h}pt" viewBox="0 0 {strip_w} {strip_h}" xmlns="http://www.w3.org/2000/svg">',
+        f'<rect x="0" y="0" width="{strip_w}" height="{strip_h}" fill="white"/>',
+    ]
+
     for idx, segment in enumerate(row_data.segments):
-        x, w = positions[idx]
-        ticket_html = _generate_ticket_html(segment, x, ticket_y, w, ticket_h)
-        ticket_htmls.append(ticket_html)
+        if idx >= len(positions):
+            break
+        x, ticket_w = positions[idx]
+        svg_parts.append(
+            _generate_ticket_svg(
+                segment=segment,
+                x=x,
+                y=ticket_y,
+                w=ticket_w,
+                h=ticket_h,
+                page_h=strip_h,
+                row_content_y=row_content_y,
+                row_content_h=row_content_h,
+            )
+        )
 
     footer_text = _resolve_strip_footer_text(row_data)
-    footer_html = f'<div class="footer">{html.escape(footer_text)}</div>'
+    footer_x = max(0.03 * inch, (positions[0][0] if positions else 0.0) + (0.01 * inch))
+    footer_baseline_y = max(0.75, min(1.5, footer_h * 0.20))
 
-    # HTML structure with absolute positioning.
+    svg_parts.append(
+        f'<text x="{footer_x}" y="{_svg_y(strip_h, footer_baseline_y)}" '
+        f'font-family="Gibson" font-weight="400" font-size="{_SAMS_FOOTER_SIZE}" '
+        f'fill="#303030">{html.escape(footer_text)}</text>'
+    )
+
+    svg_parts.append("</svg>")
+
     html_parts = [
         "<!DOCTYPE html>",
         "<html>",
         "<head>",
         "<meta charset='UTF-8'>",
-        "<meta name='viewport' content='width=device-width, initial-scale=1.0'>",
         "<title>Sam's Club Price Strip</title>",
         "<style>",
         font_face_css,
@@ -490,152 +657,101 @@ def _generate_strip_html(row_data: SamsPriceStripRow, strip_w: float, strip_h: f
     box-sizing: border-box;
 }}
 
-body {{
-    font-family: Gibson, Arial, sans-serif;
-    background: white;
-    margin: 0;
-    padding: 0;
-    position: relative;
+html, body {{
     width: {strip_w}pt;
     height: {strip_h}pt;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: white;
+    font-family: "Gibson", Arial, sans-serif;
 }}
 
-.ticket {{
-    position: absolute;
-}}
-
-.brand {{
-    position: absolute;
-    font-family: "Gibson";
-    font-weight: 600;
-    font-size: {_SAMS_BRAND_SIZE}pt;
-    color: black;
-}}
-
-.desc {{
-    position: absolute;
-    font-family: "Gibson";
-    font-weight: 400;
-    font-size: {_SAMS_DESC_SIZE}pt;
-    color: black;
-}}
-
-.price {{
-    position: absolute;
-}}
-
-.dollar-sign {{
-    position: absolute;
-    font-family: "Gibson";
-    font-weight: 600;
-    font-size: 15.75pt;
-    color: black;
-}}
-
-.dollars {{
-    position: absolute;
-    font-family: "Gibson";
-    font-weight: 600;
-    font-size: 37.05pt;
-    color: black;
-}}
-
-.cents {{
-    position: absolute;
-    font-family: "Gibson";
-    font-weight: 600;
-    font-size: 16.8pt;
-    color: black;
-}}
-
-.item-number {{
-    position: absolute;
-    font-family: "Gibson";
-    font-weight: 400;
-    font-size: {_SAMS_ITEM_SIZE}pt;
-    color: black;
-}}
-
-.footer {{
-    position: absolute;
-    left: 0.03in;
-    bottom: 0.01in;
-    font-family: "Gibson";
-    font-weight: 400;
-    font-size: {_SAMS_FOOTER_SIZE}pt;
-    color: #303030;
+.strip-svg {{
+    display: block;
+    width: {strip_w}pt;
+    height: {strip_h}pt;
 }}
         """,
         "</style>",
         "</head>",
         "<body>",
+        "\n".join(svg_parts),
+        "</body>",
+        "</html>",
     ]
-
-    html_parts.extend(ticket_htmls)
-    html_parts.append(footer_html)
-    html_parts.append("</body>")
-    html_parts.append("</html>")
 
     return "\n".join(html_parts)
 
 
-def _generate_ticket_html(segment: SamsPriceStripSegment, x: float, y: float, w: float, h: float) -> str:
+def _generate_ticket_svg(
+    segment: SamsPriceStripSegment,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    page_h: float,
+    row_content_y: float,
+    row_content_h: float,
+) -> str:
     """
-    Generate HTML for a single ticket block within the strip.
-
-    Args:
-        segment: SamsPriceStripSegment data.
-        x: Left position in points.
-        y: Top position in points.
-        w: Width in points.
-        h: Height in points.
-
-    Returns:
-        HTML string for the ticket.
+    Generate SVG text for one ticket block using ReportLab-style baseline math.
     """
     dollars, cents = _normalize_price_parts(segment.retail)
+    layout = _layout_price_object_svg(segment.retail, x, row_content_y, w, row_content_h)
 
-    pad_x = _DEFAULT_INNER_PAD_X
-    pad_top = _DEFAULT_INNER_PAD_TOP
+    pad_x = min(max(_DEFAULT_INNER_PAD_X, w * 0.052), max(_DEFAULT_INNER_PAD_X, w * 0.095))
+    max_text_w = max(8.0, w - (2 * pad_x))
 
-    brand_x = x + pad_x
-    brand_y = y + pad_top
+    brand = _truncate_svg_text(segment.brand or "-", _SAMS_BRAND_SIZE, max_text_w, "semibold")
+    desc_1 = _truncate_svg_text(segment.desc_1 or "-", _SAMS_DESC_SIZE, max_text_w, "regular")
+    desc_2 = _truncate_svg_text(segment.desc_2 or "-", _SAMS_DESC_SIZE, max_text_w, "regular")
 
-    desc1_x = x + pad_x
-    desc1_y = brand_y + _SAMS_BRAND_SIZE + _SAMS_STACK_BRAND_GAP
+    stack_top_limit = row_content_y + row_content_h - _DEFAULT_INNER_PAD_TOP
+    price_top = layout.object_top_y
+    stack_anchor_top = price_top + _SAMS_BRAND_SIZE + (_SAMS_DESC_SIZE * 2) + _SAMS_STACK_TO_PRICE_OFFSET
+    stack_top = min(stack_top_limit, stack_anchor_top)
 
-    desc2_x = x + pad_x
-    desc2_y = desc1_y + _SAMS_DESC_SIZE + _SAMS_STACK_DESC_GAP
+    # ReportLab-style baselines from the bottom.
+    brand_baseline_y = stack_top - _SAMS_BRAND_SIZE
+    desc_1_baseline_y = brand_baseline_y - _SAMS_STACK_BRAND_GAP - _SAMS_DESC_SIZE
+    desc_2_baseline_y = desc_1_baseline_y - _SAMS_STACK_DESC_GAP - _SAMS_DESC_SIZE
 
-    price_y = desc2_y + _SAMS_DESC_SIZE + _SAMS_STACK_TO_PRICE_OFFSET
+    item_baseline_y = max(row_content_y + 1.1, layout.object_bottom_y + (_SAMS_ITEM_SIZE * 0.16))
+    item_right_x = min(x + w - pad_x, layout.object_right_x + 0.1)
+    item_max_w = max(20.0, min(w * 0.68, (layout.object_right_x - layout.object_left_x) + 2.0))
+    item_number = _truncate_svg_text(segment.item_number or "-", _SAMS_ITEM_SIZE, item_max_w, "regular")
 
-    price_left = x + max(_RETAIL_MARGIN_PAD, pad_x * 0.35)
+    text_x = x + pad_x
 
-    dollar_sign_x = price_left
-    dollar_sign_y = price_y + (_SAMS_PRICE_SIZE * _SAMS_PRICE_SIGN_RISE_RATIO)
+    parts = [
+        '<g class="ticket">',
+        f'<text x="{text_x}" y="{_svg_y(page_h, brand_baseline_y)}" '
+        f'font-family="Gibson" font-weight="600" font-size="{_SAMS_BRAND_SIZE}" fill="black">{html.escape(brand)}</text>',
 
-    dollars_x = dollar_sign_x + (_SAMS_PRICE_SIZE * 0.33) + (_SAMS_PRICE_SIZE * _SAMS_PRICE_SIGN_GAP_RATIO)
-    dollars_y = price_y
+        f'<text x="{text_x}" y="{_svg_y(page_h, desc_1_baseline_y)}" '
+        f'font-family="Gibson" font-weight="400" font-size="{_SAMS_DESC_SIZE}" fill="black">{html.escape(desc_1)}</text>',
 
-    cents_x = dollars_x + _SAMS_PRICE_SIZE + (_SAMS_PRICE_SIZE * _SAMS_PRICE_CENTS_GAP_RATIO)
-    cents_y = price_y + (_SAMS_PRICE_SIZE * _SAMS_PRICE_CENTS_RISE_RATIO)
+        f'<text x="{text_x}" y="{_svg_y(page_h, desc_2_baseline_y)}" '
+        f'font-family="Gibson" font-weight="400" font-size="{_SAMS_DESC_SIZE}" fill="black">{html.escape(desc_2)}</text>',
 
-    item_x = cents_x + (_SAMS_PRICE_SIZE * 0.40) + 0.1 * inch
-    item_y = price_y + (_SAMS_PRICE_SIZE * 0.16)
+        f'<text x="{layout.dollar_sign_x}" y="{_svg_y(page_h, layout.dollar_sign_baseline_y)}" '
+        f'font-family="Gibson" font-weight="600" font-size="{layout.dollar_sign_size}" fill="black">$</text>',
 
-    ticket_html = f'''
-<div class="ticket" style="left: {x}pt; top: {y}pt; width: {w}pt; height: {h}pt;">
-<div class="brand" style="left: {pad_x}pt; top: {pad_top}pt;">{html.escape(segment.brand or "")}</div>
-<div class="desc" style="left: {pad_x}pt; top: {desc1_y - y}pt;">{html.escape(segment.desc_1 or "")}</div>
-<div class="desc" style="left: {pad_x}pt; top: {desc2_y - y}pt;">{html.escape(segment.desc_2 or "")}</div>
-<div class="dollar-sign" style="left: {dollar_sign_x - x}pt; top: {dollar_sign_y - y}pt;">$</div>
-<div class="dollars" style="left: {dollars_x - x}pt; top: {dollars_y - y}pt;">{dollars}</div>
-<div class="cents" style="left: {cents_x - x}pt; top: {cents_y - y}pt;">{cents}</div>
-<div class="item-number" style="left: {item_x - x}pt; top: {item_y - y}pt;">{html.escape(segment.item_number or "")}</div>
-</div>
-'''
+        f'<text x="{layout.dollars_x}" y="{_svg_y(page_h, layout.dollars_baseline_y)}" '
+        f'font-family="Gibson" font-weight="600" font-size="{layout.dollars_size}" fill="black">{html.escape(dollars)}</text>',
 
-    return ticket_html.strip()
+        f'<text x="{layout.cents_x}" y="{_svg_y(page_h, layout.cents_baseline_y)}" '
+        f'font-family="Gibson" font-weight="600" font-size="{layout.cents_size}" fill="black">{html.escape(cents)}</text>',
+
+        f'<text x="{item_right_x}" y="{_svg_y(page_h, item_baseline_y)}" '
+        f'font-family="Gibson" font-weight="400" font-size="{_SAMS_ITEM_SIZE}" fill="black" '
+        f'text-anchor="end">{html.escape(item_number)}</text>',
+
+        "</g>",
+    ]
+
+    return "\n".join(parts)
 
 
 def _font_file_to_data_uri(font_path: Path) -> str:
