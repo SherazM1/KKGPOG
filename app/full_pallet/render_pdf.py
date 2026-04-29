@@ -2591,71 +2591,160 @@ def render_full_pallet_pdf(
             "sanitized_source_bbox": list(sanitized),
         }
 
-    def _sanitize_bonus_crop_image(
-        img: Optional[Image.Image],
-    ) -> Tuple[Optional[Image.Image], Dict[str, object]]:
-        debug_info: Dict[str, object] = {
+    def _sanitize_bonus_crop_image(img: Image.Image) -> Tuple[Image.Image, Dict[str, object]]:
+        """
+        BONUS-only crop cleanup.
+
+        Goal:
+        - remove thin top/bottom/side contamination from neighboring cards
+        - avoid clipping the main card artwork
+        - keep final rendering/order/UPC untouched
+        """
+        debug: Dict[str, object] = {
             "sanitized_crop_used": False,
             "neighboring_edge_contamination_detected": False,
             "image_edge_trim_bbox": None,
             "image_edge_trim_px": [0, 0, 0, 0],
+            "sanitize_reason": "none",
         }
+
         if img is None:
-            return None, debug_info
+            return img, debug
+
         try:
-            src = img.convert("RGBA")
-            arr = np.asarray(src.convert("RGB"))
-            h_px, w_px = arr.shape[:2]
-            if w_px < 30 or h_px < 30:
-                return src, debug_info
+            src = img.convert("RGB")
+            arr = np.asarray(src)
+            h, w = arr.shape[:2]
 
-            edge_w = max(2, min(8, int(w_px * 0.035)))
-            edge_h = max(2, min(8, int(h_px * 0.030)))
-            min_rgb = np.min(arr, axis=2)
-            max_rgb = np.max(arr, axis=2)
-            saturation = max_rgb - min_rgb
-            ink = (min_rgb < 245) & ((saturation > 18) | (min_rgb < 120))
+            if w < 24 or h < 24:
+                debug["sanitize_reason"] = "skipped_tiny_crop"
+                return img, debug
 
-            left_density = float(np.mean(ink[:, :edge_w]))
-            right_density = float(np.mean(ink[:, -edge_w:]))
-            top_density = float(np.mean(ink[:edge_h, :]))
-            bottom_density = float(np.mean(ink[-edge_h:, :]))
-            center_density = (
-                float(np.mean(ink[edge_h:-edge_h, edge_w:-edge_w]))
-                if h_px > 2 * edge_h and w_px > 2 * edge_w
-                else 0.0
+            # Detect non-white / real visual content.
+            # This intentionally treats pale background as empty but keeps colored card art.
+            max_channel = np.max(arr, axis=2)
+            min_channel = np.min(arr, axis=2)
+            channel_spread = np.max(arr, axis=2) - np.min(arr, axis=2)
+
+            content = (
+                (min_channel < 245)
+                & (
+                    (max_channel < 250)
+                    | (channel_spread > 10)
+                )
             )
 
-            trim_left = edge_w if left_density > max(0.42, center_density * 1.9) else 0
-            trim_right = edge_w if right_density > max(0.42, center_density * 1.9) else 0
-            trim_top = edge_h if top_density > max(0.48, center_density * 2.1) else 0
-            trim_bottom = edge_h if bottom_density > max(0.48, center_density * 2.1) else 0
+            # Ignore tiny speckles.
+            row_score = content.sum(axis=1)
+            col_score = content.sum(axis=0)
 
-            max_trim_x = int(w_px * 0.055)
-            max_trim_y = int(h_px * 0.045)
-            trim_left = min(trim_left, max_trim_x)
-            trim_right = min(trim_right, max_trim_x)
-            trim_top = min(trim_top, max_trim_y)
-            trim_bottom = min(trim_bottom, max_trim_y)
+            row_threshold = max(2, int(w * 0.018))
+            col_threshold = max(2, int(h * 0.018))
 
-            if trim_left or trim_right or trim_top or trim_bottom:
-                l = trim_left
-                t = trim_top
-                r = w_px - trim_right
-                b = h_px - trim_bottom
-                if r > l + max(18, w_px * 0.80) and b > t + max(18, h_px * 0.84):
-                    src = src.crop((l, t, r, b))
-                    debug_info.update(
-                        {
-                            "sanitized_crop_used": True,
-                            "neighboring_edge_contamination_detected": True,
-                            "image_edge_trim_bbox": [l, t, r, b],
-                            "image_edge_trim_px": [trim_left, trim_top, trim_right, trim_bottom],
-                        }
-                    )
-        except Exception:
-            return img, debug_info
-        return src, debug_info
+            active_rows = row_score > row_threshold
+            active_cols = col_score > col_threshold
+
+            def _segments(active: np.ndarray, bridge_gap: int) -> List[Tuple[int, int]]:
+                raw: List[Tuple[int, int]] = []
+                start: Optional[int] = None
+
+                for idx, val in enumerate(active):
+                    if val and start is None:
+                        start = idx
+                    elif not val and start is not None:
+                        raw.append((start, idx))
+                        start = None
+
+                if start is not None:
+                    raw.append((start, len(active)))
+
+                if not raw:
+                    return []
+
+                merged: List[Tuple[int, int]] = [raw[0]]
+                for s, e in raw[1:]:
+                    ps, pe = merged[-1]
+                    if s - pe <= bridge_gap:
+                        merged[-1] = (ps, e)
+                    else:
+                        merged.append((s, e))
+                return merged
+
+            # Bridge small internal whitespace inside a real card,
+            # but keep clearly separate neighbor strips detached.
+            row_segments = _segments(active_rows, bridge_gap=max(3, int(h * 0.035)))
+            col_segments = _segments(active_cols, bridge_gap=max(3, int(w * 0.035)))
+
+            if not row_segments or not col_segments:
+                debug["sanitize_reason"] = "skipped_no_content_segments"
+                return img, debug
+
+            def _segment_weight_y(seg: Tuple[int, int]) -> int:
+                s, e = seg
+                return int(row_score[s:e].sum())
+
+            def _segment_weight_x(seg: Tuple[int, int]) -> int:
+                s, e = seg
+                return int(col_score[s:e].sum())
+
+            # Pick the dominant visual body. This drops isolated top/bottom neighbor strips.
+            y0, y1 = max(row_segments, key=_segment_weight_y)
+            x0, x1 = max(col_segments, key=_segment_weight_x)
+
+            # Add a small safety margin back around the detected main artwork.
+            margin_x = max(2, int(w * 0.025))
+            margin_y = max(2, int(h * 0.025))
+
+            crop_x0 = max(0, x0 - margin_x)
+            crop_y0 = max(0, y0 - margin_y)
+            crop_x1 = min(w, x1 + margin_x)
+            crop_y1 = min(h, y1 + margin_y)
+
+            # Do not allow an aggressive crop that would destroy the card.
+            crop_w = crop_x1 - crop_x0
+            crop_h = crop_y1 - crop_y0
+
+            if crop_w < w * 0.45 or crop_h < h * 0.45:
+                debug["sanitize_reason"] = "skipped_crop_too_aggressive"
+                return img, debug
+
+            trim_left = crop_x0
+            trim_top = crop_y0
+            trim_right = w - crop_x1
+            trim_bottom = h - crop_y1
+
+            meaningful_trim = (
+                trim_left > max(2, w * 0.015)
+                or trim_right > max(2, w * 0.015)
+                or trim_top > max(2, h * 0.015)
+                or trim_bottom > max(2, h * 0.015)
+            )
+
+            if not meaningful_trim:
+                debug["sanitize_reason"] = "no_meaningful_trim"
+                return img, debug
+
+            cleaned = src.crop((crop_x0, crop_y0, crop_x1, crop_y1))
+
+            debug.update(
+                {
+                    "sanitized_crop_used": True,
+                    "neighboring_edge_contamination_detected": True,
+                    "image_edge_trim_bbox": [crop_x0, crop_y0, crop_x1, crop_y1],
+                    "image_edge_trim_px": [trim_left, trim_top, trim_right, trim_bottom],
+                    "sanitize_reason": "dominant_content_bbox_trim",
+                    "original_crop_size": [w, h],
+                    "cleaned_crop_size": [cleaned.width, cleaned.height],
+                    "row_segments": [[int(s), int(e)] for s, e in row_segments],
+                    "col_segments": [[int(s), int(e)] for s, e in col_segments],
+                }
+            )
+
+            return cleaned, debug
+
+        except Exception as exc:
+            debug["sanitize_reason"] = f"sanitize_error: {exc}"
+            return img, debug
 
     def _validate_mid_band_mapped_cell_bbox(
         mapped_bbox: Optional[Tuple[float, float, float, float]],
