@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import html
+import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -27,6 +29,19 @@ try:
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
+
+
+def _ensure_playwright_chromium_installed() -> str | None:
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return "Playwright Chromium install/check completed successfully."
+    except Exception as exc:
+        return f"Playwright Chromium install failed: {exc}"
 
 
 def render_sams_price_strips_pdf(
@@ -56,6 +71,19 @@ def render_sams_price_strips_pdf(
             rendered_segments=0,
             warnings=warnings,
         )
+
+    chromium_status = _ensure_playwright_chromium_installed()
+    if chromium_status and "failed" in chromium_status:
+        warnings.append(chromium_status)
+        return SamsPriceStripPdfResult(
+            pdf_bytes=b"",
+            rendered_pages=0,
+            rendered_segments=0,
+            warnings=warnings,
+        )
+    else:
+        if chromium_status:
+            warnings.append(chromium_status)
 
     try:
         pdf_bytes, rendered_segments = asyncio.run(
