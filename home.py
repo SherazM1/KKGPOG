@@ -5,9 +5,16 @@ import streamlit as st
 
 from app.sams_club.extract_price_strips import build_sams_price_strip_rows
 from app.sams_club.render_planogram import render_sams_planogram_pdf
-from app.sams_club.render_price_strips import render_sams_price_strips_pdf
 from app.sams_club.service import build_sams_planogram_structure, detect_sams_pogs
 from app.shared.constants import DISPLAY_FULL_PALLET, DISPLAY_SAMS_CLUB, DISPLAY_STANDARD, N_COLS
+
+# Renderer toggle: set to True to use the new HTML/Playwright renderer, False for the old ReportLab renderer
+USE_HTML_PRICE_STRIP_RENDERER = True
+
+if USE_HTML_PRICE_STRIP_RENDERER:
+    from app.sams_club.render_price_strips_html import render_sams_price_strips_pdf
+else:
+    from app.sams_club.render_price_strips import render_sams_price_strips_pdf
 
 
 def main() -> None:
@@ -251,8 +258,9 @@ def main() -> None:
                         st.success(
                             f"Rendered {strip_pdf.rendered_pages} strip page(s) with {strip_pdf.rendered_segments} segment block(s)."
                         )
+                        renderer_module = "app.sams_club.render_price_strips_html" if USE_HTML_PRICE_STRIP_RENDERER else "app.sams_club.render_price_strips"
                         st.caption(
-                            "Active Sam's strip renderer: app.sams_club.render_price_strips.render_sams_price_strips_pdf"
+                            f"Active Sam's strip renderer: {renderer_module}.render_sams_price_strips_pdf"
                         )
                         if strip_pdf.warnings:
                             with st.expander("Price strip render warnings"):
