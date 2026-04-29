@@ -258,6 +258,9 @@ def render_sams_price_strips_pdf(
         "HTML/Playwright renderer with Gibson OTF fonts"
     )
 
+    # Debug: Confirm rows received
+    warnings.append(f"HTML renderer received {len(strip_rows)} strip rows.")
+
     if not PLAYWRIGHT_AVAILABLE:
         warnings.append(
             "Playwright not installed. Install with: pip install playwright && playwright install chromium"
@@ -292,17 +295,18 @@ def render_sams_price_strips_pdf(
 
     try:
         htmls = _build_full_html(strip_rows, warnings)
-        pdf_bytes, rendered_segments = asyncio.run(
+        pdf_bytes, rendered_pages, rendered_segments = asyncio.run(
             _render_strips_async(htmls, strip_rows, warnings)
         )
     except Exception as exc:
         warnings.append(f"HTML/Playwright renderer failed: {exc}")
         pdf_bytes = b""
+        rendered_pages = 0
         rendered_segments = 0
 
     return SamsPriceStripPdfResult(
         pdf_bytes=pdf_bytes,
-        rendered_pages=len(strip_rows),
+        rendered_pages=rendered_pages,
         rendered_segments=rendered_segments,
         warnings=warnings,
     )
@@ -315,6 +319,7 @@ def _build_full_html(strip_rows: list[SamsPriceStripRow], warnings: list[str]) -
         strip_w, strip_h, footer_h = compute_strip_canvas(row_data, warnings)
         html_content = _generate_strip_html(row_data, strip_w, strip_h, footer_h, warnings)
         htmls.append(html_content)
+    warnings.append(f"HTML renderer built {len(htmls)} row HTML documents.")
     return htmls
 
 
@@ -322,7 +327,7 @@ async def _render_strips_async(
     htmls: list[str],
     strip_rows: list[SamsPriceStripRow],
     warnings: list[str],
-) -> tuple[bytes, int]:
+) -> tuple[bytes, int, int]:
     """Render strips asynchronously using Playwright and merge into one PDF."""
     from playwright.async_api import async_playwright
 
@@ -341,14 +346,34 @@ async def _render_strips_async(
         finally:
             await browser.close()
 
+    warnings.append(f"HTML renderer rendered {len(page_pdfs)} row PDF pages.")
+
     # Merge all individual PDFs into one valid multi-page PDF
+    merged_pdf_bytes = b""
+    rendered_pages = 0
     try:
         merged_pdf_bytes = _merge_pdf_bytes(page_pdfs)
-        warnings.append(f"HTML renderer merged {len(page_pdfs)} strip page PDFs into one final PDF.")
-        return merged_pdf_bytes, rendered_segments
+        
+        # Validate merged PDF page count
+        merged_doc = fitz.open(stream=merged_pdf_bytes, filetype="pdf")
+        try:
+            page_count = merged_doc.page_count
+            warnings.append(f"HTML renderer final merged PDF page count: {page_count}")
+            
+            if page_count != len(strip_rows):
+                warnings.append(
+                    f"ERROR: expected {len(strip_rows)} pages but merged PDF has {page_count} pages."
+                )
+            
+            rendered_pages = page_count
+        finally:
+            merged_doc.close()
+            
     except Exception as exc:
         warnings.append(f"PDF merge failed: {exc}")
-        return b"", rendered_segments
+        return b"", 0, rendered_segments
+
+    return merged_pdf_bytes, rendered_pages, rendered_segments
 
 
 async def _render_page_to_pdf(
@@ -374,7 +399,11 @@ async def _render_page_to_pdf(
         await page.set_content(html_content)
         # Make sure document fonts are loaded before exporting.
         await page.evaluate("() => document.fonts.ready")
-        pdf_bytes = await page.pdf(width=f"{width / inch}in", height=f"{height / inch}in")
+        pdf_bytes = await page.pdf(
+            width=f"{width / inch}in",
+            height=f"{height / inch}in",
+            print_background=True
+        )
         return pdf_bytes
     finally:
         await page.close()
