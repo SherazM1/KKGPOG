@@ -612,8 +612,6 @@ def _generate_strip_html(row_data: SamsPriceStripRow, strip_w: float, strip_h: f
         ticket_htmls.append(_generate_ticket_html(segment, x, ticket_y, ticket_w, ticket_h, strip_h))
 
     footer_text = _resolve_strip_footer_text(row_data)
-    footer_left = max(0.08 * inch, (positions[0][0] if positions else 0.0))
-    footer_bottom = 0.035 * inch
 
     html_parts = [
         "<!DOCTYPE html>",
@@ -699,28 +697,28 @@ html, body {{
     font-weight: 600;
     font-size: 15.5pt;
     line-height: 1;
-    margin-right: 1.1pt;
-    transform: translateY(14.0pt);
+    margin-right: 1.0pt;
+    transform: translateY(13.5pt);
     color: black;
 }}
 
 .dollars {{
     display: inline-block;
     font-weight: 600;
-    font-size: {_SAMS_PRICE_SIZE}pt;
+    font-size: 44pt;
     line-height: 0.82;
-    letter-spacing: -0.7pt;
+    letter-spacing: -0.9pt;
     color: black;
 }}
 
 .cents {{
     display: inline-block;
     font-weight: 600;
-    font-size: 18.8pt;
+    font-size: 18.5pt;
     line-height: 1;
-    margin-left: 0.7pt;
-    transform: translateY(3.4pt);
-    letter-spacing: -0.3pt;
+    margin-left: 0.3pt;
+    transform: translateY(2.8pt);
+    letter-spacing: -0.4pt;
     color: black;
 }}
 
@@ -736,8 +734,8 @@ html, body {{
 
 .footer {{
     position: absolute;
-    left: {footer_left}pt;
-    bottom: {footer_bottom}pt;
+    left: 0.08in;
+    bottom: 0.055in;
     font-family: "Gibson", Arial, sans-serif;
     font-weight: 400;
     font-size: {_SAMS_FOOTER_SIZE}pt;
@@ -768,25 +766,35 @@ def _generate_ticket_html(
     page_h: float,
 ) -> str:
     """
-    Generate HTML divs for one ticket block.
+    Generate HTML divs for one ticket block with fixed layout positions.
     """
     dollars, cents = _normalize_price_parts(segment.retail)
 
+    # Fixed layout constants for consistent positioning
+    TEXT_TOP_PT = 4.8
+    DESC_1_MARGIN_TOP_PT = 1.0
+    DESC_2_MARGIN_TOP_PT = 0.7
+
+    PRICE_TOP_PT = 26.0
+    PRICE_LEFT_PT = max(_RETAIL_MARGIN_PAD, _DEFAULT_INNER_PAD_X * 0.35)
+
+    ITEM_TOP_PT = 67.0
+    ITEM_RIGHT_PAD_PT = _DEFAULT_INNER_PAD_X
+
     pad_x = min(max(_DEFAULT_INNER_PAD_X, w * 0.052), max(_DEFAULT_INNER_PAD_X, w * 0.095))
-    pad_top = _DEFAULT_INNER_PAD_TOP * 0.60
 
     text_x = pad_x
-    text_y = pad_top
+    text_y = TEXT_TOP_PT
     text_w = max(8.0, w - (2 * pad_x))
 
-    price_x = max(_RETAIL_MARGIN_PAD, pad_x * 0.35)
-    price_y = max(17.0, h * 0.315)
+    price_x = PRICE_LEFT_PT
+    price_y = PRICE_TOP_PT
     price_box_w = max(20.0, w - price_x - pad_x)
     price_box_h = 54.0
 
-    item_w = min(max(30.0, price_box_w * 0.55), w - pad_x)
-    item_x = min(w - pad_x - item_w, price_x + 76.0)
-    item_y = price_y + 43.0
+    item_w = min(max(34.0, price_box_w * 0.58), w - pad_x)
+    item_x = w - pad_x - item_w
+    item_y = ITEM_TOP_PT
 
     # Truncate texts
     brand = _truncate_svg_text(segment.brand or "-", _SAMS_BRAND_SIZE, text_w, "semibold")
@@ -798,8 +806,8 @@ def _generate_ticket_html(
 <div class="ticket" style="left: {x}pt; top: {y}pt; width: {w}pt; height: {h}pt;">
     <div class="ticket-text-stack" style="left: {text_x}pt; top: {text_y}pt; width: {text_w}pt;">
         <div class="brand">{html.escape(brand)}</div>
-        <div class="desc" style="margin-top: 0.9pt;">{html.escape(desc_1)}</div>
-        <div class="desc" style="margin-top: 0.7pt;">{html.escape(desc_2)}</div>
+        <div class="desc" style="margin-top: {DESC_1_MARGIN_TOP_PT}pt;">{html.escape(desc_1)}</div>
+        <div class="desc" style="margin-top: {DESC_2_MARGIN_TOP_PT}pt;">{html.escape(desc_2)}</div>
     </div>
 
     <div class="price" style="left: {price_x}pt; top: {price_y}pt; width: {price_box_w}pt; height: {price_box_h}pt;">
