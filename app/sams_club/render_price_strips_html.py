@@ -568,10 +568,7 @@ async def _render_page_to_pdf(
 
 def _generate_strip_html(row_data: SamsPriceStripRow, strip_w: float, strip_h: float, footer_h: float, warnings: list[str]) -> str:
     """
-    Generate HTML containing one SVG price strip.
-
-    SVG is used because SVG text placement is baseline-based, which more closely
-    matches the original ReportLab renderer and the reference PDF.
+    Generate HTML containing div-based price strip with Gibson fonts.
     """
     root_path = Path(__file__).resolve().parents[2]
     gibson_regular_path = root_path / "assets" / "Gibson-Regular.otf"
@@ -606,41 +603,17 @@ def _generate_strip_html(row_data: SamsPriceStripRow, strip_w: float, strip_h: f
     positions = compute_ticket_positions_across_strip(strip_w, len(row_data.segments))
     ticket_y = footer_h
     ticket_h = strip_h - footer_h
-    row_content_y, row_content_h = _compute_row_content_y(ticket_y, ticket_h)
 
-    svg_parts: list[str] = [
-        f'<svg class="strip-svg" width="{strip_w}pt" height="{strip_h}pt" viewBox="0 0 {strip_w} {strip_h}" xmlns="http://www.w3.org/2000/svg">',
-        f'<rect x="0" y="0" width="{strip_w}" height="{strip_h}" fill="white"/>',
-    ]
-
+    ticket_htmls = []
     for idx, segment in enumerate(row_data.segments):
         if idx >= len(positions):
             break
         x, ticket_w = positions[idx]
-        svg_parts.append(
-            _generate_ticket_svg(
-                segment=segment,
-                x=x,
-                y=ticket_y,
-                w=ticket_w,
-                h=ticket_h,
-                page_h=strip_h,
-                row_content_y=row_content_y,
-                row_content_h=row_content_h,
-            )
-        )
+        ticket_htmls.append(_generate_ticket_html(segment, x, ticket_y, ticket_w, ticket_h, strip_h))
 
     footer_text = _resolve_strip_footer_text(row_data)
-    footer_x = max(0.03 * inch, (positions[0][0] if positions else 0.0) + (0.01 * inch))
-    footer_baseline_y = max(0.75, min(1.5, footer_h * 0.20))
-
-    svg_parts.append(
-        f'<text x="{footer_x}" y="{_svg_y(strip_h, footer_baseline_y)}" '
-        f'font-family="Gibson" font-weight="400" font-size="{_SAMS_FOOTER_SIZE}" '
-        f'fill="#303030">{html.escape(footer_text)}</text>'
-    )
-
-    svg_parts.append("</svg>")
+    footer_left = max(0.08 * inch, (positions[0][0] if positions else 0.0))
+    footer_bottom = 0.035 * inch
 
     html_parts = [
         "<!DOCTYPE html>",
@@ -667,16 +640,118 @@ html, body {{
     font-family: "Gibson", Arial, sans-serif;
 }}
 
-.strip-svg {{
+.ticket {{
+    position: absolute;
+    overflow: hidden;
+    font-family: "Gibson", Arial, sans-serif;
+    color: black;
+}}
+
+.ticket-text-stack {{
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    overflow: hidden;
+}}
+
+.brand {{
     display: block;
-    width: {strip_w}pt;
-    height: {strip_h}pt;
+    width: 100%;
+    font-family: "Gibson", Arial, sans-serif;
+    font-weight: 600;
+    font-size: {_SAMS_BRAND_SIZE}pt;
+    line-height: 1.0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: clip;
+    letter-spacing: 0;
+    color: black;
+}}
+
+.desc {{
+    display: block;
+    width: 100%;
+    font-family: "Gibson", Arial, sans-serif;
+    font-weight: 400;
+    font-size: {_SAMS_DESC_SIZE}pt;
+    line-height: 1.0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: clip;
+    letter-spacing: 0;
+    color: black;
+}}
+
+.price {{
+    position: absolute;
+    display: flex;
+    align-items: flex-start;
+    white-space: nowrap;
+    line-height: 1;
+    font-family: "Gibson", Arial, sans-serif;
+    font-weight: 600;
+    color: black;
+}}
+
+.dollar-sign {{
+    display: inline-block;
+    font-weight: 600;
+    font-size: 15.5pt;
+    line-height: 1;
+    margin-right: 1.1pt;
+    transform: translateY(14.0pt);
+    color: black;
+}}
+
+.dollars {{
+    display: inline-block;
+    font-weight: 600;
+    font-size: {_SAMS_PRICE_SIZE}pt;
+    line-height: 0.82;
+    letter-spacing: -0.7pt;
+    color: black;
+}}
+
+.cents {{
+    display: inline-block;
+    font-weight: 600;
+    font-size: 18.8pt;
+    line-height: 1;
+    margin-left: 0.7pt;
+    transform: translateY(3.4pt);
+    letter-spacing: -0.3pt;
+    color: black;
+}}
+
+.item-number {{
+    position: absolute;
+    font-weight: 400;
+    font-size: {_SAMS_ITEM_SIZE}pt;
+    line-height: 1;
+    white-space: nowrap;
+    text-align: right;
+    color: black;
+}}
+
+.footer {{
+    position: absolute;
+    left: {footer_left}pt;
+    bottom: {footer_bottom}pt;
+    font-family: "Gibson", Arial, sans-serif;
+    font-weight: 400;
+    font-size: {_SAMS_FOOTER_SIZE}pt;
+    line-height: 1;
+    color: #303030;
+    white-space: nowrap;
+    letter-spacing: 0;
 }}
         """,
         "</style>",
         "</head>",
         "<body>",
-        "\n".join(svg_parts),
+        "\n".join(ticket_htmls),
+        f'<div class="footer">{html.escape(footer_text)}</div>',
         "</body>",
         "</html>",
     ]
@@ -684,74 +759,62 @@ html, body {{
     return "\n".join(html_parts)
 
 
-def _generate_ticket_svg(
+def _generate_ticket_html(
     segment: SamsPriceStripSegment,
     x: float,
     y: float,
     w: float,
     h: float,
     page_h: float,
-    row_content_y: float,
-    row_content_h: float,
 ) -> str:
     """
-    Generate SVG text for one ticket block using ReportLab-style baseline math.
+    Generate HTML divs for one ticket block.
     """
     dollars, cents = _normalize_price_parts(segment.retail)
-    layout = _layout_price_object_svg(segment.retail, x, row_content_y, w, row_content_h)
 
     pad_x = min(max(_DEFAULT_INNER_PAD_X, w * 0.052), max(_DEFAULT_INNER_PAD_X, w * 0.095))
-    max_text_w = max(8.0, w - (2 * pad_x))
+    pad_top = _DEFAULT_INNER_PAD_TOP * 0.60
 
-    brand = _truncate_svg_text(segment.brand or "-", _SAMS_BRAND_SIZE, max_text_w, "semibold")
-    desc_1 = _truncate_svg_text(segment.desc_1 or "-", _SAMS_DESC_SIZE, max_text_w, "regular")
-    desc_2 = _truncate_svg_text(segment.desc_2 or "-", _SAMS_DESC_SIZE, max_text_w, "regular")
+    text_x = pad_x
+    text_y = pad_top
+    text_w = max(8.0, w - (2 * pad_x))
 
-    stack_top_limit = row_content_y + row_content_h - _DEFAULT_INNER_PAD_TOP
-    price_top = layout.object_top_y
-    stack_anchor_top = price_top + _SAMS_BRAND_SIZE + (_SAMS_DESC_SIZE * 2) + _SAMS_STACK_TO_PRICE_OFFSET
-    stack_top = min(stack_top_limit, stack_anchor_top)
+    price_x = max(_RETAIL_MARGIN_PAD, pad_x * 0.35)
+    price_y = max(17.0, h * 0.315)
+    price_box_w = max(20.0, w - price_x - pad_x)
+    price_box_h = 54.0
 
-    # ReportLab-style baselines from the bottom.
-    brand_baseline_y = stack_top - _SAMS_BRAND_SIZE
-    desc_1_baseline_y = brand_baseline_y - _SAMS_STACK_BRAND_GAP - _SAMS_DESC_SIZE
-    desc_2_baseline_y = desc_1_baseline_y - _SAMS_STACK_DESC_GAP - _SAMS_DESC_SIZE
+    item_w = min(max(30.0, price_box_w * 0.55), w - pad_x)
+    item_x = min(w - pad_x - item_w, price_x + 76.0)
+    item_y = price_y + 43.0
 
-    item_baseline_y = max(row_content_y + 1.1, layout.object_bottom_y + (_SAMS_ITEM_SIZE * 0.16))
-    item_right_x = min(x + w - pad_x, layout.object_right_x + 0.1)
-    item_max_w = max(20.0, min(w * 0.68, (layout.object_right_x - layout.object_left_x) + 2.0))
-    item_number = _truncate_svg_text(segment.item_number or "-", _SAMS_ITEM_SIZE, item_max_w, "regular")
+    # Truncate texts
+    brand = _truncate_svg_text(segment.brand or "-", _SAMS_BRAND_SIZE, text_w, "semibold")
+    desc_1 = _truncate_svg_text(segment.desc_1 or "-", _SAMS_DESC_SIZE, text_w, "regular")
+    desc_2 = _truncate_svg_text(segment.desc_2 or "-", _SAMS_DESC_SIZE, text_w, "regular")
+    item_number = _truncate_svg_text(segment.item_number or "-", _SAMS_ITEM_SIZE, item_w, "regular")
 
-    text_x = x + pad_x
+    ticket_html = f"""
+<div class="ticket" style="left: {x}pt; top: {y}pt; width: {w}pt; height: {h}pt;">
+    <div class="ticket-text-stack" style="left: {text_x}pt; top: {text_y}pt; width: {text_w}pt;">
+        <div class="brand">{html.escape(brand)}</div>
+        <div class="desc" style="margin-top: 0.9pt;">{html.escape(desc_1)}</div>
+        <div class="desc" style="margin-top: 0.7pt;">{html.escape(desc_2)}</div>
+    </div>
 
-    parts = [
-        '<g class="ticket">',
-        f'<text x="{text_x}" y="{_svg_y(page_h, brand_baseline_y)}" '
-        f'font-family="Gibson" font-weight="600" font-size="{_SAMS_BRAND_SIZE}" fill="black">{html.escape(brand)}</text>',
+    <div class="price" style="left: {price_x}pt; top: {price_y}pt; width: {price_box_w}pt; height: {price_box_h}pt;">
+        <span class="dollar-sign">$</span>
+        <span class="dollars">{html.escape(dollars)}</span>
+        <span class="cents">{html.escape(cents)}</span>
+    </div>
 
-        f'<text x="{text_x}" y="{_svg_y(page_h, desc_1_baseline_y)}" '
-        f'font-family="Gibson" font-weight="400" font-size="{_SAMS_DESC_SIZE}" fill="black">{html.escape(desc_1)}</text>',
+    <div class="item-number" style="left: {item_x}pt; top: {item_y}pt; width: {item_w}pt;">
+        {html.escape(item_number)}
+    </div>
+</div>
+"""
 
-        f'<text x="{text_x}" y="{_svg_y(page_h, desc_2_baseline_y)}" '
-        f'font-family="Gibson" font-weight="400" font-size="{_SAMS_DESC_SIZE}" fill="black">{html.escape(desc_2)}</text>',
-
-        f'<text x="{layout.dollar_sign_x}" y="{_svg_y(page_h, layout.dollar_sign_baseline_y)}" '
-        f'font-family="Gibson" font-weight="600" font-size="{layout.dollar_sign_size}" fill="black">$</text>',
-
-        f'<text x="{layout.dollars_x}" y="{_svg_y(page_h, layout.dollars_baseline_y)}" '
-        f'font-family="Gibson" font-weight="600" font-size="{layout.dollars_size}" fill="black">{html.escape(dollars)}</text>',
-
-        f'<text x="{layout.cents_x}" y="{_svg_y(page_h, layout.cents_baseline_y)}" '
-        f'font-family="Gibson" font-weight="600" font-size="{layout.cents_size}" fill="black">{html.escape(cents)}</text>',
-
-        f'<text x="{item_right_x}" y="{_svg_y(page_h, item_baseline_y)}" '
-        f'font-family="Gibson" font-weight="400" font-size="{_SAMS_ITEM_SIZE}" fill="black" '
-        f'text-anchor="end">{html.escape(item_number)}</text>',
-
-        "</g>",
-    ]
-
-    return "\n".join(parts)
+    return ticket_html.strip()
 
 
 def _font_file_to_data_uri(font_path: Path) -> str:
