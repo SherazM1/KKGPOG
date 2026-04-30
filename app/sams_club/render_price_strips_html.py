@@ -771,14 +771,14 @@ def _generate_ticket_html(
     dollars, cents = _normalize_price_parts(segment.retail)
 
     # Fixed layout constants for consistent positioning
-    TEXT_TOP_PT = 4.8
-    DESC_1_MARGIN_TOP_PT = 1.0
-    DESC_2_MARGIN_TOP_PT = 0.7
+    TEXT_TOP_PT = 4.2
+    DESC_1_MARGIN_TOP_PT = 0.6
+    DESC_2_MARGIN_TOP_PT = 0.4
 
-    PRICE_TOP_PT = 26.0
+    PRICE_TOP_PT = 18.0
     PRICE_LEFT_PT = max(_RETAIL_MARGIN_PAD, _DEFAULT_INNER_PAD_X * 0.35)
 
-    ITEM_TOP_PT = 67.0
+    ITEM_TOP_PT = 51.0
     ITEM_RIGHT_PAD_PT = _DEFAULT_INNER_PAD_X
 
     pad_x = min(max(_DEFAULT_INNER_PAD_X, w * 0.052), max(_DEFAULT_INNER_PAD_X, w * 0.095))
@@ -790,7 +790,7 @@ def _generate_ticket_html(
     price_x = PRICE_LEFT_PT
     price_y = PRICE_TOP_PT
     price_box_w = max(20.0, w - price_x - pad_x)
-    price_box_h = 54.0
+    price_box_h = 44.0
 
     item_w = min(max(34.0, price_box_w * 0.58), w - pad_x)
     item_x = w - pad_x - item_w
