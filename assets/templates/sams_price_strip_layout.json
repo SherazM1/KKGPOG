@@ -5,12 +5,15 @@
       "width_in": 30.75,
       "height_in": 3.4375,
       "source_template": "assets/templates/source/sams_club_30_75_price_strip.eps",
+      "slot_centers_pt": [99.0, 387.0, 675.0, 963.0, 1251.0, 1539.0, 1827.0, 2115.0],
+      "slot_pitch_pt": 288.0,
+      "slot_width_pt": 250.0,
       "footer": {
         "left_in": 0.08,
         "bottom_in": 0.055
       },
       "ticket": {
-        "composition_top_pt": 30.0,
+        "composition_top_pt": 70.0,
         "text_top_pt": 4.2,
         "desc_1_margin_top_pt": 0.6,
         "desc_2_margin_top_pt": 0.4,
@@ -39,12 +42,15 @@
       "width_in": 39.0,
       "height_in": 3.4375,
       "source_template": "assets/templates/source/sams_club_39_price_strip.eps",
+      "slot_centers_pt": [153.0, 465.75, 778.5, 1091.25, 1404.0, 1716.75, 2029.5, 2342.25, 2655.0],
+      "slot_pitch_pt": 312.75,
+      "slot_width_pt": 270.0,
       "footer": {
         "left_in": 0.08,
         "bottom_in": 0.055
       },
       "ticket": {
-        "composition_top_pt": 30.0,
+        "composition_top_pt": 70.0,
         "text_top_pt": 4.2,
         "desc_1_margin_top_pt": 0.6,
         "desc_2_margin_top_pt": 0.4,

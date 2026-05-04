@@ -381,6 +381,65 @@ def compute_ticket_positions_across_strip(strip_w: float, ticket_count: int) -> 
     return positions
 
 
+def _resolve_ticket_positions_from_profile(
+    strip_w: float,
+    ticket_count: int,
+    layout_profile: dict,
+    warnings: list[str],
+) -> list[tuple[float, float]]:
+    if ticket_count <= 0:
+        return []
+
+    centers = layout_profile.get("slot_centers_pt")
+    slot_width_value = layout_profile.get("slot_width_pt")
+
+    if not isinstance(centers, list):
+        warnings.append(
+            f"No valid JSON slot centers for {ticket_count} tickets; using computed ticket positions."
+        )
+        return compute_ticket_positions_across_strip(strip_w, ticket_count)
+
+    if len(centers) < ticket_count:
+        warnings.append(
+            f"JSON slot centers count {len(centers)} is less than ticket count {ticket_count}; "
+            "using computed ticket positions."
+        )
+        return compute_ticket_positions_across_strip(strip_w, ticket_count)
+
+    try:
+        slot_width = float(slot_width_value)
+    except (TypeError, ValueError):
+        warnings.append(
+            f"No valid JSON slot centers for {ticket_count} tickets; using computed ticket positions."
+        )
+        return compute_ticket_positions_across_strip(strip_w, ticket_count)
+
+    if slot_width <= 0:
+        warnings.append(
+            f"No valid JSON slot centers for {ticket_count} tickets; using computed ticket positions."
+        )
+        return compute_ticket_positions_across_strip(strip_w, ticket_count)
+
+    positions: list[tuple[float, float]] = []
+    for center_value in centers[:ticket_count]:
+        try:
+            center_x = float(center_value)
+        except (TypeError, ValueError):
+            warnings.append(
+                f"No valid JSON slot centers for {ticket_count} tickets; using computed ticket positions."
+            )
+            return compute_ticket_positions_across_strip(strip_w, ticket_count)
+
+        x = center_x - (slot_width / 2.0)
+        x = max(0.0, min(x, strip_w - slot_width))
+        positions.append((x, slot_width))
+
+    warnings.append(
+        f"Using JSON slot centers for Sam's price strip ticket positions: {ticket_count} tickets."
+    )
+    return positions
+
+
 def _resolve_strip_footer_text(row_data: SamsPriceStripRow) -> str:
     raw = row_data.footer_text.strip()
     if raw and raw.lower() not in {"nan", "none", "null"}:
@@ -776,10 +835,15 @@ def _generate_strip_html(row_data: SamsPriceStripRow, strip_w: float, strip_h: f
 }}
 """
 
-    positions = compute_ticket_positions_across_strip(strip_w, len(row_data.segments))
+    layout_profile = _resolve_layout_profile(strip_w, strip_h, warnings)
+    positions = _resolve_ticket_positions_from_profile(
+        strip_w,
+        len(row_data.segments),
+        layout_profile,
+        warnings,
+    )
     ticket_y = footer_h
     ticket_h = strip_h - footer_h
-    layout_profile = _resolve_layout_profile(strip_w, strip_h, warnings)
 
     footer_left_in = _profile_number(layout_profile, "footer", "left_in", 0.08)
     footer_bottom_in = _profile_number(layout_profile, "footer", "bottom_in", 0.055)
