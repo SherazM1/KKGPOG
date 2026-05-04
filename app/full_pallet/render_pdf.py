@@ -373,6 +373,7 @@ def render_full_pallet_pdf(
 ) -> bytes:
     buf = io.BytesIO()
     images_doc = fitz.open(stream=images_pdf_bytes, filetype="pdf")
+    middle_grid_summaries = []
 
     PAGE_W, BASE_PAGE_H = 792.0, 1224.0  # 11x17 portrait template; pages may grow taller
     MARGIN = 24.0
@@ -4365,89 +4366,28 @@ def render_full_pallet_pdf(
                         "image_bbox": list(image_cell.get("bbox")) if image_cell and image_cell.get("bbox") else None,
                     }
                 )
-            detection_debug["active_mid_band_render_path"] = "token_first_mid_band"
-            detection_debug["active_middle_band_path"] = "cell_middle_grid_above_bonus"
-            detection_debug["side"] = p.side_letter
-            detection_debug["visual_source"] = "images_pdf"
-            detection_debug["image_source"] = "images_pdf_pixmap"
-            detection_debug["labels_pdf_visual_crop_used"] = False
-            detection_debug["labels_pdf_visual_source_enabled"] = False
-            detection_debug["middle_band_binding_mode"] = "metadata_i_to_images_pdf_pixmap_i"
-            detection_debug["slot_binding_mode"] = "metadata_i_to_images_pdf_pixmap_i"
-            detection_debug["binding_mode"] = "metadata_i_to_images_pdf_pixmap_i"
-            detection_debug["raw_middle_candidate_count"] = raw_middle_candidate_count
-            detection_debug["raw_candidate_count"] = raw_middle_candidate_count
-            detection_debug["cleaned_middle_candidate_count"] = cleaned_middle_candidate_count
-            detection_debug["clean_metadata_count"] = cleaned_middle_candidate_count
-            detection_debug["ordered_label_slot_count"] = len(all_slots)
-            detection_debug["ordered_image_crop_count"] = ordered_image_crop_count
-            detection_debug["image_crop_count"] = ordered_image_crop_count
-            detection_debug["rendered_middle_slot_count"] = slots_drawn
-            detection_debug["rendered_count"] = slots_drawn
-            detection_debug["missing_middle_slots"] = missing_middle_count
-            detection_debug["count_is_24"] = bool(
-                len(all_slots) == expected_middle_count
-                and ordered_image_crop_count == expected_middle_count
-                and slots_drawn == expected_middle_count
-            )
-            detection_debug["rejected_middle_candidate_count"] = len(rejected_middle_candidates)
-            detection_debug["rejected_candidate_count"] = len(rejected_middle_candidates)
-            detection_debug["rejected_middle_candidates"] = rejected_middle_candidates
-            detection_debug["metadata_order_preview"] = metadata_order_preview
-            detection_debug["image_order_preview"] = image_order_preview
-            detection_debug["final_join_preview"] = final_join_preview
-            detection_debug["middle_grid_metadata_summary"] = {
-                "metadata_source": metadata_summary.get("metadata_source"),
-                "metadata_count": metadata_summary.get("metadata_count"),
-                "resolved_count": metadata_summary.get("resolved_count"),
-                "unresolved_count": metadata_summary.get("unresolved_count"),
-                "image_crop_count": ordered_image_crop_count,
-                "rendered_count": slots_drawn,
-                "binding_mode": "metadata_i_to_images_pdf_pixmap_i",
-                "metadata_order_preview": [
-                    {
-                        "index": int(slot.get("index")),
-                        "row": int(slot.get("row")) if slot.get("row") is not None else None,
-                        "col": int(slot.get("col")) if slot.get("col") is not None else None,
-                        "last5": slot.get("last5"),
-                        "resolved_upc12": slot.get("resolved_upc12"),
-                        "resolved_name": slot.get("resolved_name"),
-                        "resolved_cpp": slot.get("resolved_cpp"),
-                        "resolution_method": slot.get("resolution_method"),
-                    }
-                    for slot in metadata_slots[:8]
-                ],
-                "unresolved_slots": [
-                    {
-                        "index": int(slot.get("index")),
-                        "row": int(slot.get("row")) if slot.get("row") is not None else None,
-                        "col": int(slot.get("col")) if slot.get("col") is not None else None,
-                        "raw_label_text": slot.get("raw_label_text"),
-                        "last5": slot.get("last5"),
-                        "unresolved_reason": slot.get("unresolved_reason"),
-                    }
-                    for slot in metadata_slots
-                    if not slot.get("resolved_upc12") and not slot.get("resolved_name")
-                ],
+            # Compact middle grid summary
+            image_crop_count = ordered_image_crop_count
+            metadata_count = metadata_summary.get("metadata_count", 0)
+            rendered_count = slots_drawn
+            unresolved_count = metadata_summary.get("unresolved_count", 0)
+            issue = "OK"
+            if image_crop_count != 24:
+                issue = f"image_crop_count={image_crop_count}"
+            elif metadata_count != 24:
+                issue = f"metadata_count={metadata_count}"
+            elif rendered_count != 24:
+                issue = f"rendered_count={rendered_count}"
+            elif unresolved_count > 0:
+                issue = f"unresolved_count={unresolved_count}"
+            detection_debug["middle_grid_summary"] = {
+                "side": p.side_letter,
+                "image_crop_count": image_crop_count,
+                "metadata_count": metadata_count,
+                "rendered_count": rendered_count,
+                "unresolved_count": unresolved_count,
+                "issue": issue,
             }
-            detection_debug["all_detected_rows"] = (
-                list(selection_debug.get("all_detected_rows", [])) if selection_debug else []
-            )
-            detection_debug["selected_3x8_rows"] = (
-                list(selection_debug.get("selected_3x8_rows", [])) if selection_debug else []
-            )
-            detection_debug["rejected_rows"] = (
-                list(selection_debug.get("rejected_rows", [])) if selection_debug else []
-            )
-            detection_debug["image_crop_sources_by_slot"] = image_crop_sources_by_slot
-            detection_debug["invalid_label_text_crop_count"] = 0
-            detection_debug["blank_image_count"] = blank_image_count
-            detection_debug["resolved_mid_band_slot_count"] = len(all_slots)
-            detection_debug["candidate_mid_band_slot_count"] = len(all_candidate_slots)
-            detection_debug["mapped_clean_count"] = mapped_clean
-            detection_debug["mapped_fallback_count"] = mapped_fallback
-            detection_debug["mapped_empty_count"] = mapped_empty
-            detection_debug["row_strip_slice_count"] = row_strip_slice_count
             detection_debug["row_strip_slice_rejected_count"] = row_strip_slice_rejected_count
             detection_debug["individual_image_cell_used_count"] = mapped_clean
             detection_debug["rendered_page_detected_cell_used_count"] = pixmap_crop_count
@@ -4958,96 +4898,7 @@ def render_full_pallet_pdf(
             canonical_mid_band_ok = _mid_band_shape_ok(mid_band)
 
             if debug and mid_band is not None:
-                mid_slots_dbg = [s for r in mid_band.rows for s in r.slots]
-                extraction_mode = (
-                    "token_first"
-                    if "token_first" in str(mid_band.section_id or "").lower()
-                    else "template_slots"
-                )
-                st.write(
-                    {
-                        "side": pdata.side_letter,
-                        "mid_band_extract_debug": {
-                            "extract_path": extraction_mode,
-                            "whitelist_only": extraction_mode != "token_first",
-                            "present": True,
-                            "shape_valid": mid_band.shape_valid,
-                            "anchor_bbox": list(mid_band.anchor_bbox) if mid_band.anchor_bbox else None,
-                            "slot_count": mid_band.slot_count,
-                            "row_slot_counts": mid_band.row_slot_counts,
-                            "row_block_grouping": mid_band.row_block_grouping,
-                            "slot_ids_sorted": [s.slot_id for s in sorted(mid_slots_dbg, key=lambda s: (s.row_index, s.slot_in_row))],
-                            "slot_last5": [_to_last5(s.last5) for s in sorted(mid_slots_dbg, key=lambda s: (s.row_index, s.slot_in_row))],
-                            "slot_bboxes": {s.slot_id: [round(v, 2) for v in s.bbox] for s in mid_slots_dbg},
-                            "slot_extraction_bboxes": {
-                                s.slot_id: ([round(v, 2) for v in s.extraction_bbox] if s.extraction_bbox else None)
-                                for s in mid_slots_dbg
-                            },
-                            "slot_accepted_words": {s.slot_id: (s.accepted_words or []) for s in mid_slots_dbg},
-                            "slot_rejected_nearby_count": {
-                                s.slot_id: int(s.rejected_nearby_word_count or 0) for s in mid_slots_dbg
-                            },
-                        },
-                    }
-                )
-
-                mid_rows: List[dict] = []
-                fallback_path_counts: Dict[str, int] = {}
-                slots_with_last5 = 0
-                slots_resolved = 0
-
-                for slot in mid_slots_dbg:
-                    resolved_row, resolve_trace = _resolve_mid_band_slot(pdata, slot)
-                    slot_last5 = _to_last5(slot.last5)
-                    if slot_last5:
-                        slots_with_last5 += 1
-                    if resolved_row is not None:
-                        slots_resolved += 1
-
-                    fallback_path = str(resolve_trace.get("fallback_path", "") or "")
-                    fallback_path_counts[fallback_path] = fallback_path_counts.get(fallback_path, 0) + 1
-
-                    mid_rows.append(
-                        {
-                            "side": pdata.side_letter,
-                            "page_index": pdata.page_index,
-                            "slot_id": slot.slot_id,
-                            "row_index": slot.row_index,
-                            "slot_in_row": slot.slot_in_row,
-                            "block_name": slot.block_name,
-                            "bbox": list(slot.bbox) if slot.bbox else None,
-                            "extraction_bbox": list(slot.extraction_bbox) if slot.extraction_bbox else None,
-                            "accepted_words": slot.accepted_words or [],
-                            "rejected_nearby_word_count": int(slot.rejected_nearby_word_count or 0),
-                            "raw_label_text": slot.raw_label_text,
-                            "parsed_name": slot.parsed_name,
-                            "slot_last5": slot_last5,
-                            "resolve_fallback_path": fallback_path,
-                            "resolved_upc12": resolved_row.upc12 if resolved_row else None,
-                            "resolved_display_name": resolved_row.display_name if resolved_row else None,
-                            "resolved_cpp": resolved_row.cpp_qty if resolved_row else None,
-                            "label_hint_last5_candidates": resolve_trace.get("label_hint_last5_candidates", []),
-                            "label_hint_upc_candidates": resolve_trace.get("label_hint_upc_candidates", []),
-                            "excel_lookup_succeeded": bool(resolve_trace.get("excel_lookup_succeeded", resolved_row is not None)),
-                        }
-                    )
-
-                total_slots = len(mid_slots_dbg)
-                slots_missing_last5 = total_slots - slots_with_last5
-                slots_unresolved = total_slots - slots_resolved
-
-                st.write(f"FULL_PALLET mid-band slot debug - Side {pdata.side_letter}")
-                st.write(
-                    {
-                        "total_slots": total_slots,
-                        "slots_with_last5": slots_with_last5,
-                        "slots_missing_last5": slots_missing_last5,
-                        "slots_resolved": slots_resolved,
-                        "slots_unresolved": slots_unresolved,
-                        "fallback_path_counts": fallback_path_counts,
-                    }
-                )
-                st.dataframe(pd.DataFrame(mid_rows), use_container_width=True)
+                pass
 
             side_ppt = (
                 ppt_cards.get(pdata.side_letter, PptSideCards(pdata.side_letter, [], []))
@@ -5159,22 +5010,6 @@ def render_full_pallet_pdf(
             missing_main_images: List[str] = []
             missing_bonus_images: List[str] = []
             main_render_source = "token_first_mid_band" if token_first_mid_band_ok else "mid_band_template_placeholder"
-            if debug and not canonical_mid_band_ok:
-                st.write(
-                    {
-                        "side": pdata.side_letter,
-                        "canonical_mid_band_failure": {
-                            "present": bool(mid_band),
-                            "shape_valid": bool(mid_band.shape_valid) if mid_band else False,
-                            "anchor_bbox": list(mid_band.anchor_bbox) if (mid_band and mid_band.anchor_bbox) else None,
-                            "slot_count": mid_band.slot_count if mid_band else None,
-                            "row_slot_counts": mid_band.row_slot_counts if mid_band else None,
-                            "row_block_grouping": mid_band.row_block_grouping if mid_band else None,
-                            "fallback": "token_first_mid_band" if token_first_mid_band_ok else "disabled_for_mid_band",
-                            "render_mode": "token_first_mid_band" if token_first_mid_band_ok else "mid_band_template_placeholder",
-                        },
-                    }
-                )
 
             # Bucket A: PPT Top Cards
             a_gap_y = 8.0
@@ -5306,6 +5141,7 @@ def render_full_pallet_pdf(
                     selection_debug=mid_band_selection_debug,
                     normalization_debug_rows=mid_band_normalization_debug_rows,
                 )
+                middle_grid_summaries.append(token_first_detection_debug.get("middle_grid_summary", {}))
             elif canonical_mid_band_ok and mid_band is not None:
                 (
                     main_cols,
@@ -5508,424 +5344,18 @@ def render_full_pallet_pdf(
                 }
             )
 
-            if debug:
-                st.write(
-                    {
-                        "side": pdata.side_letter,
-                        "page_size": f"{PAGE_W}x{PAGE_H}",
-                        "margins": {"left": cx0, "right": cx1, "top": cy1, "bottom": cy0},
-                        "bucket_regions": {
-                            "ppt": [round(bucket_a_top, 1), round(bucket_a_bottom, 1)],
-                            "holders": [round(bucket_b_top, 1), round(bucket_b_bottom, 1)],
-                            "products_available": [round(products_top, 1), round(products_bottom, 1)],
-                            "main_used": [round(products_top, 1), round(main_bottom, 1)] if main_rows_count > 0 else None,
-                            "bonus_used": [round(bonus_top, 1), round(bonus_bottom, 1)] if below_bonus_rows else None,
-                        },
-                        "mid_band_above_bonus": {
-                            "render_source": main_render_source,
-                            "path": "deterministic_template",
-                            "whitelist_only": True,
-                            "present": bool(mid_band),
-                            "shape_valid": bool(mid_band.shape_valid) if mid_band else False,
-                            "shape_matches_3x8_242": canonical_mid_band_ok,
-                            "anchor_bbox": anchor_bbox,
-                            "row_slot_counts": canonical_row_counts,
-                            "row_block_grouping": canonical_block_counts,
-                            "suspicious_slot_text_ids": sorted(set(suspicious_slots)),
-                            "suspicious_top_row_ids": sorted(set(suspicious_top_row_slots)),
-                            "slot_local_text": {s.slot_id: s.raw_label_text for s in main_slots},
-                            "slot_accepted_words": {s.slot_id: (s.accepted_words or []) for s in main_slots},
-                            "slot_rejected_nearby_count": {
-                                s.slot_id: int(s.rejected_nearby_word_count or 0) for s in main_slots
-                            },
-                            "token_first_slot_count": token_first_slot_count if token_first_mid_band_ok else 0,
-                            "token_first_columns": int(main_plan.get("cols", 0)) if token_first_mid_band_ok else 0,
-                            "token_first_rows": int(main_plan.get("rows", 0)) if token_first_mid_band_ok else 0,
-                            "token_first_codes": main_last5_codes if token_first_mid_band_ok else [],
-                            "token_first_unresolved_slots": [r.get("slot_id") for r in unresolved_mid_slot_debug] if token_first_mid_band_ok else [],
-                            "physical_profile_comparison": mid_band_profile_comparison,
-                            "display_selection_debug": mid_band_selection_debug,
-                            "image_normalization_summary": mid_band_normalization_summary,
-                            "product_normalization_summary": product_normalization_summary,
-                            "layout_debug": mid_band_layout_debug,
-                        },
-                        "grid_detected": {
-                            "main_cols": main_cols,
-                            "main_rows": main_rows_count,
-                            "bonus_cols": bonus_cols,
-                            "bonus_rows": bonus_rows_count,
-                        },
-                        "layout_width": {
-                            "rightmost_x": round(rightmost_used, 2),
-                            "right_limit": round(right_limit, 2),
-                            "exceeded": exceeded,
-                            "vertical_overflow": vertical_overflow,
-                            "adjusted_to_fit": adjusted_to_fit,
-                        },
-                        "slot_map_summary": {
-                            "main_rows": [len(r["slots"]) for r in slot_map["main"]["rows"]],
-                            "bonus_rows": [len(r["slots"]) for r in slot_map["bonus"]["rows"]],
-                            "main_total_slots": len(slot_map["main"]["slots_flat"]),
-                            "bonus_total_slots": len(slot_map["bonus"]["slots_flat"]),
-                        },
-                        "ppt_counts": {
-                            "top8": len(side_ppt.top8),
-                            "side6": len(side_ppt.side6),
-                            "ids_top8": [c_.card_id for c_ in side_ppt.top8],
-                            "ids_side6": [c_.card_id for c_ in side_ppt.side6],
-                        },
-                        "holders": {
-                            "count": len(side_holders),
-                            "items": [h.item_no for h in side_holders],
-                            "slot_ranges": [
-                                {
-                                    "item_no": h.item_no,
-                                    "slot_order": h.slot_order,
-                                    "slot_label": h.slot_label,
-                                    "start_col": h.slot_start_col,
-                                    "end_col": h.slot_end_col,
-                                }
-                                for h in side_holders
-                            ],
-                        },
-                        "slot_codes": {
-                            "main_total_slots": main_slots_total,
-                            "bonus_total_slots": bonus_slots_total,
-                            "main_unique_count": len(main_last5_codes),
-                            "bonus_unique_count": len(bonus_last5_codes),
-                            "main": main_last5_codes,
-                            "bonus": bonus_last5_codes,
-                        },
-                        "unresolved_last5": {
-                            "main": sorted({x for x in unresolved_main if x}),
-                            "bonus": sorted({x for x in unresolved_bonus if x}),
-                        },
-                        "mid_unresolved_slot_debug": unresolved_mid_slot_debug,
-                        "mid_position_fallback_debug": position_fallback_mid_slot_debug,
-                        "missing_image_crops": {
-                            "main": sorted({x for x in missing_main_images if x}),
-                            "bonus": sorted({x for x in missing_bonus_images if x}),
-                        },
-                        "matrix_matches": {
-                            "matched": matched_cells,
-                            "unmatched": unmatched_cells,
-                        },
-                    }
-                )
-                st.write(
-                    {
-                        "FULL_PALLET_mid_band_physical_profile_comparison": {
-                            "side": mid_band_profile_comparison.get("side"),
-                            "profile_name": mid_band_profile_comparison.get("profile_name"),
-                            "detected_candidate_count": mid_band_profile_comparison.get("detected_candidate_count"),
-                            "detected_group_counts": mid_band_profile_comparison.get("detected_group_counts"),
-                            "expected_group_counts": mid_band_profile_comparison.get("expected_group_counts"),
-                            "overage_per_group": mid_band_profile_comparison.get("overage_per_group"),
-                            "shortage_per_group": mid_band_profile_comparison.get("shortage_per_group"),
-                            "candidate_upcs_by_group": mid_band_profile_comparison.get("candidate_upcs_by_group"),
-                            "expected_selected_count": dict(
-                                mid_band_profile_comparison.get("display_selection_debug", {})
-                            ).get("expected_selected_count"),
-                            "row_clusters_detected": dict(
-                                mid_band_profile_comparison.get("display_selection_debug", {})
-                            ).get("row_clusters_detected"),
-                            "selected_row_col_assignment": dict(
-                                mid_band_profile_comparison.get("display_selection_debug", {})
-                            ).get("selected_row_col_assignment"),
-                            "selected_group_assignment_per_row": dict(
-                                mid_band_profile_comparison.get("display_selection_debug", {})
-                            ).get("selected_group_assignment_per_row"),
-                            "selected_upcs_by_group": dict(
-                                mid_band_profile_comparison.get("display_selection_debug", {})
-                            ).get("selected_upcs_by_group"),
-                            "selected_slot_ids_by_group": dict(
-                                mid_band_profile_comparison.get("display_selection_debug", {})
-                            ).get("selected_slot_ids_by_group"),
-                            "omitted_upcs_by_group": dict(
-                                mid_band_profile_comparison.get("display_selection_debug", {})
-                            ).get("omitted_upcs_by_group"),
-                            "omitted_slot_ids_by_group": dict(
-                                mid_band_profile_comparison.get("display_selection_debug", {})
-                            ).get("omitted_slot_ids_by_group"),
-                            "omit_reasons_by_slot": dict(
-                                mid_band_profile_comparison.get("display_selection_debug", {})
-                            ).get("omit_reasons_by_slot"),
-                            "shortage_after_row_aware_selection": dict(
-                                mid_band_profile_comparison.get("display_selection_debug", {})
-                            ).get("shortage_after_row_aware_selection"),
-                            "overage_after_row_aware_selection": dict(
-                                mid_band_profile_comparison.get("display_selection_debug", {})
-                            ).get("overage_after_row_aware_selection"),
-                            "render_layout_hints": mid_band_profile_comparison.get("render_layout_hints"),
-                        }
-                    }
-                )
-                st.write(
-                    {
-                        "FULL_PALLET_mid_band_final_render_selection": {
-                            "side": pdata.side_letter,
-                            "candidate_count": mid_band_selection_debug.get("candidate_count"),
-                            "candidate_order": mid_band_selection_debug.get("candidate_order", []),
-                            "selected_count": mid_band_selection_debug.get("selected_count"),
-                            "selected_order": mid_band_selection_debug.get("selected_order", []),
-                            "omitted_count": mid_band_selection_debug.get("omitted_count"),
-                            "omitted_order": mid_band_selection_debug.get("omitted_order", []),
-                            "render_assignment": mid_band_selection_debug.get("render_assignment", []),
-                            "image_normalization_summary": mid_band_normalization_summary,
-                            "product_normalization_summary": product_normalization_summary,
-                            "summary": {
-                                "expected_selected_count": mid_band_selection_debug.get("expected_selected_count"),
-                                "actual_selected_count": mid_band_selection_debug.get("actual_selected_count"),
-                                "shortage_or_overage": mid_band_selection_debug.get("shortage_or_overage"),
-                                "final_render_order_matches_selected_order": mid_band_selection_debug.get(
-                                    "final_render_order_matches_selected_order"
-                                ),
-                            },
-                        }
-                    }
-                )
-                if mid_band_normalization_debug_rows:
-                    st.write(
-                        {
-                            "FULL_PALLET_product_image_normalization_summary": product_normalization_summary,
-                        }
-                    )
-                    st.dataframe(pd.DataFrame(mid_band_normalization_debug_rows), use_container_width=True)
-                retained_profile_rows = [
-                    {k: v for k, v in {**row, "profile_action": "retain"}.items() if k != "slot"}
-                    for group_rows in dict(
-                        mid_band_profile_comparison.get("retained_if_expected_max_enforced", {})
-                    ).values()
-                    for row in group_rows
-                ]
-                omitted_profile_rows = [
-                    {k: v for k, v in {**row, "profile_action": "omit"}.items() if k != "slot"}
-                    for group_rows in dict(
-                        mid_band_profile_comparison.get("omitted_if_expected_max_enforced", {})
-                    ).values()
-                    for row in group_rows
-                ]
-                if retained_profile_rows or omitted_profile_rows:
-                    st.dataframe(
-                        pd.DataFrame(retained_profile_rows + omitted_profile_rows),
-                        use_container_width=True,
-                    )
-                if mid_band_layout_debug:
-                    st.write(
-                        {
-                            "mid_band_layout_summary": {
-                                "side": pdata.side_letter,
-                                "mid_band_card_count": mid_band_layout_debug.get("card_count"),
-                                "columns_used": mid_band_layout_debug.get("columns_used"),
-                                "rows_used": mid_band_layout_debug.get("rows_used"),
-                                "card_box_width": mid_band_layout_debug.get("card_w"),
-                                "card_box_height": mid_band_layout_debug.get("card_h"),
-                                "horizontal_gutter_intra": mid_band_layout_debug.get("h_gutter_intra"),
-                                "horizontal_gutter_inter": mid_band_layout_debug.get("h_gutter_inter"),
-                                "horizontal_gutter_uniform": mid_band_layout_debug.get("h_gutter_uniform"),
-                                "vertical_gutter": mid_band_layout_debug.get("v_gutter"),
-                                "mid_band_origin_x": mid_band_layout_debug.get("origin_x"),
-                                "mid_band_origin_y": mid_band_layout_debug.get("origin_y"),
-                                "layout_mode": mid_band_layout_debug.get("layout_mode", mid_band_layout_debug.get("mode")),
-                            }
-                        }
-                    )
-                if bonus_crop_debug_rows:
-                    st.write(
-                        {
-                            "FULL_PALLET_bonus_pixmap_render_debug": {
-                                "side": pdata.side_letter,
-                                "bonus_slot_count": len(bonus_crop_debug_rows),
-                                "pixmap_crop_count": sum(
-                                    1 for r in bonus_crop_debug_rows if r.get("render_path_used") == "pixmap_bonus"
-                                ),
-                                "fallback_count": sum(1 for r in bonus_crop_debug_rows if bool(r.get("fallback_used"))),
-                                "suspicious_crop_count": sum(
-                                    1 for r in bonus_crop_debug_rows if bool(r.get("suspicious_crop"))
-                                ),
-                                "blank_or_missing_crop_count": sum(
-                                    1 for r in bonus_crop_debug_rows if bool(r.get("blank_or_missing_crop"))
-                                ),
-                                "clean_crop_count": sum(
-                                    1
-                                    for r in bonus_crop_debug_rows
-                                    if not bool(r.get("suspicious_crop"))
-                                    and not bool(r.get("blank_or_missing_crop"))
-                                ),
-                                "sanitized_crop_count": sum(
-                                    1 for r in bonus_crop_debug_rows if bool(r.get("sanitized_crop_used"))
-                                ),
-                                "edge_contamination_detected_count": sum(
-                                    1
-                                    for r in bonus_crop_debug_rows
-                                    if bool(r.get("neighboring_edge_contamination_detected"))
-                                ),
-                                "average_source_inset_x": round(
-                                    float(np.mean([float(r.get("source_inset_x") or 0.0) for r in bonus_crop_debug_rows])),
-                                    2,
-                                ),
-                                "average_source_inset_y": round(
-                                    float(np.mean([float(r.get("source_inset_y") or 0.0) for r in bonus_crop_debug_rows])),
-                                    2,
-                                ),
-                                "contain_fit_used": True,
-                                "slot_to_crop_assignment": [
-                                    {
-                                        "slot_index": r.get("slot_index"),
-                                        "slot_id": r.get("slot_id"),
-                                        "row": r.get("row"),
-                                        "col": r.get("col"),
-                                        "upc12": r.get("upc12"),
-                                        "render_path_used": r.get("render_path_used"),
-                                        "source_crop_bbox": r.get("source_crop_bbox"),
-                                        "suspicious_crop": r.get("suspicious_crop"),
-                                        "suspicious_reason": r.get("suspicious_reason"),
-                                    }
-                                    for r in bonus_crop_debug_rows
-                                ],
-                            }
-                        }
-                    )
-                    st.dataframe(pd.DataFrame(bonus_crop_debug_rows), use_container_width=True)
-                if mid_band_layout_assignments:
-                    st.dataframe(pd.DataFrame(mid_band_layout_assignments), use_container_width=True)
-                if token_first_mid_band_ok:
-                    crop_success_count = sum(1 for r in token_first_crop_debug_rows if bool(r.get("crop_success")))
-                    crop_failure_count = len(token_first_crop_debug_rows) - crop_success_count
-                    image_cell_match_count = sum(
-                        1 for r in token_first_crop_debug_rows if str(r.get("image_crop_source", "")) == "image_cell_match"
-                    )
-                    row_strip_slice_count = sum(
-                        1 for r in token_first_crop_debug_rows if bool(r.get("row_strip_source_cell_id"))
-                    )
-                    row_strip_slice_rejected_count = sum(
-                        1 for r in token_first_crop_debug_rows if bool(r.get("rejected_row_strip_slice"))
-                    )
-                    fallback_crop_count = sum(
-                        1
-                        for r in token_first_crop_debug_rows
-                        if str(r.get("image_crop_source", "")).startswith("fallback_")
-                    )
-                    suspicious_crop_count = sum(
-                        1 for r in token_first_crop_debug_rows if bool(r.get("crop_flagged_suspicious"))
-                    )
-                    residual_bad_crop_warning_count = sum(
-                        1 for r in token_first_crop_debug_rows if bool(r.get("residual_bad_crop_warning"))
-                    )
-                    pixmap_crop_count = sum(
-                        1 for r in token_first_crop_debug_rows if str(r.get("image_crop_source", "")) == "images_pdf_pixmap"
-                    )
-                    pixmap_fallback_count = sum(
-                        1
-                        for r in token_first_crop_debug_rows
-                        if bool(r.get("pixmap_slot_bbox")) and str(r.get("image_crop_source", "")) != "images_pdf_pixmap"
-                    )
-                    empty_crop_count = sum(
-                        1 for r in token_first_crop_debug_rows if str(r.get("image_crop_source", "")) == "fallback_none"
-                    )
-                    tiny_bbox_count = sum(1 for r in token_first_crop_debug_rows if bool(r.get("tiny_bbox")))
-                    large_bbox_count = sum(1 for r in token_first_crop_debug_rows if bool(r.get("large_bbox")))
-                    widths = [float(r["crop_image_width"]) for r in token_first_crop_debug_rows if r.get("crop_image_width") is not None]
-                    heights = [float(r["crop_image_height"]) for r in token_first_crop_debug_rows if r.get("crop_image_height") is not None]
-                    avg_crop_width = round(float(np.mean(widths)), 2) if widths else None
-                    avg_crop_height = round(float(np.mean(heights)), 2) if heights else None
-                    issue = ""
-                    if pixmap_crop_count != len(token_first_crop_debug_rows):
-                        issue = "missing_or_failed_pixmap_crops"
-                    elif empty_crop_count:
-                        issue = "blank_image_slots_present"
-                    else:
-                        issue = "none"
-                    st.write("FULL PALLET IMAGE EXTRACTION SUMMARY")
-                    st.write(
-                        {
-                            f"Side {pdata.side_letter}": {
-                                "image_source": "images_pdf_pixmap",
-                                "pixmap_crop_count": pixmap_crop_count,
-                                "missing_image_slots": token_first_detection_debug.get("blank_image_count", empty_crop_count),
-                                "labels_pdf_visual_crop_used": False,
-                                "binding_mode": "metadata_i_to_images_pdf_pixmap_i",
-                                "issue": issue,
-                            }
-                        }
-                    )
-                    st.write(f"FULL_PALLET token-first mid-band crop debug - Side {pdata.side_letter}")
-                    st.write(
-                        {
-                            "token_first_slot_count": len(token_first_crop_debug_rows),
-                            "new_crop_path_count": image_cell_match_count,
-                            "row_strip_slice_attempted_count": row_strip_slice_count,
-                            "row_strip_slice_rejected_count": row_strip_slice_rejected_count,
-                            "fallback_crop_path_count": fallback_crop_count,
-                            "empty_crop_path_count": empty_crop_count,
-                            "images_pdf_pixmap_crop_count": pixmap_crop_count,
-                            "images_pdf_pixmap_fallback_count": pixmap_fallback_count,
-                            "suspicious_crop_count": suspicious_crop_count,
-                            "residual_bad_crop_warning_count": residual_bad_crop_warning_count,
-                            "image_binding_summary": token_first_detection_debug.get("image_binding_summary", {}),
-                            "crop_success_count": crop_success_count,
-                            "crop_failure_count": crop_failure_count,
-                            "tiny_bbox_count": tiny_bbox_count,
-                            "large_bbox_count": large_bbox_count,
-                            "avg_crop_width": avg_crop_width,
-                            "avg_crop_height": avg_crop_height,
-                        }
-                    )
-                    st.write(
-                        {
-                            "token_first_detection_summary": {
-                                "side": token_first_detection_debug.get("side", pdata.side_letter),
-                                "image_page_index": token_first_detection_debug.get("image_page_index", pdata.page_index),
-                                "mid_band_region_bbox_used": token_first_detection_debug.get("mid_band_region_bbox_used"),
-                                "source_image_cell_count": token_first_detection_debug.get("source_image_cell_count", 0),
-                                "ordered_source_cell_ids": token_first_detection_debug.get("ordered_source_cell_ids", []),
-                                "strict_side_guardrails": bool(token_first_detection_debug.get("strict_side_guardrails")),
-                                "row_strip_fallback_available": bool(token_first_detection_debug.get("row_strip_fallback_available")),
-                                "row_strip_source_cell_ids": token_first_detection_debug.get("row_strip_source_cell_ids", []),
-                                "pixmap_source_region_bbox": token_first_detection_debug.get("pixmap_source_region_bbox"),
-                                "pixmap_grid_source": token_first_detection_debug.get("pixmap_grid_source"),
-                                "active_mid_band_render_path": token_first_detection_debug.get("active_mid_band_render_path"),
-                                "visual_source": token_first_detection_debug.get("visual_source"),
-                                "image_source": token_first_detection_debug.get("image_source"),
-                                "labels_pdf_visual_crop_used": token_first_detection_debug.get("labels_pdf_visual_crop_used"),
-                                "labels_pdf_visual_source_enabled": token_first_detection_debug.get("labels_pdf_visual_source_enabled"),
-                                "middle_band_binding_mode": token_first_detection_debug.get("middle_band_binding_mode"),
-                                "binding_mode": token_first_detection_debug.get("binding_mode"),
-                                "raw_middle_candidate_count": token_first_detection_debug.get("raw_middle_candidate_count"),
-                                "cleaned_middle_candidate_count": token_first_detection_debug.get("cleaned_middle_candidate_count"),
-                                "ordered_label_slot_count": token_first_detection_debug.get("ordered_label_slot_count"),
-                                "ordered_image_crop_count": token_first_detection_debug.get("ordered_image_crop_count"),
-                                "rendered_middle_slot_count": token_first_detection_debug.get("rendered_middle_slot_count"),
-                                "missing_middle_slots": token_first_detection_debug.get("missing_middle_slots"),
-                                "rejected_middle_candidate_count": token_first_detection_debug.get("rejected_middle_candidate_count"),
-                                "rejected_middle_candidates": token_first_detection_debug.get("rejected_middle_candidates", []),
-                                "image_crop_sources_by_slot": token_first_detection_debug.get("image_crop_sources_by_slot", []),
-                                "blank_image_count": token_first_detection_debug.get("blank_image_count"),
-                            },
-                            "token_first_mapping_summary": {
-                                "side": pdata.side_letter,
-                                "resolved_mid_band_slot_count": token_first_detection_debug.get("resolved_mid_band_slot_count", len(token_first_mapping_debug_rows)),
-                                "source_image_cell_count": token_first_detection_debug.get("source_image_cell_count", 0),
-                                "mapped_cleanly": token_first_detection_debug.get("mapped_clean_count", 0),
-                                "using_fallback": token_first_detection_debug.get("mapped_fallback_count", 0),
-                                "empty_unrendered": token_first_detection_debug.get("mapped_empty_count", 0),
-                                "row_strip_slices_attempted": token_first_detection_debug.get("row_strip_slice_count", 0),
-                                "row_strip_slices_rejected": token_first_detection_debug.get("row_strip_slice_rejected_count", 0),
-                                "individual_image_cells_used": token_first_detection_debug.get("individual_image_cell_used_count", 0),
-                                "rendered_page_detected_cells_used": token_first_detection_debug.get("rendered_page_detected_cell_used_count", 0),
-                                "pixmap_crop_count": token_first_detection_debug.get("pixmap_crop_count", 0),
-                                "pixmap_fallback_count": token_first_detection_debug.get("pixmap_fallback_count", 0),
-                                "pixmap_suspicious_crop_count": token_first_detection_debug.get("pixmap_suspicious_crop_count", 0),
-                                "previous_fallback_used": token_first_detection_debug.get("previous_fallback_used_count", 0),
-                                "suspicious_crop_count": token_first_detection_debug.get("suspicious_crop_count", 0),
-                                "residual_bad_crop_warning_count": token_first_detection_debug.get("residual_bad_crop_warning_count", 0),
-                                "image_binding_summary": token_first_detection_debug.get("image_binding_summary", {}),
-                            },
-                        }
-                    )
-                    st.dataframe(pd.DataFrame(token_first_crop_debug_rows), use_container_width=True)
-                    if token_first_mapping_debug_rows:
-                        st.dataframe(pd.DataFrame(token_first_mapping_debug_rows), use_container_width=True)
+
+            if debug and middle_grid_summaries:
+                st.write("FULL PALLET MIDDLE GRID SUMMARY")
+                for summary in middle_grid_summaries:
+                    side = summary.get("side", "unknown")
+                    image_crop_count = summary.get("image_crop_count", 0)
+                    metadata_count = summary.get("metadata_count", 0)
+                    rendered_count = summary.get("rendered_count", 0)
+                    unresolved_count = summary.get("unresolved_count", 0)
+                    issue = summary.get("issue", "unknown")
+                    st.write(f"Side {side}: image_crop_count={image_crop_count}, metadata_count={metadata_count}, rendered_count={rendered_count}, unresolved_count={unresolved_count}")
+                    st.write(f"Side {side} issue: {issue}")
 
             c.showPage()
 
