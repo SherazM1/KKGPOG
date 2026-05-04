@@ -2859,6 +2859,138 @@ def render_full_pallet_pdf(
             "resolve_trace": resolve_trace,
         }
 
+    def _build_middle_grid_metadata_slots_from_labels(
+        p: FullPalletPage,
+        section: Optional[FullPalletMidBandSection],
+        matrix_idx: Dict[str, List[MatrixRow]],
+    ) -> Tuple[List[dict], Dict[str, object]]:
+        def _resolve_slot(slot: FullPalletMidBandSlot) -> Tuple[Optional[MatrixRow], Dict[str, object]]:
+            raw_label = (slot.parsed_name or slot.raw_label_text or "").strip()
+            extracted_last5 = _to_last5(slot.last5)
+            hints = _extract_mid_slot_label_hints(slot)
+            trace = {
+                "labels_last5": extracted_last5,
+                "label_hint_upc_candidates": hints["upc12_candidates"],
+                "label_hint_last5_candidates": hints["last5_candidates"],
+            }
+            if extracted_last5:
+                trace["fallback_path"] = "labels_exact_last5"
+                match = resolve_full_pallet(extracted_last5, raw_label, matrix_idx)
+                if match is not None:
+                    return match, trace
+            for last5_hint in hints["last5_candidates"]:
+                if last5_hint == extracted_last5:
+                    continue
+                match = resolve_full_pallet(last5_hint, raw_label, matrix_idx)
+                if match is not None:
+                    trace["fallback_path"] = "labels_hint_last5"
+                    return match, trace
+            trace["fallback_path"] = "unresolved"
+            return None, trace
+
+        metadata_slots: List[dict] = []
+        metadata_source = "labels_pdf_parsed_section"
+        if section is not None and _mid_band_shape_ok(section):
+            parsed_slots: Dict[int, FullPalletMidBandSlot] = {}
+            for row in sorted(section.rows, key=lambda r: int(r.row_index)):
+                for slot in sorted(row.slots, key=lambda s: int(s.slot_in_row)):
+                    index = int(slot.row_index) * 8 + int(slot.slot_in_row)
+                    if 0 <= index < 24:
+                        parsed_slots[index] = slot
+            for index in range(24):
+                slot = parsed_slots.get(index)
+                if slot is not None:
+                    match, trace = _resolve_slot(slot)
+                    metadata_slots.append(
+                        {
+                            "side": p.side_letter,
+                            "index": index,
+                            "row": int(slot.row_index),
+                            "col": int(slot.slot_in_row),
+                            "slot_id": slot.slot_id,
+                            "raw_label_text": slot.raw_label_text or "",
+                            "parsed_name": slot.parsed_name or "",
+                            "last5": _to_last5(slot.last5),
+                            "resolved_upc12": match.upc12 if match else None,
+                            "resolved_name": match.display_name if match else "",
+                            "resolved_cpp": match.cpp_qty if match else None,
+                            "resolution_method": trace.get("fallback_path"),
+                            "unresolved_reason": None if match else trace.get("fallback_path", "unresolved"),
+                        }
+                    )
+                else:
+                    metadata_source = "labels_pdf_parsed_section_partial"
+                    metadata_slots.append(
+                        {
+                            "side": p.side_letter,
+                            "index": index,
+                            "row": index // 8,
+                            "col": index % 8,
+                            "slot_id": f"{p.side_letter}-MB-UNRESOLVED-R{index // 8 + 1}-S{index % 8 + 1}",
+                            "raw_label_text": "",
+                            "parsed_name": "",
+                            "last5": "",
+                            "resolved_upc12": None,
+                            "resolved_name": "",
+                            "resolved_cpp": None,
+                            "resolution_method": "missing_parsed_slot",
+                            "unresolved_reason": "missing_parsed_slot",
+                        }
+                    )
+        else:
+            metadata_source = "labels_pdf_fallback_selected_candidates"
+            cleaned_candidate_records, _, _, _ = _build_middle_grid_cell_candidate_records(p)
+            for index, candidate in enumerate(cleaned_candidate_records[:24]):
+                slot = candidate.get("slot")
+                if slot is None:
+                    continue
+                match, trace = _resolve_slot(slot)
+                metadata_slots.append(
+                    {
+                        "side": p.side_letter,
+                        "index": index,
+                        "row": int(slot.row_index),
+                        "col": int(slot.slot_in_row),
+                        "slot_id": slot.slot_id,
+                        "raw_label_text": slot.raw_label_text or "",
+                        "parsed_name": slot.parsed_name or "",
+                        "last5": _to_last5(slot.last5),
+                        "resolved_upc12": match.upc12 if match else None,
+                        "resolved_name": match.display_name if match else "",
+                        "resolved_cpp": match.cpp_qty if match else None,
+                        "resolution_method": trace.get("fallback_path"),
+                        "unresolved_reason": None if match else trace.get("fallback_path", "unresolved"),
+                    }
+                )
+            while len(metadata_slots) < 24:
+                index = len(metadata_slots)
+                metadata_slots.append(
+                    {
+                        "side": p.side_letter,
+                        "index": index,
+                        "row": index // 8,
+                        "col": index % 8,
+                        "slot_id": f"{p.side_letter}-MB-UNRESOLVED-R{index // 8 + 1}-S{index % 8 + 1}",
+                        "raw_label_text": "",
+                        "parsed_name": "",
+                        "last5": "",
+                        "resolved_upc12": None,
+                        "resolved_name": "",
+                        "resolved_cpp": None,
+                        "resolution_method": "missing_parsed_slot",
+                        "unresolved_reason": "missing_parsed_slot",
+                    }
+                )
+
+        resolved_count = len([m for m in metadata_slots if m.get("resolved_upc12") or m.get("resolved_name")])
+        unresolved_count = len(metadata_slots) - resolved_count
+        return metadata_slots, {
+            "metadata_source": metadata_source,
+            "metadata_count": len(metadata_slots),
+            "resolved_count": resolved_count,
+            "unresolved_count": unresolved_count,
+        }
+
     def _clean_middle_grid_candidate_records(candidates: List[dict]) -> Tuple[List[dict], List[dict]]:
         cleaned: List[dict] = []
         rejected: List[dict] = []
@@ -3543,6 +3675,11 @@ def render_full_pallet_pdf(
                     )
                 )
         all_slots = all_slots[:image_only_slot_count]
+        metadata_slots, metadata_summary = _build_middle_grid_metadata_slots_from_labels(
+            p,
+            section,
+            matrix_idx,
+        )
         if selection_debug is not None:
             selection_debug.update(selection.debug_summary)
             selection_debug["active_middle_band_path"] = "cell_middle_grid_above_bonus"
@@ -3732,12 +3869,18 @@ def render_full_pallet_pdf(
             x = row_xs[ci]
             y = grid_top - (ri + 1) * card_h - ri * row_gutter
 
+            meta = metadata_slots[idx] if idx < len(metadata_slots) else {
+                "resolved_upc12": None,
+                "resolved_name": "",
+                "resolved_cpp": None,
+            }
+            upc12 = meta.get("resolved_upc12")
+            disp_name = meta.get("resolved_name") or ""
+            cpp = meta.get("resolved_cpp")
+            upc_str = upc12 or ""
+
             match = None
             resolve_trace: Dict[str, object] = {"fallback_path": "image_only_middle_band"}
-            upc12 = None
-            cpp = None
-            disp_name = ""
-            upc_str = ""
 
             mapped_cell = slot_to_cell.get(slot.slot_id)
             candidate_crop_count = 1  # always include slot-geometry fallback candidate
@@ -4192,33 +4335,15 @@ def render_full_pallet_pdf(
             metadata_order_preview = []
             image_order_preview = []
             final_join_preview = []
-            for preview_index, candidate in enumerate(selection.selected_cards[:expected_middle_count]):
-                preview_match = candidate.get("resolved_match")
-                preview_slot = candidate.get("slot")
-                preview_upc = (
-                    getattr(preview_match, "upc12", None)
-                    or candidate.get("upc12")
-                    or getattr(preview_slot, "resolved_upc12", None)
-                )
-                preview_name = (
-                    getattr(preview_match, "display_name", None)
-                    or candidate.get("resolved_name")
-                    or candidate.get("display_name")
-                    or getattr(preview_slot, "resolved_display_name", None)
-                    or getattr(preview_slot, "parsed_name", "")
-                )
-                preview_cpp = (
-                    getattr(preview_match, "cpp_qty", None)
-                    if preview_match is not None
-                    else candidate.get("cpp")
-                )
+            for preview_index, meta in enumerate(metadata_slots[:expected_middle_count]):
                 image_cell = pixmap_flat_cells[preview_index] if preview_index < len(pixmap_flat_cells) else None
                 metadata_order_preview.append(
                     {
                         "index": int(preview_index),
-                        "upc": preview_upc,
-                        "name": preview_name,
-                        "cpp": preview_cpp,
+                        "upc": meta.get("resolved_upc12"),
+                        "name": meta.get("resolved_name"),
+                        "cpp": meta.get("resolved_cpp"),
+                        "resolution_method": meta.get("resolution_method"),
                     }
                 )
                 image_order_preview.append(
@@ -4232,8 +4357,9 @@ def render_full_pallet_pdf(
                 final_join_preview.append(
                     {
                         "index": int(preview_index),
-                        "metadata_upc": preview_upc,
-                        "metadata_name": preview_name,
+                        "metadata_upc": meta.get("resolved_upc12"),
+                        "metadata_name": meta.get("resolved_name"),
+                        "metadata_cpp": meta.get("resolved_cpp"),
                         "image_source": "images_pdf" if image_cell else None,
                         "image_cell_id": str(image_cell.get("cell_id", "")) if image_cell else None,
                         "image_bbox": list(image_cell.get("bbox")) if image_cell and image_cell.get("bbox") else None,
@@ -4270,6 +4396,26 @@ def render_full_pallet_pdf(
             detection_debug["metadata_order_preview"] = metadata_order_preview
             detection_debug["image_order_preview"] = image_order_preview
             detection_debug["final_join_preview"] = final_join_preview
+            detection_debug["middle_grid_metadata_summary"] = {
+                "metadata_source": metadata_summary.get("metadata_source"),
+                "metadata_count": metadata_summary.get("metadata_count"),
+                "resolved_count": metadata_summary.get("resolved_count"),
+                "unresolved_count": metadata_summary.get("unresolved_count"),
+                "image_crop_count": ordered_image_crop_count,
+                "rendered_count": slots_drawn,
+                "binding_mode": "metadata_i_to_images_pdf_pixmap_i",
+                "first_5_metadata_preview": metadata_order_preview[:5],
+                "unresolved_slots": [
+                    {
+                        "index": int(slot.get("index")),
+                        "raw_label_text": slot.get("raw_label_text"),
+                        "last5": slot.get("last5"),
+                        "unresolved_reason": slot.get("unresolved_reason"),
+                    }
+                    for slot in metadata_slots
+                    if not slot.get("resolved_upc12") and not slot.get("resolved_name")
+                ],
+            }
             detection_debug["all_detected_rows"] = (
                 list(selection_debug.get("all_detected_rows", [])) if selection_debug else []
             )
