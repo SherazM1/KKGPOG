@@ -394,6 +394,7 @@ def main() -> None:
                     pdf = render_full_pallet_display_pdf(
                         fp_pages,
                         images_bytes,
+                        labels_bytes,
                         fp_matrix_idx,
                         title_prefix,
                         ppt_cards,
