@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import html
+import json
 import re
 import subprocess
 import sys
@@ -63,6 +64,85 @@ _DEFAULT_TICKET_GAP = 0.02 * inch
 _PRICE_OBJECT_BAND_ANCHOR_RATIO = 0.30
 _TICKET_VERTICAL_LIFT_RATIO = 0.08
 _TICKET_VERTICAL_LIFT_MAX = 0.16 * inch
+_LAYOUT_PROFILE_RELATIVE_PATH = Path("assets/templates/sams_price_strip_layout.json")
+_LAYOUT_MATCH_TOLERANCE_IN = 0.15
+_LAYOUT_PROFILE_CACHE: dict | None = None
+_LAYOUT_PROFILE_CACHE_MTIME: float | None = None
+
+
+_BUILT_IN_LAYOUT_PROFILES = {
+    "default_profile": "30.75x3.4375",
+    "profiles": {
+        "30.75x3.4375": {
+            "width_in": 30.75,
+            "height_in": 3.4375,
+            "source_template": "assets/templates/source/sams_club_30_75_price_strip.eps",
+            "footer": {
+                "left_in": 0.08,
+                "bottom_in": 0.055,
+            },
+            "ticket": {
+                "composition_top_pt": 30.0,
+                "text_top_pt": 4.2,
+                "desc_1_margin_top_pt": 0.6,
+                "desc_2_margin_top_pt": 0.4,
+                "price_top_pt": 18.0,
+                "price_left_pt": 1.2,
+                "price_box_height_pt": 44.0,
+                "item_top_pt": 51.0,
+                "item_right_pad_pt": 4.0,
+                "item_width_min_pt": 34.0,
+                "item_width_ratio": 0.58,
+            },
+            "price": {
+                "dollar_sign_size_pt": 15.5,
+                "dollar_sign_translate_y_pt": 13.5,
+                "dollar_sign_margin_right_pt": 1.0,
+                "dollars_size_pt": 44.0,
+                "dollars_line_height": 0.82,
+                "dollars_letter_spacing_pt": -0.9,
+                "cents_size_pt": 18.5,
+                "cents_translate_y_pt": 2.8,
+                "cents_margin_left_pt": 0.3,
+                "cents_letter_spacing_pt": -0.4,
+            },
+        },
+        "39x3.4375": {
+            "width_in": 39.0,
+            "height_in": 3.4375,
+            "source_template": "assets/templates/source/sams_club_39_price_strip.eps",
+            "footer": {
+                "left_in": 0.08,
+                "bottom_in": 0.055,
+            },
+            "ticket": {
+                "composition_top_pt": 30.0,
+                "text_top_pt": 4.2,
+                "desc_1_margin_top_pt": 0.6,
+                "desc_2_margin_top_pt": 0.4,
+                "price_top_pt": 18.0,
+                "price_left_pt": 1.2,
+                "price_box_height_pt": 44.0,
+                "item_top_pt": 51.0,
+                "item_right_pad_pt": 4.0,
+                "item_width_min_pt": 34.0,
+                "item_width_ratio": 0.58,
+            },
+            "price": {
+                "dollar_sign_size_pt": 15.5,
+                "dollar_sign_translate_y_pt": 13.5,
+                "dollar_sign_margin_right_pt": 1.0,
+                "dollars_size_pt": 44.0,
+                "dollars_line_height": 0.82,
+                "dollars_letter_spacing_pt": -0.9,
+                "cents_size_pt": 18.5,
+                "cents_translate_y_pt": 2.8,
+                "cents_margin_left_pt": 0.3,
+                "cents_letter_spacing_pt": -0.4,
+            },
+        },
+    },
+}
 
 
 class _PriceObjectLayout(NamedTuple):
@@ -120,6 +200,102 @@ def _resolve_group_length(row_data: SamsPriceStripRow, warnings: list[str]) -> t
         )
         return _PAGE_WIDTH, _PAGE_HEIGHT
     return parsed
+
+
+def _load_layout_profiles(warnings: list[str]) -> dict:
+    """
+    Load Sam's Club price strip layout profiles from JSON, falling back safely.
+    """
+    global _LAYOUT_PROFILE_CACHE, _LAYOUT_PROFILE_CACHE_MTIME
+
+    root_path = Path(__file__).resolve().parents[2]
+    layout_path = root_path / _LAYOUT_PROFILE_RELATIVE_PATH
+
+    try:
+        layout_mtime = layout_path.stat().st_mtime
+        if _LAYOUT_PROFILE_CACHE is not None and _LAYOUT_PROFILE_CACHE_MTIME == layout_mtime:
+            _append_warning_once(
+                warnings,
+                f"Loaded Sam's price strip layout profiles from {_LAYOUT_PROFILE_RELATIVE_PATH.as_posix()}",
+            )
+            return _LAYOUT_PROFILE_CACHE
+
+        with open(layout_path, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if not isinstance(loaded, dict) or not isinstance(loaded.get("profiles"), dict):
+            raise ValueError("layout JSON must contain a profiles object")
+        _LAYOUT_PROFILE_CACHE = loaded
+        _LAYOUT_PROFILE_CACHE_MTIME = layout_mtime
+        _append_warning_once(
+            warnings,
+            f"Loaded Sam's price strip layout profiles from {_LAYOUT_PROFILE_RELATIVE_PATH.as_posix()}",
+        )
+        return loaded
+    except Exception as exc:
+        _append_warning_once(
+            warnings,
+            f"Sam's price strip layout profile load failed from {_LAYOUT_PROFILE_RELATIVE_PATH.as_posix()}: {exc}; "
+            "using built-in defaults.",
+        )
+        _LAYOUT_PROFILE_CACHE = _BUILT_IN_LAYOUT_PROFILES
+        _LAYOUT_PROFILE_CACHE_MTIME = None
+        return _LAYOUT_PROFILE_CACHE
+
+
+def _append_warning_once(warnings: list[str], message: str) -> None:
+    if message not in warnings:
+        warnings.append(message)
+
+
+def _resolve_layout_profile(strip_w: float, strip_h: float, warnings: list[str]) -> dict:
+    """
+    Resolve a profile by page size in points, using configured inch dimensions.
+    """
+    layouts = _load_layout_profiles(warnings)
+    profiles = layouts.get("profiles", {})
+    width_in = strip_w / inch
+    height_in = strip_h / inch
+
+    for profile_name, profile in profiles.items():
+        if not isinstance(profile, dict):
+            continue
+        try:
+            profile_w = float(profile.get("width_in"))
+            profile_h = float(profile.get("height_in"))
+        except (TypeError, ValueError):
+            continue
+        if (
+            abs(profile_w - width_in) <= _LAYOUT_MATCH_TOLERANCE_IN
+            and abs(profile_h - height_in) <= _LAYOUT_MATCH_TOLERANCE_IN
+        ):
+            warnings.append(f"Using Sam's price strip layout profile: {profile_name}")
+            return profile
+
+    default_name = str(layouts.get("default_profile") or _BUILT_IN_LAYOUT_PROFILES["default_profile"])
+    default_profile = profiles.get(default_name)
+    if not isinstance(default_profile, dict):
+        default_name = _BUILT_IN_LAYOUT_PROFILES["default_profile"]
+        default_profile = _BUILT_IN_LAYOUT_PROFILES["profiles"][default_name]
+
+    warnings.append(
+        f"No exact Sam's layout profile found for {width_in:g}x{height_in:g}; "
+        f"using default profile {default_name}."
+    )
+    return default_profile
+
+
+def _profile_number(profile: dict, section: str, key: str, fallback: float) -> float:
+    """
+    Read a numeric profile value, returning fallback if missing or invalid.
+    """
+    try:
+        section_values = profile.get(section, {})
+        if not isinstance(section_values, dict):
+            return fallback
+        value = section_values.get(key, fallback)
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
 
 
 def _normalize_price_parts(raw_retail: str) -> tuple[str, str]:
@@ -603,13 +779,28 @@ def _generate_strip_html(row_data: SamsPriceStripRow, strip_w: float, strip_h: f
     positions = compute_ticket_positions_across_strip(strip_w, len(row_data.segments))
     ticket_y = footer_h
     ticket_h = strip_h - footer_h
+    layout_profile = _resolve_layout_profile(strip_w, strip_h, warnings)
+
+    footer_left_in = _profile_number(layout_profile, "footer", "left_in", 0.08)
+    footer_bottom_in = _profile_number(layout_profile, "footer", "bottom_in", 0.055)
+
+    dollar_sign_size_pt = _profile_number(layout_profile, "price", "dollar_sign_size_pt", 15.5)
+    dollar_sign_translate_y_pt = _profile_number(layout_profile, "price", "dollar_sign_translate_y_pt", 13.5)
+    dollar_sign_margin_right_pt = _profile_number(layout_profile, "price", "dollar_sign_margin_right_pt", 1.0)
+    dollars_size_pt = _profile_number(layout_profile, "price", "dollars_size_pt", 44.0)
+    dollars_line_height = _profile_number(layout_profile, "price", "dollars_line_height", 0.82)
+    dollars_letter_spacing_pt = _profile_number(layout_profile, "price", "dollars_letter_spacing_pt", -0.9)
+    cents_size_pt = _profile_number(layout_profile, "price", "cents_size_pt", 18.5)
+    cents_translate_y_pt = _profile_number(layout_profile, "price", "cents_translate_y_pt", 2.8)
+    cents_margin_left_pt = _profile_number(layout_profile, "price", "cents_margin_left_pt", 0.3)
+    cents_letter_spacing_pt = _profile_number(layout_profile, "price", "cents_letter_spacing_pt", -0.4)
 
     ticket_htmls = []
     for idx, segment in enumerate(row_data.segments):
         if idx >= len(positions):
             break
         x, ticket_w = positions[idx]
-        ticket_htmls.append(_generate_ticket_html(segment, x, ticket_y, ticket_w, ticket_h, strip_h))
+        ticket_htmls.append(_generate_ticket_html(segment, x, ticket_y, ticket_w, ticket_h, layout_profile))
 
     footer_text = _resolve_strip_footer_text(row_data)
 
@@ -695,30 +886,30 @@ html, body {{
 .dollar-sign {{
     display: inline-block;
     font-weight: 600;
-    font-size: 15.5pt;
+    font-size: {dollar_sign_size_pt}pt;
     line-height: 1;
-    margin-right: 1.0pt;
-    transform: translateY(13.5pt);
+    margin-right: {dollar_sign_margin_right_pt}pt;
+    transform: translateY({dollar_sign_translate_y_pt}pt);
     color: black;
 }}
 
 .dollars {{
     display: inline-block;
     font-weight: 600;
-    font-size: 44pt;
-    line-height: 0.82;
-    letter-spacing: -0.9pt;
+    font-size: {dollars_size_pt}pt;
+    line-height: {dollars_line_height};
+    letter-spacing: {dollars_letter_spacing_pt}pt;
     color: black;
 }}
 
 .cents {{
     display: inline-block;
     font-weight: 600;
-    font-size: 18.5pt;
+    font-size: {cents_size_pt}pt;
     line-height: 1;
-    margin-left: 0.3pt;
-    transform: translateY(2.8pt);
-    letter-spacing: -0.4pt;
+    margin-left: {cents_margin_left_pt}pt;
+    transform: translateY({cents_translate_y_pt}pt);
+    letter-spacing: {cents_letter_spacing_pt}pt;
     color: black;
 }}
 
@@ -734,8 +925,8 @@ html, body {{
 
 .footer {{
     position: absolute;
-    left: 0.08in;
-    bottom: 0.055in;
+    left: {footer_left_in}in;
+    bottom: {footer_bottom_in}in;
     font-family: "Gibson", Arial, sans-serif;
     font-weight: 400;
     font-size: {_SAMS_FOOTER_SIZE}pt;
@@ -763,38 +954,38 @@ def _generate_ticket_html(
     y: float,
     w: float,
     h: float,
-    page_h: float,
+    layout_profile: dict,
 ) -> str:
     """
     Generate HTML divs for one ticket block with fixed layout positions.
     """
     dollars, cents = _normalize_price_parts(segment.retail)
 
-    # Fixed layout constants for consistent positioning
-    TEXT_TOP_PT = 4.2
-    DESC_1_MARGIN_TOP_PT = 0.6
-    DESC_2_MARGIN_TOP_PT = 0.4
-
-    PRICE_TOP_PT = 18.0
-    PRICE_LEFT_PT = max(_RETAIL_MARGIN_PAD, _DEFAULT_INNER_PAD_X * 0.35)
-
-    ITEM_TOP_PT = 51.0
-    ITEM_RIGHT_PAD_PT = _DEFAULT_INNER_PAD_X
+    composition_top = _profile_number(layout_profile, "ticket", "composition_top_pt", 30.0)
+    text_top = _profile_number(layout_profile, "ticket", "text_top_pt", 4.2)
+    desc_1_margin_top = _profile_number(layout_profile, "ticket", "desc_1_margin_top_pt", 0.6)
+    desc_2_margin_top = _profile_number(layout_profile, "ticket", "desc_2_margin_top_pt", 0.4)
+    price_top = _profile_number(layout_profile, "ticket", "price_top_pt", 18.0)
+    price_left_pt = _profile_number(layout_profile, "ticket", "price_left_pt", _RETAIL_MARGIN_PAD)
+    price_box_h = _profile_number(layout_profile, "ticket", "price_box_height_pt", 44.0)
+    item_top = _profile_number(layout_profile, "ticket", "item_top_pt", 51.0)
+    item_right_pad = _profile_number(layout_profile, "ticket", "item_right_pad_pt", 4.0)
+    item_width_min = _profile_number(layout_profile, "ticket", "item_width_min_pt", 34.0)
+    item_width_ratio = _profile_number(layout_profile, "ticket", "item_width_ratio", 0.58)
 
     pad_x = min(max(_DEFAULT_INNER_PAD_X, w * 0.052), max(_DEFAULT_INNER_PAD_X, w * 0.095))
 
     text_x = pad_x
-    text_y = TEXT_TOP_PT
+    text_y = composition_top + text_top
     text_w = max(8.0, w - (2 * pad_x))
 
-    price_x = PRICE_LEFT_PT
-    price_y = PRICE_TOP_PT
+    price_x = max(price_left_pt, pad_x * 0.35)
+    price_y = composition_top + price_top
     price_box_w = max(20.0, w - price_x - pad_x)
-    price_box_h = 44.0
 
-    item_w = min(max(34.0, price_box_w * 0.58), w - pad_x)
-    item_x = w - pad_x - item_w
-    item_y = ITEM_TOP_PT
+    item_w = min(max(item_width_min, price_box_w * item_width_ratio), w - pad_x)
+    item_x = w - item_right_pad - item_w
+    item_y = composition_top + item_top
 
     # Truncate texts
     brand = _truncate_svg_text(segment.brand or "-", _SAMS_BRAND_SIZE, text_w, "semibold")
@@ -806,8 +997,8 @@ def _generate_ticket_html(
 <div class="ticket" style="left: {x}pt; top: {y}pt; width: {w}pt; height: {h}pt;">
     <div class="ticket-text-stack" style="left: {text_x}pt; top: {text_y}pt; width: {text_w}pt;">
         <div class="brand">{html.escape(brand)}</div>
-        <div class="desc" style="margin-top: {DESC_1_MARGIN_TOP_PT}pt;">{html.escape(desc_1)}</div>
-        <div class="desc" style="margin-top: {DESC_2_MARGIN_TOP_PT}pt;">{html.escape(desc_2)}</div>
+        <div class="desc" style="margin-top: {desc_1_margin_top}pt;">{html.escape(desc_1)}</div>
+        <div class="desc" style="margin-top: {desc_2_margin_top}pt;">{html.escape(desc_2)}</div>
     </div>
 
     <div class="price" style="left: {price_x}pt; top: {price_y}pt; width: {price_box_w}pt; height: {price_box_h}pt;">

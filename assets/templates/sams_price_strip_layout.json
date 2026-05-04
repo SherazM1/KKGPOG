@@ -1,0 +1,73 @@
+{
+  "default_profile": "30.75x3.4375",
+  "profiles": {
+    "30.75x3.4375": {
+      "width_in": 30.75,
+      "height_in": 3.4375,
+      "source_template": "assets/templates/source/sams_club_30_75_price_strip.eps",
+      "footer": {
+        "left_in": 0.08,
+        "bottom_in": 0.055
+      },
+      "ticket": {
+        "composition_top_pt": 30.0,
+        "text_top_pt": 4.2,
+        "desc_1_margin_top_pt": 0.6,
+        "desc_2_margin_top_pt": 0.4,
+        "price_top_pt": 18.0,
+        "price_left_pt": 1.2,
+        "price_box_height_pt": 44.0,
+        "item_top_pt": 51.0,
+        "item_right_pad_pt": 4.0,
+        "item_width_min_pt": 34.0,
+        "item_width_ratio": 0.58
+      },
+      "price": {
+        "dollar_sign_size_pt": 15.5,
+        "dollar_sign_translate_y_pt": 13.5,
+        "dollar_sign_margin_right_pt": 1.0,
+        "dollars_size_pt": 44.0,
+        "dollars_line_height": 0.82,
+        "dollars_letter_spacing_pt": -0.9,
+        "cents_size_pt": 18.5,
+        "cents_translate_y_pt": 2.8,
+        "cents_margin_left_pt": 0.3,
+        "cents_letter_spacing_pt": -0.4
+      }
+    },
+    "39x3.4375": {
+      "width_in": 39.0,
+      "height_in": 3.4375,
+      "source_template": "assets/templates/source/sams_club_39_price_strip.eps",
+      "footer": {
+        "left_in": 0.08,
+        "bottom_in": 0.055
+      },
+      "ticket": {
+        "composition_top_pt": 30.0,
+        "text_top_pt": 4.2,
+        "desc_1_margin_top_pt": 0.6,
+        "desc_2_margin_top_pt": 0.4,
+        "price_top_pt": 18.0,
+        "price_left_pt": 1.2,
+        "price_box_height_pt": 44.0,
+        "item_top_pt": 51.0,
+        "item_right_pad_pt": 4.0,
+        "item_width_min_pt": 34.0,
+        "item_width_ratio": 0.58
+      },
+      "price": {
+        "dollar_sign_size_pt": 15.5,
+        "dollar_sign_translate_y_pt": 13.5,
+        "dollar_sign_margin_right_pt": 1.0,
+        "dollars_size_pt": 44.0,
+        "dollars_line_height": 0.82,
+        "dollars_letter_spacing_pt": -0.9,
+        "cents_size_pt": 18.5,
+        "cents_translate_y_pt": 2.8,
+        "cents_margin_left_pt": 0.3,
+        "cents_letter_spacing_pt": -0.4
+      }
+    }
+  }
+}
