@@ -4404,10 +4404,24 @@ def render_full_pallet_pdf(
                 "image_crop_count": ordered_image_crop_count,
                 "rendered_count": slots_drawn,
                 "binding_mode": "metadata_i_to_images_pdf_pixmap_i",
-                "first_5_metadata_preview": metadata_order_preview[:5],
+                "metadata_order_preview": [
+                    {
+                        "index": int(slot.get("index")),
+                        "row": int(slot.get("row")) if slot.get("row") is not None else None,
+                        "col": int(slot.get("col")) if slot.get("col") is not None else None,
+                        "last5": slot.get("last5"),
+                        "resolved_upc12": slot.get("resolved_upc12"),
+                        "resolved_name": slot.get("resolved_name"),
+                        "resolved_cpp": slot.get("resolved_cpp"),
+                        "resolution_method": slot.get("resolution_method"),
+                    }
+                    for slot in metadata_slots[:8]
+                ],
                 "unresolved_slots": [
                     {
                         "index": int(slot.get("index")),
+                        "row": int(slot.get("row")) if slot.get("row") is not None else None,
+                        "col": int(slot.get("col")) if slot.get("col") is not None else None,
                         "raw_label_text": slot.get("raw_label_text"),
                         "last5": slot.get("last5"),
                         "unresolved_reason": slot.get("unresolved_reason"),
