@@ -379,6 +379,7 @@ def render_full_pallet_pdf(
     middle_grid_summaries = []
 
     PAGE_W, BASE_PAGE_H = 792.0, 1224.0  # 11x17 portrait template; pages may grow taller
+    LOWER_LAYOUT_EXTRA_H = 72.0
     MARGIN = 24.0
     HEADER_H = 56.0
     FOOTER_HEIGHT = 36.0
@@ -1389,7 +1390,7 @@ def render_full_pallet_pdf(
         iy = y + pad
         iw = max(1.0, w - 2 * pad)
         ih = max(1.0, h - 2 * pad)
-        text_h = max(18.0, min(24.0, ih * 0.24)) if section == "bonus" else max(20.0, min(28.0, ih * 0.30))
+        text_h = max(24.0, min(32.0, ih * 0.28)) if section == "bonus" else max(28.0, min(38.0, ih * 0.34))
         text_gap = 2.0 if section == "bonus" else 3.0
         img_h = max(8.0, ih - text_h - text_gap)
         img_x = ix
@@ -1539,8 +1540,8 @@ def render_full_pallet_pdf(
 
         cpp_str = f"CPP: {cpp}" if cpp is not None else "CPP:"
         upc = (upc12 or "").strip()
-        cpp_h = max(8.0, text_h * 0.30)
-        name_h = max(8.0, text_h * 0.28)
+        cpp_h = max(8.0, text_h * 0.27)
+        name_h = max(12.0, text_h * 0.43)
         upc_h = max(8.0, text_h - cpp_h - name_h)
 
         upc_fs = _fit_font(upc, BODY_BOLD_FONT, iw, upc_h, 5.5, 12.0, step=0.25)
@@ -1549,12 +1550,43 @@ def render_full_pallet_pdf(
         tw = pdfmetrics.stringWidth(upc, BODY_BOLD_FONT, upc_fs)
         c.drawString(ix + (iw - tw) / 2, iy + cpp_h + name_h + (upc_h - upc_fs) / 2, upc)
 
-        name_fs = _fit_font((name or "").upper(), BODY_FONT, iw, name_h, 5.3, 6.6, step=0.1)
-        nm = _fit_name_preserve_qualifiers((name or "").upper(), BODY_FONT, name_fs, iw)
+        name_fs = min(6.8, max(5.5, name_h / 2.35))
+        name_text = re.sub(r"\s+", " ", (name or "").upper()).strip()
+        words = name_text.split()
+        name_lines: List[str] = []
+        current = ""
+        for word in words:
+            trial = f"{current} {word}".strip()
+            if not current or pdfmetrics.stringWidth(trial, BODY_FONT, name_fs) <= iw:
+                current = trial
+            else:
+                name_lines.append(current)
+                current = word
+                if len(name_lines) == 1:
+                    break
+        if current:
+            name_lines.append(current)
+        if len(name_lines) > 1:
+            remaining = " ".join(words[len(name_lines[0].split()) :]).strip()
+            name_lines[1] = _ellipsis(remaining, BODY_FONT, name_fs, iw) if remaining else name_lines[1]
+        elif name_lines:
+            name_lines[0] = _fit_name_preserve_qualifiers(name_lines[0], BODY_FONT, name_fs, iw)
+        else:
+            name_lines = [""]
+        name_lines = name_lines[:2]
         c.setFillColorRGB(0.10, 0.10, 0.10)
         c.setFont(BODY_FONT, name_fs)
-        tw = pdfmetrics.stringWidth(nm, BODY_FONT, name_fs)
-        c.drawString(ix + (iw - tw) / 2, iy + cpp_h + (name_h - name_fs) / 2, nm)
+        if len(name_lines) == 1:
+            tw = pdfmetrics.stringWidth(name_lines[0], BODY_FONT, name_fs)
+            c.drawString(ix + (iw - tw) / 2, iy + cpp_h + (name_h - name_fs) / 2, name_lines[0])
+        else:
+            line_gap = 1.1
+            total_name_h = (2 * name_fs) + line_gap
+            first_y = iy + cpp_h + (name_h - total_name_h) / 2 + name_fs + line_gap
+            second_y = first_y - name_fs - line_gap
+            for line, line_y in [(name_lines[0], first_y), (name_lines[1], second_y)]:
+                tw = pdfmetrics.stringWidth(line, BODY_FONT, name_fs)
+                c.drawString(ix + (iw - tw) / 2, line_y, line)
 
         cpp_fs = _fit_font(cpp_str, BODY_BOLD_FONT, iw, cpp_h, 5.5, 10.5, step=0.25)
         c.setFillColorRGB(0.08, 0.08, 0.08)
@@ -1593,9 +1625,9 @@ def render_full_pallet_pdf(
                 "desired_card_w": 64.0,
                 "desired_gap": 6.0,
                 "row_gutter": 8.0,
-                "card_ratio": 1.10,   # h / w
-                "min_card_h": 56.0,
-                "max_card_h": 92.0,
+                "card_ratio": 1.26,   # h / w
+                "min_card_h": 72.0,
+                "max_card_h": 112.0,
                 "crop_zoom": 2.40,
                 "crop_inset": 0.018,
             }
@@ -1604,9 +1636,9 @@ def render_full_pallet_pdf(
             "desired_card_w": 78.0,
             "desired_gap": 5.0,
             "row_gutter": 8.0,
-            "card_ratio": 1.28,   # h / w
-            "min_card_h": 72.0,
-            "max_card_h": 112.0,
+            "card_ratio": 1.46,   # h / w
+            "min_card_h": 88.0,
+            "max_card_h": 132.0,
             "crop_zoom": 3.00,
             "crop_inset": 0.018,
         }
@@ -1924,9 +1956,9 @@ def render_full_pallet_pdf(
         intra_gap = 6.0
         inter_gap = 14.0
         row_gutter = 8.0
-        min_card_h = 56.0
-        max_card_h = 90.0
-        card_ratio = 1.10  # h / w
+        min_card_h = 76.0
+        max_card_h = 114.0
+        card_ratio = 1.32  # h / w
         crop_zoom = 2.40
         crop_inset = 0.018
 
@@ -1967,9 +1999,9 @@ def render_full_pallet_pdf(
         inter_gap = 14.0
         col_gap = 6.0
         row_gutter = 8.0
-        min_card_h = 56.0
-        max_card_h = 90.0
-        card_ratio = 1.10  # h / w
+        min_card_h = 76.0
+        max_card_h = 114.0
+        card_ratio = 1.32  # h / w
         crop_zoom = 2.40
         crop_inset = 0.018
 
@@ -5462,7 +5494,11 @@ def render_full_pallet_pdf(
                 + BUCKET_GAP
                 + products_block_h
             )
-            PAGE_H = max(BASE_PAGE_H, (2 * MARGIN) + HEADER_H + FOOTER_HEIGHT + required_content_h)
+            lower_layout_extra_h = LOWER_LAYOUT_EXTRA_H if products_block_h > 0 else 0.0
+            PAGE_H = max(
+                BASE_PAGE_H,
+                (2 * MARGIN) + HEADER_H + FOOTER_HEIGHT + required_content_h + lower_layout_extra_h,
+            )
 
             c.setPageSize((PAGE_W, PAGE_H))
 
