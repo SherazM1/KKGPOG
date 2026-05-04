@@ -21,6 +21,7 @@ from app.shared.constants import NAVY_RGB
 from app.shared.fonts import BODY_BOLD_FONT, BODY_FONT, TITLE_FONT
 from app.shared.image_utils import _hex_to_rgb, _try_load_logo, crop_image_cell, image_from_bytes
 from app.shared.matching import resolve_full_pallet
+from app.standard_display.extract import parse_label_cell_text
 from app.shared.models import (
     CellData,
     FullPalletMidBandSection,
@@ -363,6 +364,7 @@ def select_mid_band_cards_for_display(
 def render_full_pallet_pdf(
     pages: List[FullPalletPage],
     images_pdf_bytes: bytes,
+    labels_pdf_bytes: bytes,
     matrix_idx: Dict[str, List[MatrixRow]],
     title_prefix: str = "POG",
     ppt_cards: Optional[Dict[str, PptSideCards]] = None,
@@ -373,6 +375,7 @@ def render_full_pallet_pdf(
 ) -> bytes:
     buf = io.BytesIO()
     images_doc = fitz.open(stream=images_pdf_bytes, filetype="pdf")
+    labels_doc = fitz.open(stream=labels_pdf_bytes, filetype="pdf")
     middle_grid_summaries = []
 
     PAGE_W, BASE_PAGE_H = 792.0, 1224.0  # 11x17 portrait template; pages may grow taller
@@ -439,6 +442,217 @@ def render_full_pallet_pdf(
             "upc12_candidates": upc_candidates,
             "last5_candidates": last5_candidates,
             "digit_tokens": digit_tokens,
+        }
+
+    def _is_rejected_label_text(text: Optional[str]) -> bool:
+        if not text:
+            return False
+        normalized = re.sub(r"[^A-Z0-9 ]+", " ", str(text).upper())
+        reject_terms = {
+            "GCI",
+            "LID",
+            "BOX",
+            "WRAP",
+            "ENV",
+            "ENVELOPE",
+            "SHAPED",
+            "PRESENT SLIDER",
+            "PK CHAR",
+            "2PK",
+            "3PK",
+            "HOLDER",
+            "MESSAGE",
+            "FRAME SIGN",
+            "OCTAGON",
+            "TOP OCTAGON",
+            "PACKAGING",
+        }
+        return any(term in normalized for term in reject_terms)
+
+    def _words_from_label_bbox(label_page: fitz.Page, bbox: Tuple[float, float, float, float]) -> List[Tuple[float, float, str]]:
+        words = label_page.get_text("words") or []
+        selected: List[Tuple[float, float, str]] = []
+        x0, y0, x1, y1 = bbox
+        for word in words:
+            if len(word) < 5:
+                continue
+            try:
+                wx0, wy0, wx1, wy1 = float(word[0]), float(word[1]), float(word[2]), float(word[3])
+            except Exception:
+                continue
+            text = str(word[4] or "").strip()
+            if not text:
+                continue
+            cx = (wx0 + wx1) / 2.0
+            cy = (wy0 + wy1) / 2.0
+            if cx >= x0 and cx <= x1 and cy >= y0 and cy <= y1:
+                selected.append((cy, cx, text))
+        selected.sort(key=lambda item: (item[0], item[1]))
+        return selected
+
+    def _extract_text_from_label_bbox(
+        label_page: fitz.Page,
+        bbox: Tuple[float, float, float, float],
+        page_width: float,
+        page_height: float,
+    ) -> Tuple[str, Tuple[float, float, float, float], bool]:
+        raw_words = _words_from_label_bbox(label_page, bbox)
+        raw_text = " ".join([w[2] for w in raw_words]).strip()
+        if raw_text:
+            return raw_text, bbox, False
+
+        pad_x = min(4.0, max(0.0, (bbox[2] - bbox[0]) * 0.03))
+        pad_y = min(4.0, max(0.0, (bbox[3] - bbox[1]) * 0.03))
+        expanded_bbox = (
+            max(0.0, bbox[0] - pad_x),
+            max(0.0, bbox[1] - pad_y),
+            min(page_width, bbox[2] + pad_x),
+            min(page_height, bbox[3] + pad_y),
+        )
+        if expanded_bbox == bbox:
+            return raw_text, bbox, False
+
+        expanded_words = _words_from_label_bbox(label_page, expanded_bbox)
+        expanded_text = " ".join([w[2] for w in expanded_words]).strip()
+        return expanded_text, expanded_bbox, bool(expanded_text)
+
+    def _build_middle_grid_metadata_from_label_bboxes_text_only(
+        p: FullPalletPage,
+        matrix_idx: Dict[str, List[MatrixRow]],
+        label_page: Optional[fitz.Page],
+        expected_slot_bboxes: List[Tuple[float, float, float, float]],
+    ) -> Tuple[List[dict], Dict[str, object]]:
+        metadata_slots: List[dict] = []
+        unresolved_slots: List[dict] = []
+        metadata_source = "labels_pdf_bbox_text_only"
+        page_width = float(label_page.rect.width) if label_page is not None else 0.0
+        page_height = float(label_page.rect.height) if label_page is not None else 0.0
+
+        def _candidate_last5s(text: str) -> List[str]:
+            seen: set = set()
+            candidates: List[str] = []
+            for token in re.findall(r"\d{5,14}", text):
+                digits = re.sub(r"[^0-9]", "", token)
+                last5 = _to_last5(digits)
+                if last5 and last5 not in seen:
+                    candidates.append(last5)
+                    seen.add(last5)
+            return candidates
+
+        for index in range(24):
+            row = index // 8
+            col = index % 8
+            slot_id = f"{p.side_letter}-MB-R{row + 1}-S{col + 1}"
+            group_name = "left" if col <= 1 else "center" if col <= 5 else "right"
+            bbox = expected_slot_bboxes[index] if index < len(expected_slot_bboxes) else (0.0, 0.0, 0.0, 0.0)
+            raw_text, bbox_used, bbox_expanded = ("", bbox, False)
+            if label_page is not None:
+                raw_text, bbox_used, bbox_expanded = _extract_text_from_label_bbox(label_page, bbox, page_width, page_height)
+
+            parsed_name, parsed_last5, qty = parse_label_cell_text(raw_text)
+            last5 = _to_last5(parsed_last5 or raw_text)
+            digit_tokens = re.findall(r"\d{5,14}", raw_text)
+            last5_candidates = _candidate_last5s(raw_text)
+            last5_candidates_tried: List[str] = []
+            match: Optional[MatrixRow] = None
+            resolution_method = None
+            rejected_reason = None
+            unresolved_reason = None
+            recovery_attempted = bbox_expanded
+            recovery_source = "same_slot_bbox_expansion" if bbox_expanded else None
+
+            if raw_text and _is_rejected_label_text(raw_text):
+                rejected_reason = "rejected_packaging_text"
+                unresolved_reason = "rejected_packaging_text"
+            else:
+                if last5:
+                    last5_candidates_tried.append(last5)
+                    resolution_method = "labels_exact_last5"
+                    match = resolve_full_pallet(last5, raw_text, matrix_idx)
+                    if match is None:
+                        resolution_method = None
+                for last5_hint in last5_candidates:
+                    if match is not None or last5_hint in last5_candidates_tried:
+                        continue
+                    last5_candidates_tried.append(last5_hint)
+                    match = resolve_full_pallet(last5_hint, raw_text, matrix_idx)
+                    if match is not None:
+                        resolution_method = "labels_hint_last5"
+                        break
+
+            if match is not None:
+                if _is_rejected_label_text(match.display_name or "") or (match.cpp_qty is not None and match.cpp_qty == 0):
+                    rejected_reason = "rejected_matrix_match"
+                    match = None
+                    resolution_method = None
+                    unresolved_reason = "rejected_matrix_match"
+                else:
+                    unresolved_reason = None
+            else:
+                if rejected_reason is None:
+                    unresolved_reason = "matrix_unresolved" if raw_text else "empty_slot_bbox"
+                    resolution_method = "unresolved"
+
+            resolved_upc12 = match.upc12 if match else None
+            resolved_name = match.display_name if match else ""
+            resolved_cpp = match.cpp_qty if match else None
+
+            if not resolved_upc12 and not resolved_name and (match is not None):
+                resolved_upc12 = match.upc12
+                resolved_name = match.display_name
+                resolved_cpp = match.cpp_qty
+
+            slot_metadata = {
+                "side": p.side_letter,
+                "index": index,
+                "row": row,
+                "col": col,
+                "group_name": group_name,
+                "slot_id": slot_id,
+                "label_bbox_used": list(bbox_used),
+                "bbox_expansion_used": bbox_expanded,
+                "raw_label_text": raw_text,
+                "parsed_name": parsed_name,
+                "last5": last5 or "",
+                "digit_tokens_found": digit_tokens,
+                "last5_candidates_tried": last5_candidates_tried,
+                "matrix_match_found": bool(match),
+                "recovery_attempted": recovery_attempted,
+                "recovery_source": recovery_source,
+                "rejected_reason": rejected_reason,
+                "resolved_upc12": resolved_upc12,
+                "resolved_name": resolved_name,
+                "resolved_cpp": resolved_cpp,
+                "resolution_method": resolution_method,
+                "unresolved_reason": unresolved_reason,
+            }
+            metadata_slots.append(slot_metadata)
+            if unresolved_reason is not None:
+                unresolved_slots.append(
+                    {
+                        "side": p.side_letter,
+                        "index": index,
+                        "row": row,
+                        "col": col,
+                        "slot_id": slot_id,
+                        "label_bbox_used": list(bbox_used),
+                        "bbox_expansion_used": bbox_expanded,
+                        "raw_text_from_bbox": raw_text,
+                        "digit_tokens_found": digit_tokens,
+                        "last5_candidates_tried": last5_candidates_tried,
+                        "rejected_reason": rejected_reason,
+                        "unresolved_reason": unresolved_reason,
+                    }
+                )
+
+        resolved_count = len([m for m in metadata_slots if m.get("resolved_upc12") or m.get("resolved_name")])
+        unresolved_count = len(metadata_slots) - resolved_count
+        return metadata_slots, {
+            "metadata_source": metadata_source,
+            "metadata_count": len(metadata_slots),
+            "resolved_count": resolved_count,
+            "unresolved_count": unresolved_count,
+            "unresolved_slots": unresolved_slots,
         }
 
     def _resolve_mid_band_slot_no_position(slot: FullPalletMidBandSlot) -> Tuple[Optional[MatrixRow], Dict[str, object]]:
@@ -3736,6 +3950,7 @@ def render_full_pallet_pdf(
         unresolved_bucket: List[str],
         missing_image_slots: List[str],
         content_x0: float,
+        label_page: Optional[fitz.Page] = None,
         unresolved_debug_rows: Optional[List[dict]] = None,
         position_fallback_debug_rows: Optional[List[dict]] = None,
         crop_debug_rows: Optional[List[dict]] = None,
@@ -3784,14 +3999,12 @@ def render_full_pallet_pdf(
                     )
                 )
         all_slots = all_slots[:image_only_slot_count]
-        metadata_slots, metadata_summary = _build_middle_grid_metadata_slots_from_labels(
-            p,
-            section,
-            matrix_idx,
-        )
+        # Metadata will be built after pixmap_flat_cells is finalized using bbox-text-only helper
+        metadata_slots: List[dict] = []
+        metadata_summary: Dict[str, object] = {}
         if selection_debug is not None:
             selection_debug.update(selection.debug_summary)
-            selection_debug["active_middle_band_path"] = "cell_middle_grid_above_bonus"
+            selection_debug["active_middle_band_path"] = "token_first_mid_band_bbox_text"
             selection_debug["raw_middle_candidate_count"] = raw_middle_candidate_count
             selection_debug["raw_candidate_count"] = raw_middle_candidate_count
             selection_debug["cleaned_middle_candidate_count"] = len(cleaned_candidate_records)
@@ -3903,6 +4116,57 @@ def render_full_pallet_pdf(
                 cell_id_prefix=f"{p.side_letter}_MID_FIXED_FALLBACK",
             )
      
+        # Build expected label bboxes from the finalized pixmap_flat_cells (24 cells)
+        expected_label_bboxes = [
+            tuple(cell["bbox"])
+            for cell in pixmap_flat_cells[:24]
+            if cell.get("bbox") is not None
+        ]
+        
+        # Call bbox-text-only helper to build metadata from labels.pdf
+        # This is the single source of truth for middle-grid text metadata (UPC, name, CPP)
+        if label_page is not None:
+            metadata_slots, metadata_summary = _build_middle_grid_metadata_from_label_bboxes_text_only(
+                p,
+                matrix_idx,
+                label_page,
+                expected_label_bboxes,
+            )
+        else:
+            # Fallback: empty metadata if no label page
+            metadata_slots = [
+                {
+                    "side": p.side_letter,
+                    "index": i,
+                    "row": i // 8,
+                    "col": i % 8,
+                    "group_name": "left" if (i % 8) <= 1 else "center" if (i % 8) <= 5 else "right",
+                    "slot_id": f"{p.side_letter}-MB-R{i // 8 + 1}-S{i % 8 + 1}",
+                    "label_bbox_used": list(expected_label_bboxes[i]) if i < len(expected_label_bboxes) else [0.0, 0.0, 0.0, 0.0],
+                    "bbox_expansion_used": False,
+                    "raw_label_text": "",
+                    "parsed_name": "",
+                    "last5": "",
+                    "digit_tokens_found": [],
+                    "last5_candidates_tried": [],
+                    "matrix_match_found": False,
+                    "recovery_attempted": False,
+                    "recovery_source": None,
+                    "rejected_reason": None,
+                    "resolved_upc12": None,
+                    "resolved_name": "",
+                    "resolved_cpp": None,
+                    "resolution_method": "no_label_page",
+                    "unresolved_reason": "no_label_page",
+                }
+                for i in range(24)
+            ]
+            metadata_summary = {
+                "metadata_source": "no_label_page",
+                "metadata_count": 24,
+                "resolved_count": 0,
+                "unresolved_count": 24,
+            }
         
         if detection_debug is not None:
             detection_debug["side"] = p.side_letter
@@ -5034,6 +5298,11 @@ def render_full_pallet_pdf(
                 else PptSideCards(pdata.side_letter, [], [])
             )
             side_holders = gift_holders.get(pdata.side_letter, []) if gift_holders else []
+            label_page: Optional[fitz.Page] = None
+            try:
+                label_page = labels_doc[pdata.page_index]
+            except Exception:
+                label_page = None
 
             product_map: Dict[Tuple[int, int], Tuple[Optional[MatrixRow], CellData]] = {}
             for cell in pdata.cells:
@@ -5259,6 +5528,7 @@ def render_full_pallet_pdf(
                     unresolved_main,
                     missing_main_images,
                     cx0,
+                    label_page=label_page,
                     unresolved_debug_rows=unresolved_mid_slot_debug,
                     position_fallback_debug_rows=position_fallback_mid_slot_debug,
                     crop_debug_rows=token_first_crop_debug_rows,
@@ -5511,3 +5781,4 @@ def render_full_pallet_pdf(
         return buf.getvalue()
     finally:
         images_doc.close()
+        labels_doc.close()

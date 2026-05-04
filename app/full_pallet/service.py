@@ -55,6 +55,7 @@ def build_full_pallet_rows(
 def render_full_pallet_display_pdf(
     fp_pages: List[FullPalletPage],
     images_bytes: bytes,
+    labels_bytes: bytes,
     fp_matrix_idx: Dict[str, List[MatrixRow]],
     title_prefix: str,
     ppt_cards: Dict[str, PptSideCards],
@@ -66,6 +67,7 @@ def render_full_pallet_display_pdf(
     return render_full_pallet_pdf(
         fp_pages,
         images_bytes,
+        labels_bytes,
         fp_matrix_idx,
         title_prefix.strip() or "POG",
         ppt_cards=ppt_cards,
@@ -73,7 +75,7 @@ def render_full_pallet_display_pdf(
         ppt_cpp_global=ppt_cpp_global,
         debug=debug,
         debug_overlay=debug_overlay,
-    )
+)
 
 
 def run_full_pallet(
@@ -100,6 +102,7 @@ def run_full_pallet(
     pdf = render_full_pallet_display_pdf(
         fp_pages,
         images_bytes,
+        labels_bytes,
         fp_matrix_idx,
         title_prefix,
         ppt_cards,
