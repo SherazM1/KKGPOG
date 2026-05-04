@@ -444,11 +444,12 @@ def render_full_pallet_pdf(
             "digit_tokens": digit_tokens,
         }
 
-    def _is_rejected_label_text(text: Optional[str]) -> bool:
+    def _contains_strong_packaging_text(text: Optional[str]) -> bool:
         if not text:
             return False
         normalized = re.sub(r"[^A-Z0-9 ]+", " ", str(text).upper())
-        reject_terms = {
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        reject_terms = [
             "GCI",
             "LID",
             "BOX",
@@ -466,8 +467,21 @@ def render_full_pallet_pdf(
             "OCTAGON",
             "TOP OCTAGON",
             "PACKAGING",
-        }
-        return any(term in normalized for term in reject_terms)
+        ]
+        return any(re.search(rf"(?<![A-Z0-9]){re.escape(term)}(?![A-Z0-9])", normalized) for term in reject_terms)
+
+    def _is_rejected_label_text(text: Optional[str]) -> bool:
+        return _contains_strong_packaging_text(text)
+
+    def _reject_matrix_match_for_middle_grid(match: Optional[MatrixRow]) -> Tuple[bool, Optional[str]]:
+        if match is None:
+            return False, None
+        if match.cpp_qty is not None and match.cpp_qty == 0:
+            return True, "rejected_cpp_zero"
+        resolved_text = " ".join([match.display_name or "", match.upc12 or ""])
+        if _contains_strong_packaging_text(resolved_text):
+            return True, "rejected_matrix_packaging_text"
+        return False, None
 
     def _words_from_label_bbox(label_page: fitz.Page, bbox: Tuple[float, float, float, float]) -> List[Tuple[float, float, str]]:
         words = label_page.get_text("words") or []
@@ -558,38 +572,39 @@ def render_full_pallet_pdf(
             resolution_method = None
             rejected_reason = None
             unresolved_reason = None
+            matrix_match_found = False
             recovery_attempted = bbox_expanded
             recovery_source = "same_slot_bbox_expansion" if bbox_expanded else None
 
-            if raw_text and _is_rejected_label_text(raw_text):
-                rejected_reason = "rejected_packaging_text"
-                unresolved_reason = "rejected_packaging_text"
-            else:
-                if last5:
-                    last5_candidates_tried.append(last5)
-                    resolution_method = "labels_exact_last5"
-                    match = resolve_full_pallet(last5, raw_text, matrix_idx)
-                    if match is None:
-                        resolution_method = None
-                for last5_hint in last5_candidates:
-                    if match is not None or last5_hint in last5_candidates_tried:
-                        continue
-                    last5_candidates_tried.append(last5_hint)
-                    match = resolve_full_pallet(last5_hint, raw_text, matrix_idx)
-                    if match is not None:
-                        resolution_method = "labels_hint_last5"
-                        break
+            if last5:
+                last5_candidates_tried.append(last5)
+                resolution_method = "labels_exact_last5"
+                match = resolve_full_pallet(last5, raw_text, matrix_idx)
+                if match is None:
+                    resolution_method = None
+            for last5_hint in last5_candidates:
+                if match is not None or last5_hint in last5_candidates_tried:
+                    continue
+                last5_candidates_tried.append(last5_hint)
+                match = resolve_full_pallet(last5_hint, raw_text, matrix_idx)
+                if match is not None:
+                    resolution_method = "labels_hint_last5"
+                    break
 
             if match is not None:
-                if _is_rejected_label_text(match.display_name or "") or (match.cpp_qty is not None and match.cpp_qty == 0):
-                    rejected_reason = "rejected_matrix_match"
+                matrix_match_found = True
+                rejected, rejected_reason = _reject_matrix_match_for_middle_grid(match)
+                if rejected:
                     match = None
                     resolution_method = None
-                    unresolved_reason = "rejected_matrix_match"
+                    unresolved_reason = rejected_reason
                 else:
                     unresolved_reason = None
             else:
-                if rejected_reason is None:
+                if raw_text and _contains_strong_packaging_text(raw_text):
+                    rejected_reason = "rejected_packaging_text"
+                    unresolved_reason = "rejected_packaging_text"
+                else:
                     unresolved_reason = "matrix_unresolved" if raw_text else "empty_slot_bbox"
                     resolution_method = "unresolved"
 
@@ -616,7 +631,7 @@ def render_full_pallet_pdf(
                 "last5": last5 or "",
                 "digit_tokens_found": digit_tokens,
                 "last5_candidates_tried": last5_candidates_tried,
-                "matrix_match_found": bool(match),
+                "matrix_match_found": matrix_match_found,
                 "recovery_attempted": recovery_attempted,
                 "recovery_source": recovery_source,
                 "rejected_reason": rejected_reason,
@@ -638,8 +653,11 @@ def render_full_pallet_pdf(
                         "label_bbox_used": list(bbox_used),
                         "bbox_expansion_used": bbox_expanded,
                         "raw_text_from_bbox": raw_text,
+                        "raw_label_text": raw_text,
+                        "last5": last5 or "",
                         "digit_tokens_found": digit_tokens,
                         "last5_candidates_tried": last5_candidates_tried,
+                        "matrix_match_found": matrix_match_found,
                         "rejected_reason": rejected_reason,
                         "unresolved_reason": unresolved_reason,
                     }
