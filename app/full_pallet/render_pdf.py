@@ -2886,6 +2886,38 @@ def render_full_pallet_pdf(
         section: Optional[FullPalletMidBandSection],
         matrix_idx: Dict[str, List[MatrixRow]],
     ) -> Tuple[List[dict], Dict[str, object]]:
+        # FULL_PALLET middle-grid rule:
+        # images.pdf is the artwork source only.
+        # labels.pdf is a TEXT-ONLY metadata source for the 24-slot middle grid.
+        # Never use labels.pdf crops as output artwork.
+        # Bind image[i] to metadata[i] by fixed slot index.
+        def _is_rejected_label_text(text: Optional[str]) -> bool:
+            if not text:
+                return False
+            normalized = re.sub(r"[^A-Z0-9 ]+", " ", str(text).upper())
+            reject_terms = {
+                "GCI",
+                "LID",
+                "BOX",
+                "WRAP",
+                "ENV",
+                "ENVELOPE",
+                "SHAPED",
+                "PRESENT SLIDER",
+                "PK CHAR",
+                "2PK",
+                "3PK",
+                "HOLDER",
+                "MESSAGE",
+                "FRAME SIGN",
+                "OCTAGON",
+                "TOP OCTAGON",
+            }
+            for term in reject_terms:
+                if term in normalized:
+                    return True
+            return False
+
         def _resolve_slot(slot: FullPalletMidBandSlot) -> Tuple[Optional[MatrixRow], Dict[str, object]]:
             raw_label = (slot.parsed_name or slot.raw_label_text or "").strip()
             extracted_last5 = _to_last5(slot.last5)
@@ -2921,18 +2953,19 @@ def render_full_pallet_pdf(
             trace["last5_candidates_tried"] = tried_last5
             return None, trace
 
-        metadata_slots: List[dict] = []
-        metadata_source = "labels_pdf_parsed_section"
-
         def _build_recovery_candidate_map() -> Dict[Tuple[int, int], dict]:
             candidate_map: Dict[Tuple[int, int], dict] = {}
             cleaned_candidate_records, _, _, _ = _build_middle_grid_cell_candidate_records(p)
-            for candidate in cleaned_candidate_records[:24]:
+            for candidate in cleaned_candidate_records:
                 row_index = int(candidate.get("row_index", 0))
                 slot_in_row = int(candidate.get("slot_in_row", 0))
                 key = (row_index, slot_in_row)
+                recovered_slot = candidate.get("slot")
+                if recovered_slot is None:
+                    continue
                 if key not in candidate_map:
-                    candidate_map[key] = candidate
+                    if not _is_rejected_label_text(recovered_slot.raw_label_text or recovered_slot.parsed_name):
+                        candidate_map[key] = candidate
             return candidate_map
 
         expected_slots = [
@@ -2958,13 +2991,16 @@ def render_full_pallet_pdf(
             metadata_source = "labels_pdf_parsed_section_partial"
         elif not parsed_slots and recovery_candidates:
             metadata_source = "labels_pdf_recovered_from_cells"
+        else:
+            metadata_source = "labels_pdf_parsed_section"
 
+        metadata_slots: List[dict] = []
         for expected in expected_slots:
             index = expected["index"]
             row = expected["row"]
             col = expected["col"]
             slot = parsed_slots.get(index)
-            if slot is not None:
+            if slot is not None and not _is_rejected_label_text(slot.raw_label_text or slot.parsed_name):
                 match, trace = _resolve_slot(slot)
                 metadata_slots.append(
                     {
@@ -2972,6 +3008,7 @@ def render_full_pallet_pdf(
                         "index": index,
                         "row": int(slot.row_index),
                         "col": int(slot.slot_in_row),
+                        "group_name": slot.block_name,
                         "slot_id": slot.slot_id,
                         "raw_label_text": slot.raw_label_text or "",
                         "parsed_name": slot.parsed_name or "",
@@ -2996,35 +3033,36 @@ def render_full_pallet_pdf(
             recovery_candidate = recovery_candidates.get((row, col))
             if recovery_candidate is not None:
                 recovered_slot = recovery_candidate.get("slot")
-                match = recovery_candidate.get("resolved_match")
-                trace = recovery_candidate.get("resolve_trace", {}) or {}
-                hints = _extract_mid_slot_label_hints(recovered_slot)
-                metadata_slots.append(
-                    {
-                        "side": p.side_letter,
-                        "index": index,
-                        "row": row,
-                        "col": col,
-                        "slot_id": recovered_slot.slot_id,
-                        "raw_label_text": recovered_slot.raw_label_text or "",
-                        "parsed_name": recovered_slot.parsed_name or "",
-                        "last5": _to_last5(recovered_slot.last5),
-                        "accepted_words": recovered_slot.accepted_words or [],
-                        "digit_tokens_found": hints.get("digit_tokens", []),
-                        "last5_candidates_tried": trace.get("last5_candidates_tried", []) or [],
-                        "matrix_match_found": bool(match),
-                        "recovery_attempted": True,
-                        "recovery_source": "cell_candidate_record",
-                        "recovered_raw_label_text": recovered_slot.raw_label_text or "",
-                        "recovered_last5_candidates": hints.get("last5_candidates", []),
-                        "resolved_upc12": match.upc12 if match else None,
-                        "resolved_name": match.display_name if match else recovered_slot.parsed_name or recovered_slot.raw_label_text or "",
-                        "resolved_cpp": match.cpp_qty if match else None,
-                        "resolution_method": trace.get("fallback_path"),
-                        "unresolved_reason": None if match else trace.get("fallback_path", "unresolved"),
-                    }
-                )
-                continue
+                if recovered_slot is not None:
+                    match, trace = _resolve_slot(recovered_slot)
+                    hints = _extract_mid_slot_label_hints(recovered_slot)
+                    metadata_slots.append(
+                        {
+                            "side": p.side_letter,
+                            "index": index,
+                            "row": row,
+                            "col": col,
+                            "group_name": recovered_slot.block_name,
+                            "slot_id": recovered_slot.slot_id,
+                            "raw_label_text": recovered_slot.raw_label_text or "",
+                            "parsed_name": recovered_slot.parsed_name or "",
+                            "last5": _to_last5(recovered_slot.last5),
+                            "accepted_words": recovered_slot.accepted_words or [],
+                            "digit_tokens_found": hints.get("digit_tokens", []),
+                            "last5_candidates_tried": trace.get("last5_candidates_tried", []),
+                            "matrix_match_found": bool(match),
+                            "recovery_attempted": True,
+                            "recovery_source": "cell_candidate_record",
+                            "recovered_raw_label_text": recovered_slot.raw_label_text or "",
+                            "recovered_last5_candidates": hints.get("last5_candidates", []),
+                            "resolved_upc12": match.upc12 if match else None,
+                            "resolved_name": match.display_name if match else recovered_slot.parsed_name or recovered_slot.raw_label_text or "",
+                            "resolved_cpp": match.cpp_qty if match else None,
+                            "resolution_method": trace.get("fallback_path"),
+                            "unresolved_reason": None if match else trace.get("fallback_path", "unresolved"),
+                        }
+                    )
+                    continue
 
             metadata_slots.append(
                 {
@@ -3032,6 +3070,7 @@ def render_full_pallet_pdf(
                     "index": index,
                     "row": row,
                     "col": col,
+                    "group_name": "left" if col <= 1 else "center" if col <= 5 else "right",
                     "slot_id": expected["slot_id"],
                     "raw_label_text": "",
                     "parsed_name": "",
@@ -3040,8 +3079,8 @@ def render_full_pallet_pdf(
                     "digit_tokens_found": [],
                     "last5_candidates_tried": [],
                     "matrix_match_found": False,
-                    "recovery_attempted": bool(recovery_candidates),
-                    "recovery_source": "cell_candidate_record" if recovery_candidates else None,
+                    "recovery_attempted": False,
+                    "recovery_source": None,
                     "recovered_raw_label_text": None,
                     "recovered_last5_candidates": [],
                     "resolved_upc12": None,
