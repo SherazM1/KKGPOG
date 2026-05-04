@@ -542,16 +542,88 @@ def render_full_pallet_pdf(
         page_width = float(label_page.rect.width) if label_page is not None else 0.0
         page_height = float(label_page.rect.height) if label_page is not None else 0.0
 
-        def _candidate_last5s(text: str) -> List[str]:
+        def _price_aware_identity_token_info(text: str) -> Tuple[List[str], List[str]]:
+            if not text:
+                return [], []
+            cleaned = str(text)
+            rejected_price_tokens: List[str] = []
+
+            def _mask(match: re.Match) -> str:
+                token = match.group(0)
+                rejected_price_tokens.append(re.sub(r"\s+", "", token))
+                return " " * len(token)
+
+            price_or_range_patterns = [
+                r"\$\s*\d+\s*-\s*\$?\s*\d+(?:\.\d{2})?",
+                r"\b\d+\s*-\s*\d+\b",
+                r"\$\s*\d+(?:\.\d{2})?",
+                r"\b\d+\.\d{2}\b",
+            ]
+            for pattern in price_or_range_patterns:
+                cleaned = re.sub(pattern, _mask, cleaned)
+
+            seen: set = set()
+            identity_tokens: List[str] = []
+            for token in re.findall(r"\b\d{5,14}\b", cleaned):
+                digits = re.sub(r"[^0-9]", "", token)
+                if digits and digits not in seen:
+                    identity_tokens.append(digits)
+                    seen.add(digits)
+            return identity_tokens, rejected_price_tokens
+
+        def _candidate_last5s(identity_tokens: List[str]) -> List[str]:
             seen: set = set()
             candidates: List[str] = []
-            for token in re.findall(r"\d{5,14}", text):
+            for token in identity_tokens:
                 digits = re.sub(r"[^0-9]", "", token)
                 last5 = _to_last5(digits)
                 if last5 and last5 not in seen:
                     candidates.append(last5)
                     seen.add(last5)
             return candidates
+
+        def _clean_label_text_for_middle_grid_name_fallback(text: str) -> str:
+            cleaned = str(text or "")
+            for pattern in [
+                r"\$\s*\d+\s*-\s*\$?\s*\d+(?:\.\d{2})?",
+                r"\b\d+\s*-\s*\d+\b",
+                r"\$\s*\d+(?:\.\d{2})?",
+                r"\b\d+\.\d{2}\b",
+            ]:
+                cleaned = re.sub(pattern, " ", cleaned)
+            return re.sub(r"\s+", " ", cleaned).strip()
+
+        def _resolve_middle_grid_by_name_fallback(raw_text: str, parsed_name: str) -> Optional[MatrixRow]:
+            if not raw_text or _contains_strong_packaging_text(raw_text):
+                return None
+            target_text = _clean_label_text_for_middle_grid_name_fallback(parsed_name or raw_text)
+            target = _norm_name(target_text)
+            if not target:
+                return None
+
+            seen_upc: set = set()
+            ranked: List[Tuple[float, MatrixRow]] = []
+            for rows in matrix_idx.values():
+                for row in rows:
+                    if row.upc12 in seen_upc:
+                        continue
+                    seen_upc.add(row.upc12)
+                    rejected, _ = _reject_matrix_match_for_middle_grid(row)
+                    if rejected:
+                        continue
+                    if row.cpp_qty is None or row.cpp_qty <= 0:
+                        continue
+                    ratio = difflib.SequenceMatcher(None, target, row.norm_name or _norm_name(row.display_name)).ratio()
+                    if ratio >= 0.72:
+                        ranked.append((ratio, row))
+
+            if not ranked:
+                return None
+            ranked.sort(key=lambda item: item[0], reverse=True)
+            best_ratio, best_row = ranked[0]
+            if len(ranked) > 1 and ranked[1][0] >= best_ratio - 0.04 and ranked[1][1].upc12 != best_row.upc12:
+                return None
+            return best_row
 
         for index in range(24):
             row = index // 8
@@ -564,9 +636,14 @@ def render_full_pallet_pdf(
                 raw_text, bbox_used, bbox_expanded = _extract_text_from_label_bbox(label_page, bbox, page_width, page_height)
 
             parsed_name, parsed_last5, qty = parse_label_cell_text(raw_text)
-            last5 = _to_last5(parsed_last5 or raw_text)
-            digit_tokens = re.findall(r"\d{5,14}", raw_text)
-            last5_candidates = _candidate_last5s(raw_text)
+            identity_digit_tokens, rejected_price_tokens = _price_aware_identity_token_info(raw_text)
+            last5_candidates = _candidate_last5s(identity_digit_tokens)
+            parsed_last5_clean = _to_last5(parsed_last5) if parsed_last5 else ""
+            if parsed_last5_clean and parsed_last5_clean in last5_candidates:
+                last5 = parsed_last5_clean
+            else:
+                last5 = last5_candidates[0] if last5_candidates else ""
+            digit_tokens = identity_digit_tokens
             last5_candidates_tried: List[str] = []
             match: Optional[MatrixRow] = None
             resolution_method = None
@@ -591,6 +668,11 @@ def render_full_pallet_pdf(
                     resolution_method = "labels_hint_last5"
                     break
 
+            if match is None and raw_text and not _contains_strong_packaging_text(raw_text):
+                match = _resolve_middle_grid_by_name_fallback(raw_text, parsed_name)
+                if match is not None:
+                    resolution_method = "labels_name_fallback"
+
             if match is not None:
                 matrix_match_found = True
                 rejected, rejected_reason = _reject_matrix_match_for_middle_grid(match)
@@ -605,7 +687,12 @@ def render_full_pallet_pdf(
                     rejected_reason = "rejected_packaging_text"
                     unresolved_reason = "rejected_packaging_text"
                 else:
-                    unresolved_reason = "matrix_unresolved" if raw_text else "empty_slot_bbox"
+                    if raw_text and last5_candidates_tried:
+                        unresolved_reason = "matrix_unresolved"
+                    elif raw_text:
+                        unresolved_reason = "name_fallback_unresolved"
+                    else:
+                        unresolved_reason = "empty_slot_bbox"
                     resolution_method = "unresolved"
 
             resolved_upc12 = match.upc12 if match else None
@@ -630,6 +717,8 @@ def render_full_pallet_pdf(
                 "parsed_name": parsed_name,
                 "last5": last5 or "",
                 "digit_tokens_found": digit_tokens,
+                "identity_digit_tokens_found": identity_digit_tokens,
+                "rejected_price_tokens": rejected_price_tokens,
                 "last5_candidates_tried": last5_candidates_tried,
                 "matrix_match_found": matrix_match_found,
                 "recovery_attempted": recovery_attempted,
@@ -656,6 +745,8 @@ def render_full_pallet_pdf(
                         "raw_label_text": raw_text,
                         "last5": last5 or "",
                         "digit_tokens_found": digit_tokens,
+                        "identity_digit_tokens_found": identity_digit_tokens,
+                        "rejected_price_tokens": rejected_price_tokens,
                         "last5_candidates_tried": last5_candidates_tried,
                         "matrix_match_found": matrix_match_found,
                         "rejected_reason": rejected_reason,
