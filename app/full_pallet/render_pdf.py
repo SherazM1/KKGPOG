@@ -438,12 +438,16 @@ def render_full_pallet_pdf(
         return {
             "upc12_candidates": upc_candidates,
             "last5_candidates": last5_candidates,
+            "digit_tokens": digit_tokens,
         }
 
     def _resolve_mid_band_slot_no_position(slot: FullPalletMidBandSlot) -> Tuple[Optional[MatrixRow], Dict[str, object]]:
         label = (slot.parsed_name or slot.raw_label_text or "").strip()
         extracted_last5 = _to_last5(slot.last5)
         hints = _extract_mid_slot_label_hints(slot)
+        tried_last5: List[str] = []
+        if extracted_last5:
+            tried_last5.append(extracted_last5)
 
         if extracted_last5:
             primary = resolve_full_pallet(extracted_last5, label, matrix_idx)
@@ -453,6 +457,9 @@ def render_full_pallet_pdf(
                     "labels_last5": extracted_last5,
                     "label_hint_upc_candidates": hints["upc12_candidates"],
                     "label_hint_last5_candidates": hints["last5_candidates"],
+                    "digit_tokens_found": hints["digit_tokens"],
+                    "last5_candidates_tried": tried_last5,
+                    "matrix_match_found": True,
                 }
 
         for upc_hint in hints["upc12_candidates"]:
@@ -464,9 +471,15 @@ def render_full_pallet_pdf(
                     "labels_last5": extracted_last5,
                     "label_hint_upc_candidates": hints["upc12_candidates"],
                     "label_hint_last5_candidates": hints["last5_candidates"],
+                    "digit_tokens_found": hints["digit_tokens"],
+                    "last5_candidates_tried": tried_last5,
+                    "matrix_match_found": True,
                 }
 
         for last5_hint in hints["last5_candidates"]:
+            if last5_hint == extracted_last5:
+                continue
+            tried_last5.append(last5_hint)
             match = resolve_full_pallet(last5_hint, label, matrix_idx)
             if match is not None:
                 return match, {
@@ -474,9 +487,11 @@ def render_full_pallet_pdf(
                     "labels_last5": extracted_last5,
                     "label_hint_upc_candidates": hints["upc12_candidates"],
                     "label_hint_last5_candidates": hints["last5_candidates"],
+                    "digit_tokens_found": hints["digit_tokens"],
+                    "last5_candidates_tried": tried_last5,
+                    "matrix_match_found": True,
                 }
 
-        # Secondary recovery retained for compatibility: name-only best candidate.
         if label and all_matrix_rows:
             fallback = _best_row_for_label(all_matrix_rows, label)
             if fallback is not None:
@@ -487,6 +502,9 @@ def render_full_pallet_pdf(
                         "labels_last5": extracted_last5,
                         "label_hint_upc_candidates": hints["upc12_candidates"],
                         "label_hint_last5_candidates": hints["last5_candidates"],
+                        "digit_tokens_found": hints["digit_tokens"],
+                        "last5_candidates_tried": tried_last5,
+                        "matrix_match_found": True,
                     }
 
         return None, {
@@ -494,6 +512,9 @@ def render_full_pallet_pdf(
             "labels_last5": extracted_last5,
             "label_hint_upc_candidates": hints["upc12_candidates"],
             "label_hint_last5_candidates": hints["last5_candidates"],
+            "digit_tokens_found": hints["digit_tokens"],
+            "last5_candidates_tried": tried_last5,
+            "matrix_match_found": False,
         }
 
     def _build_mid_slot_position_lookup() -> Tuple[
@@ -2869,24 +2890,35 @@ def render_full_pallet_pdf(
             raw_label = (slot.parsed_name or slot.raw_label_text or "").strip()
             extracted_last5 = _to_last5(slot.last5)
             hints = _extract_mid_slot_label_hints(slot)
+            tried_last5: List[str] = []
+            if extracted_last5:
+                tried_last5.append(extracted_last5)
+
             trace = {
                 "labels_last5": extracted_last5,
                 "label_hint_upc_candidates": hints["upc12_candidates"],
                 "label_hint_last5_candidates": hints["last5_candidates"],
+                "digit_tokens_found": hints.get("digit_tokens", []),
+                "last5_candidates_tried": tried_last5,
+                "matrix_match_found": False,
             }
             if extracted_last5:
                 trace["fallback_path"] = "labels_exact_last5"
                 match = resolve_full_pallet(extracted_last5, raw_label, matrix_idx)
                 if match is not None:
+                    trace["matrix_match_found"] = True
                     return match, trace
             for last5_hint in hints["last5_candidates"]:
                 if last5_hint == extracted_last5:
                     continue
+                tried_last5.append(last5_hint)
                 match = resolve_full_pallet(last5_hint, raw_label, matrix_idx)
                 if match is not None:
                     trace["fallback_path"] = "labels_hint_last5"
+                    trace["matrix_match_found"] = True
                     return match, trace
             trace["fallback_path"] = "unresolved"
+            trace["last5_candidates_tried"] = tried_last5
             return None, trace
 
         metadata_slots: List[dict] = []
@@ -2912,6 +2944,14 @@ def render_full_pallet_pdf(
                             "raw_label_text": slot.raw_label_text or "",
                             "parsed_name": slot.parsed_name or "",
                             "last5": _to_last5(slot.last5),
+                            "accepted_words": slot.accepted_words or [],
+                            "digit_tokens_found": trace.get("digit_tokens_found", []),
+                            "last5_candidates_tried": trace.get("last5_candidates_tried", []),
+                            "matrix_match_found": bool(match),
+                            "accepted_words": slot.accepted_words or [],
+                            "digit_tokens_found": trace.get("digit_tokens_found", []),
+                            "last5_candidates_tried": trace.get("last5_candidates_tried", []),
+                            "matrix_match_found": bool(match),
                             "resolved_upc12": match.upc12 if match else None,
                             "resolved_name": match.display_name if match else "",
                             "resolved_cpp": match.cpp_qty if match else None,
@@ -2931,6 +2971,10 @@ def render_full_pallet_pdf(
                             "raw_label_text": "",
                             "parsed_name": "",
                             "last5": "",
+                            "accepted_words": [],
+                            "digit_tokens_found": [],
+                            "last5_candidates_tried": [],
+                            "matrix_match_found": False,
                             "resolved_upc12": None,
                             "resolved_name": "",
                             "resolved_cpp": None,
@@ -4380,6 +4424,25 @@ def render_full_pallet_pdf(
                 issue = f"rendered_count={rendered_count}"
             elif unresolved_count > 0:
                 issue = f"unresolved_count={unresolved_count}"
+            unresolved_slots = [
+                {
+                    "side": meta["side"],
+                    "index": meta["index"],
+                    "row": meta["row"],
+                    "col": meta["col"],
+                    "slot_id": meta["slot_id"],
+                    "raw_label_text": meta["raw_label_text"],
+                    "parsed_name": meta["parsed_name"],
+                    "last5": meta["last5"],
+                    "accepted_words": meta.get("accepted_words", []),
+                    "digit_tokens_found": meta.get("digit_tokens_found", []),
+                    "last5_candidates_tried": meta.get("last5_candidates_tried", []),
+                    "matrix_match_found": bool(meta.get("matrix_match_found")),
+                    "unresolved_reason": meta.get("unresolved_reason"),
+                }
+                for meta in metadata_slots
+                if not meta.get("matrix_match_found")
+            ]
             detection_debug["middle_grid_summary"] = {
                 "side": p.side_letter,
                 "image_crop_count": image_crop_count,
@@ -4387,6 +4450,7 @@ def render_full_pallet_pdf(
                 "rendered_count": rendered_count,
                 "unresolved_count": unresolved_count,
                 "issue": issue,
+                "unresolved_slots": unresolved_slots,
             }
             detection_debug["row_strip_slice_rejected_count"] = row_strip_slice_rejected_count
             detection_debug["individual_image_cell_used_count"] = mapped_clean
@@ -5356,6 +5420,26 @@ def render_full_pallet_pdf(
                     issue = summary.get("issue", "unknown")
                     st.write(f"Side {side}: image_crop_count={image_crop_count}, metadata_count={metadata_count}, rendered_count={rendered_count}, unresolved_count={unresolved_count}")
                     st.write(f"Side {side} issue: {issue}")
+                    unresolved_slots = summary.get("unresolved_slots", [])
+                    if unresolved_slots:
+                        st.write(f"Side {side} unresolved slots:")
+                        for slot_info in unresolved_slots:
+                            st.write(
+                                {
+                                    "index": slot_info.get("index"),
+                                    "row": slot_info.get("row"),
+                                    "col": slot_info.get("col"),
+                                    "slot_id": slot_info.get("slot_id"),
+                                    "raw_label_text": slot_info.get("raw_label_text"),
+                                    "parsed_name": slot_info.get("parsed_name"),
+                                    "last5": slot_info.get("last5"),
+                                    "accepted_words": slot_info.get("accepted_words"),
+                                    "digit_tokens_found": slot_info.get("digit_tokens_found"),
+                                    "last5_candidates_tried": slot_info.get("last5_candidates_tried"),
+                                    "matrix_match_found": slot_info.get("matrix_match_found"),
+                                    "unresolved_reason": slot_info.get("unresolved_reason"),
+                                }
+                            )
 
             c.showPage()
 
