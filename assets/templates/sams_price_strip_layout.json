@@ -36,6 +36,41 @@
         "cents_translate_y_pt": 2.8,
         "cents_margin_left_pt": 0.3,
         "cents_letter_spacing_pt": -0.4
+      },
+      "fields": {
+        "price": {
+          "left_pt": 4.0,
+          "top_pt": 54.0,
+          "box_height_pt": 44.0
+        },
+        "brand": {
+          "left_pt": 38.0,
+          "top_pt": 48.0,
+          "width_ratio": 0.74,
+          "font_size_pt": 7.5,
+          "font_weight": 600
+        },
+        "item_number": {
+          "left_pt": 38.0,
+          "top_pt": 62.0,
+          "width_ratio": 0.74,
+          "font_size_pt": 5.0,
+          "font_weight": 400
+        },
+        "desc_1": {
+          "left_pt": 38.0,
+          "top_pt": 72.0,
+          "width_ratio": 0.74,
+          "font_size_pt": 6.0,
+          "font_weight": 400
+        },
+        "desc_2": {
+          "left_pt": 38.0,
+          "top_pt": 80.0,
+          "width_ratio": 0.74,
+          "font_size_pt": 6.0,
+          "font_weight": 400
+        }
       }
     },
     "39x3.4375": {
@@ -73,6 +108,41 @@
         "cents_translate_y_pt": 2.8,
         "cents_margin_left_pt": 0.3,
         "cents_letter_spacing_pt": -0.4
+      },
+      "fields": {
+        "price": {
+          "left_pt": 4.0,
+          "top_pt": 54.0,
+          "box_height_pt": 44.0
+        },
+        "brand": {
+          "left_pt": 38.0,
+          "top_pt": 48.0,
+          "width_ratio": 0.74,
+          "font_size_pt": 7.5,
+          "font_weight": 600
+        },
+        "item_number": {
+          "left_pt": 38.0,
+          "top_pt": 62.0,
+          "width_ratio": 0.74,
+          "font_size_pt": 5.0,
+          "font_weight": 400
+        },
+        "desc_1": {
+          "left_pt": 38.0,
+          "top_pt": 72.0,
+          "width_ratio": 0.74,
+          "font_size_pt": 6.0,
+          "font_weight": 400
+        },
+        "desc_2": {
+          "left_pt": 38.0,
+          "top_pt": 80.0,
+          "width_ratio": 0.74,
+          "font_size_pt": 6.0,
+          "font_weight": 400
+        }
       }
     }
   }

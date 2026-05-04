@@ -298,6 +298,28 @@ def _profile_number(profile: dict, section: str, key: str, fallback: float) -> f
         return fallback
 
 
+def _profile_field_value(profile: dict, field: str, key: str, fallback):
+    fields = profile.get("fields", {})
+    if not isinstance(fields, dict):
+        return fallback
+    field_values = fields.get(field, {})
+    if not isinstance(field_values, dict):
+        return fallback
+    return field_values.get(key, fallback)
+
+
+def _profile_field_number(
+    profile: dict,
+    field: str,
+    key: str,
+    fallback: float,
+) -> float:
+    try:
+        return float(_profile_field_value(profile, field, key, fallback))
+    except (TypeError, ValueError):
+        return fallback
+
+
 def _normalize_price_parts(raw_retail: str) -> tuple[str, str]:
     text = (raw_retail or "").strip()
     if text == "":
@@ -936,6 +958,32 @@ html, body {{
     color: black;
 }}
 
+.field {{
+    position: absolute;
+    font-family: "Gibson", Arial, sans-serif;
+    color: black;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: clip;
+    line-height: 1;
+    letter-spacing: 0;
+}}
+
+.brand-field {{
+    font-weight: 600;
+    font-size: 7.5pt;
+}}
+
+.item-field {{
+    font-weight: 400;
+    font-size: 5pt;
+}}
+
+.desc-field {{
+    font-weight: 400;
+    font-size: 6pt;
+}}
+
 .price {{
     position: absolute;
     display: flex;
@@ -1027,52 +1075,107 @@ def _generate_ticket_html(
 
     composition_top = _profile_number(layout_profile, "ticket", "composition_top_pt", 30.0)
     text_top = _profile_number(layout_profile, "ticket", "text_top_pt", 4.2)
-    desc_1_margin_top = _profile_number(layout_profile, "ticket", "desc_1_margin_top_pt", 0.6)
-    desc_2_margin_top = _profile_number(layout_profile, "ticket", "desc_2_margin_top_pt", 0.4)
-    price_top = _profile_number(layout_profile, "ticket", "price_top_pt", 18.0)
+    old_price_top = _profile_number(layout_profile, "ticket", "price_top_pt", 18.0)
     price_left_pt = _profile_number(layout_profile, "ticket", "price_left_pt", _RETAIL_MARGIN_PAD)
-    price_box_h = _profile_number(layout_profile, "ticket", "price_box_height_pt", 44.0)
-    item_top = _profile_number(layout_profile, "ticket", "item_top_pt", 51.0)
+    old_price_box_h = _profile_number(layout_profile, "ticket", "price_box_height_pt", 44.0)
+    old_item_top = _profile_number(layout_profile, "ticket", "item_top_pt", 51.0)
     item_right_pad = _profile_number(layout_profile, "ticket", "item_right_pad_pt", 4.0)
     item_width_min = _profile_number(layout_profile, "ticket", "item_width_min_pt", 34.0)
     item_width_ratio = _profile_number(layout_profile, "ticket", "item_width_ratio", 0.58)
 
     pad_x = min(max(_DEFAULT_INNER_PAD_X, w * 0.052), max(_DEFAULT_INNER_PAD_X, w * 0.095))
 
-    text_x = pad_x
-    text_y = composition_top + text_top
-    text_w = max(8.0, w - (2 * pad_x))
+    old_text_x = pad_x
+    old_text_y = composition_top + text_top
 
-    price_x = max(price_left_pt, pad_x * 0.35)
-    price_y = composition_top + price_top
+    old_price_left = max(price_left_pt, pad_x * 0.35)
+    old_price_y = composition_top + old_price_top
+    old_item_y = composition_top + old_item_top
+    old_price_box_w = max(20.0, w - old_price_left - pad_x)
+
+    price_x = _profile_field_number(layout_profile, "price", "left_pt", old_price_left)
+    price_y = _profile_field_number(layout_profile, "price", "top_pt", old_price_y)
+    price_box_h = _profile_field_number(layout_profile, "price", "box_height_pt", old_price_box_h)
     price_box_w = max(20.0, w - price_x - pad_x)
 
-    item_w = min(max(item_width_min, price_box_w * item_width_ratio), w - pad_x)
-    item_x = w - item_right_pad - item_w
-    item_y = composition_top + item_top
+    brand_left = _profile_field_number(layout_profile, "brand", "left_pt", old_text_x)
+    brand_top = _profile_field_number(layout_profile, "brand", "top_pt", old_text_y)
+    brand_width_ratio = _profile_field_number(layout_profile, "brand", "width_ratio", 0.74)
+    brand_size = _profile_field_number(layout_profile, "brand", "font_size_pt", _SAMS_BRAND_SIZE)
+    brand_weight = _profile_field_value(layout_profile, "brand", "font_weight", 600)
+
+    item_left = _profile_field_number(layout_profile, "item_number", "left_pt", brand_left)
+    item_top = _profile_field_number(layout_profile, "item_number", "top_pt", old_item_y)
+    item_width_ratio_from_field = _profile_field_number(
+        layout_profile,
+        "item_number",
+        "width_ratio",
+        brand_width_ratio,
+    )
+    item_size = _profile_field_number(layout_profile, "item_number", "font_size_pt", _SAMS_ITEM_SIZE)
+    item_weight = _profile_field_value(layout_profile, "item_number", "font_weight", 400)
+
+    desc_1_left = _profile_field_number(layout_profile, "desc_1", "left_pt", brand_left)
+    desc_1_top = _profile_field_number(layout_profile, "desc_1", "top_pt", brand_top + 10.0)
+    desc_1_width_ratio = _profile_field_number(layout_profile, "desc_1", "width_ratio", brand_width_ratio)
+    desc_1_size = _profile_field_number(layout_profile, "desc_1", "font_size_pt", _SAMS_DESC_SIZE)
+    desc_1_weight = _profile_field_value(layout_profile, "desc_1", "font_weight", 400)
+
+    desc_2_left = _profile_field_number(layout_profile, "desc_2", "left_pt", brand_left)
+    desc_2_top = _profile_field_number(layout_profile, "desc_2", "top_pt", desc_1_top + 8.0)
+    desc_2_width_ratio = _profile_field_number(layout_profile, "desc_2", "width_ratio", brand_width_ratio)
+    desc_2_size = _profile_field_number(layout_profile, "desc_2", "font_size_pt", _SAMS_DESC_SIZE)
+    desc_2_weight = _profile_field_value(layout_profile, "desc_2", "font_weight", 400)
+
+    old_item_w = min(max(item_width_min, old_price_box_w * item_width_ratio), w - pad_x)
+    old_item_x = w - item_right_pad - old_item_w
+    if _profile_field_value(layout_profile, "item_number", "left_pt", None) is None:
+        item_left = old_item_x
+
+    brand_w = min(max(8.0, w * brand_width_ratio), max(8.0, w - brand_left))
+    item_w = min(max(8.0, w * item_width_ratio_from_field), max(8.0, w - item_left))
+    desc_1_w = min(max(8.0, w * desc_1_width_ratio), max(8.0, w - desc_1_left))
+    desc_2_w = min(max(8.0, w * desc_2_width_ratio), max(8.0, w - desc_2_left))
+
+    def _font_weight_name(value) -> str:
+        try:
+            return "semibold" if int(value) >= 600 else "regular"
+        except (TypeError, ValueError):
+            return "semibold" if str(value).lower() in {"600", "bold", "semibold"} else "regular"
 
     # Truncate texts
-    brand = _truncate_svg_text(segment.brand or "-", _SAMS_BRAND_SIZE, text_w, "semibold")
-    desc_1 = _truncate_svg_text(segment.desc_1 or "-", _SAMS_DESC_SIZE, text_w, "regular")
-    desc_2 = _truncate_svg_text(segment.desc_2 or "-", _SAMS_DESC_SIZE, text_w, "regular")
-    item_number = _truncate_svg_text(segment.item_number or "-", _SAMS_ITEM_SIZE, item_w, "regular")
+    brand = _truncate_svg_text(segment.brand or "-", brand_size, brand_w, _font_weight_name(brand_weight))
+    desc_1 = _truncate_svg_text(segment.desc_1 or "-", desc_1_size, desc_1_w, _font_weight_name(desc_1_weight))
+    desc_2 = _truncate_svg_text(segment.desc_2 or "-", desc_2_size, desc_2_w, _font_weight_name(desc_2_weight))
+    item_number = _truncate_svg_text(
+        segment.item_number or "-",
+        item_size,
+        item_w,
+        _font_weight_name(item_weight),
+    )
 
     ticket_html = f"""
 <div class="ticket" style="left: {x}pt; top: {y}pt; width: {w}pt; height: {h}pt;">
-    <div class="ticket-text-stack" style="left: {text_x}pt; top: {text_y}pt; width: {text_w}pt;">
-        <div class="brand">{html.escape(brand)}</div>
-        <div class="desc" style="margin-top: {desc_1_margin_top}pt;">{html.escape(desc_1)}</div>
-        <div class="desc" style="margin-top: {desc_2_margin_top}pt;">{html.escape(desc_2)}</div>
-    </div>
-
     <div class="price" style="left: {price_x}pt; top: {price_y}pt; width: {price_box_w}pt; height: {price_box_h}pt;">
         <span class="dollar-sign">$</span>
         <span class="dollars">{html.escape(dollars)}</span>
         <span class="cents">{html.escape(cents)}</span>
     </div>
 
-    <div class="item-number" style="left: {item_x}pt; top: {item_y}pt; width: {item_w}pt;">
+    <div class="field brand-field" style="left: {brand_left}pt; top: {brand_top}pt; width: {brand_w}pt; font-size: {brand_size}pt; font-weight: {html.escape(str(brand_weight))};">
+        {html.escape(brand)}
+    </div>
+
+    <div class="field item-field" style="left: {item_left}pt; top: {item_top}pt; width: {item_w}pt; font-size: {item_size}pt; font-weight: {html.escape(str(item_weight))};">
         {html.escape(item_number)}
+    </div>
+
+    <div class="field desc-field" style="left: {desc_1_left}pt; top: {desc_1_top}pt; width: {desc_1_w}pt; font-size: {desc_1_size}pt; font-weight: {html.escape(str(desc_1_weight))};">
+        {html.escape(desc_1)}
+    </div>
+
+    <div class="field desc-field" style="left: {desc_2_left}pt; top: {desc_2_top}pt; width: {desc_2_w}pt; font-size: {desc_2_size}pt; font-weight: {html.escape(str(desc_2_weight))};">
+        {html.escape(desc_2)}
     </div>
 </div>
 """
