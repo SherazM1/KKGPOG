@@ -243,6 +243,20 @@ def _first_int_in_span(ws, row_idx: int, start_col: int, end_col: int) -> Option
 
 
 
+def _gift_holder_slot_debug(slot: dict) -> dict:
+    return {
+        "header": str(slot.get("header", "") or ""),
+        "segment_index": int(slot.get("segment_index", -1)),
+        "start_col": int(slot.get("start_col", -1)),
+        "end_col": int(slot.get("end_col", -1)),
+        "item_no": str(slot.get("item_no", "") or ""),
+        "qty": slot.get("qty"),
+        "name": str(slot.get("name", "") or ""),
+        "reject_reason": str(slot.get("reject_reason", "") or ""),
+    }
+
+
+
 def _extract_top_holder_slots(
     ws,
     images_by_col: Dict[int, List[dict]],
@@ -280,7 +294,9 @@ def _extract_top_holder_slots(
         return []
 
     slots: List[dict] = []
+    debug_candidates: List[dict] = []
     real_headers: List[Tuple[int, str, int]] = []
+    marketing_break_cols = [c for c, h in slot_starts if h == "__BREAK__"]
     segment_index = 0
     for c, h in slot_starts:
         if h == "__BREAK__":
@@ -298,11 +314,27 @@ def _extract_top_holder_slots(
             end_col = start_col
 
         item_no = _first_nonempty_in_span(ws, item_row, start_col, end_col)
-        if not item_no:
-            continue
-
+        item_no_digits = re.sub(r"[^\d]", "", str(item_no)) if item_no else ""
         qty = _first_int_in_span(ws, qty_row, start_col, end_col)
         name = _first_nonempty_in_span(ws, desc_row, start_col, end_col) or ""
+        debug_candidate = {
+            "header": header_text,
+            "segment_index": seg_idx,
+            "start_col": start_col,
+            "end_col": end_col,
+            "item_no": item_no_digits,
+            "qty": qty,
+            "name": name,
+            "reject_reason": "" if item_no else "missing_item_no",
+        }
+        if marketing_break_cols and any(
+            abs(start_col - break_col) <= 8 or abs(end_col - break_col) <= 8
+            for break_col in marketing_break_cols
+        ):
+            debug_candidates.append(debug_candidate)
+
+        if not item_no:
+            continue
 
         # Prefer images anchored in the top holder band; this avoids selecting large
         # display/mockup renders that may share nearby columns on the sheet.
@@ -328,12 +360,21 @@ def _extract_top_holder_slots(
                 "segment_index": seg_idx,
                 "start_col": start_col,
                 "end_col": end_col,
-                "item_no": re.sub(r"[^\d]", "", str(item_no)),
+                "item_no": item_no_digits,
                 "qty": qty,
                 "name": name,
                 "image_bytes": img_bytes,
                 "image_ext": img_ext,
             }
+        )
+
+    if marketing_break_cols or any(str(s.get("item_no", "")) == "109107" for s in slots):
+        logger.warning(
+            "full_pallet gift holder debug: marketing_break_cols=%s candidates_around_marketing=%s detected_109107=%s detected_109107_slots=%s",
+            marketing_break_cols,
+            [_gift_holder_slot_debug(c) for c in debug_candidates],
+            any(str(s.get("item_no", "")) == "109107" for s in slots),
+            [_gift_holder_slot_debug(s) for s in slots if str(s.get("item_no", "")) == "109107"],
         )
 
     return slots
@@ -369,6 +410,7 @@ def _partition_top_slots_into_sides(top_slots: List[dict]) -> Dict[str, List[dic
     expected_side_slots = 5
     seg_cursor = 0
     fallback_events: List[dict] = []
+    side_debug_events: List[dict] = []
 
     for side in "ABCD":
         if seg_cursor >= len(segment_ids):
@@ -392,15 +434,31 @@ def _partition_top_slots_into_sides(top_slots: List[dict]) -> Dict[str, List[dic
         while len(side_slots) < expected_side_slots and seg_cursor < len(segment_ids):
             next_seg_id = segment_ids[seg_cursor]
             next_slots = list(slots_by_segment.get(next_seg_id, []))
+            considered = {
+                "side": side,
+                "initial_holder_count": initial_count,
+                "current_holder_count": len(side_slots),
+                "needed": expected_side_slots - len(side_slots),
+                "candidate_segment": next_seg_id,
+                "candidate_count": len(next_slots),
+                "candidates": [_gift_holder_slot_debug(s) for s in next_slots],
+                "fallback_used": False,
+                "reject_reason": "",
+            }
             if not next_slots:
+                considered["reject_reason"] = "empty_candidate_segment"
+                side_debug_events.append(considered)
                 seg_cursor += 1
                 continue
 
             needed = expected_side_slots - len(side_slots)
+            considered["needed"] = needed
 
             # Edge case only: a marketing panel can split a small trailing run
             # from the side before it. Do not borrow part of a plausible next side.
             if len(next_slots) > needed:
+                considered["reject_reason"] = "candidate_segment_larger_than_needed"
+                side_debug_events.append(considered)
                 break
 
             moved: List[dict] = []
@@ -411,12 +469,19 @@ def _partition_top_slots_into_sides(top_slots: List[dict]) -> Dict[str, List[dic
                     int(slot.get("end_col", -1)),
                 )
                 if key in seen:
+                    considered["reject_reason"] = "duplicate_candidate"
                     continue
                 seen.add(key)
                 moved.append(slot)
                 added_item_ids.append(str(slot.get("item_no", "")).strip())
 
             side_slots.extend(moved)
+            considered["fallback_used"] = bool(moved)
+            considered["added_holder_ids"] = [str(s.get("item_no", "")).strip() for s in moved]
+            considered["final_holder_count"] = len(side_slots)
+            if not moved and not considered["reject_reason"]:
+                considered["reject_reason"] = "no_unique_candidates"
+            side_debug_events.append(considered)
             remaining = next_slots[needed:]
             if remaining:
                 slots_by_segment[next_seg_id] = remaining
@@ -451,6 +516,26 @@ def _partition_top_slots_into_sides(top_slots: List[dict]) -> Dict[str, List[dic
             event["fallback_used"],
             event["added_holder_ids"],
             event["final_holder_count"],
+        )
+
+    side_a_debug = [e for e in side_debug_events if e.get("side") == "A"]
+    if side_a_debug or any(str(s.get("item_no", "")) == "109107" for s in slots_ordered):
+        assigned_109107 = [
+            {
+                "side": side,
+                "slot": _gift_holder_slot_debug(slot),
+            }
+            for side, side_slots in by_side.items()
+            for slot in side_slots
+            if str(slot.get("item_no", "")) == "109107"
+        ]
+        logger.warning(
+            "full_pallet gift holder Side A fallback debug: initial_side_a_count=%s fallback_used=%s fallback_considered=%s assigned_109107=%s final_side_a_count=%s",
+            side_a_debug[0].get("initial_holder_count") if side_a_debug else len(by_side.get("A", [])),
+            any(bool(e.get("fallback_used")) for e in side_a_debug),
+            side_a_debug,
+            assigned_109107,
+            len(by_side.get("A", [])),
         )
 
     return by_side
