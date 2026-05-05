@@ -408,18 +408,23 @@ def _partition_top_slots_into_sides(top_slots: List[dict]) -> Dict[str, List[dic
     }
 
     expected_side_slots = 5
-    seg_cursor = 0
     fallback_events: List[dict] = []
     side_debug_events: List[dict] = []
+    normal_segment_ids = segment_ids[:4]
+    orphan_segment_ids = segment_ids[4:]
+    segment_to_side = {seg_id: "ABCD"[idx] for idx, seg_id in enumerate(normal_segment_ids)}
+
+    for seg_id in normal_segment_ids:
+        side = segment_to_side.get(seg_id)
+        if side is None:
+            continue
+        by_side[side].extend(slots_by_segment.get(seg_id, []))
 
     for side in "ABCD":
-        if seg_cursor >= len(segment_ids):
-            break
-
-        seg_id = segment_ids[seg_cursor]
-        side_slots = list(slots_by_segment.get(seg_id, []))
+        side_slots = by_side.get(side, [])
         initial_count = len(side_slots)
-        seg_cursor += 1
+        if initial_count >= expected_side_slots:
+            continue
 
         added_item_ids: List[str] = []
         seen = {
@@ -431,38 +436,37 @@ def _partition_top_slots_into_sides(top_slots: List[dict]) -> Dict[str, List[dic
             for s in side_slots
         }
 
-        while len(side_slots) < expected_side_slots and seg_cursor < len(segment_ids):
-            next_seg_id = segment_ids[seg_cursor]
+        for next_seg_id in list(orphan_segment_ids):
             next_slots = list(slots_by_segment.get(next_seg_id, []))
+            needed = expected_side_slots - len(side_slots)
             considered = {
                 "side": side,
                 "initial_holder_count": initial_count,
                 "current_holder_count": len(side_slots),
-                "needed": expected_side_slots - len(side_slots),
-                "candidate_segment": next_seg_id,
+                "needed": needed,
+                "orphan_segment": next_seg_id,
                 "candidate_count": len(next_slots),
                 "candidates": [_gift_holder_slot_debug(s) for s in next_slots],
                 "fallback_used": False,
                 "reject_reason": "",
             }
+            if needed <= 0:
+                break
             if not next_slots:
                 considered["reject_reason"] = "empty_candidate_segment"
                 side_debug_events.append(considered)
-                seg_cursor += 1
+                orphan_segment_ids.remove(next_seg_id)
                 continue
-
-            needed = expected_side_slots - len(side_slots)
-            considered["needed"] = needed
 
             # Edge case only: a marketing panel can split a small trailing run
             # from the side before it. Do not borrow part of a plausible next side.
             if len(next_slots) > needed:
                 considered["reject_reason"] = "candidate_segment_larger_than_needed"
                 side_debug_events.append(considered)
-                break
+                continue
 
             moved: List[dict] = []
-            for slot in next_slots[:needed]:
+            for slot in next_slots:
                 key = (
                     str(slot.get("item_no", "")).strip(),
                     int(slot.get("start_col", -1)),
@@ -477,24 +481,28 @@ def _partition_top_slots_into_sides(top_slots: List[dict]) -> Dict[str, List[dic
 
             side_slots.extend(moved)
             considered["fallback_used"] = bool(moved)
+            considered["chosen_orphan_segment"] = next_seg_id if moved else None
             considered["added_holder_ids"] = [str(s.get("item_no", "")).strip() for s in moved]
             considered["final_holder_count"] = len(side_slots)
             if not moved and not considered["reject_reason"]:
                 considered["reject_reason"] = "no_unique_candidates"
             side_debug_events.append(considered)
-            remaining = next_slots[needed:]
-            if remaining:
-                slots_by_segment[next_seg_id] = remaining
+            if moved:
+                orphan_segment_ids.remove(next_seg_id)
                 break
-            seg_cursor += 1
 
-        by_side[side].extend(side_slots)
         if added_item_ids:
             fallback_events.append(
                 {
                     "side": side,
                     "initial_holder_count": initial_count,
                     "fallback_used": True,
+                    "orphan_segments_considered": [
+                        e.get("orphan_segment")
+                        for e in side_debug_events
+                        if e.get("side") == side
+                    ],
+                    "chosen_orphan_segment": next_seg_id,
                     "added_holder_ids": added_item_ids,
                     "final_holder_count": len(side_slots),
                 }
@@ -510,10 +518,12 @@ def _partition_top_slots_into_sides(top_slots: List[dict]) -> Dict[str, List[dic
 
     for event in fallback_events:
         logger.debug(
-            "full_pallet gift holder marketing-panel fallback: side=%s initial_holder_count=%s fallback_used=%s added_holder_ids=%s final_holder_count=%s",
+            "full_pallet gift holder marketing-panel fallback: side=%s initial_holder_count=%s fallback_used=%s orphan_segments_considered=%s chosen_orphan_segment=%s added_holder_ids=%s final_holder_count=%s",
             event["side"],
             event["initial_holder_count"],
             event["fallback_used"],
+            event["orphan_segments_considered"],
+            event["chosen_orphan_segment"],
             event["added_holder_ids"],
             event["final_holder_count"],
         )
@@ -530,9 +540,10 @@ def _partition_top_slots_into_sides(top_slots: List[dict]) -> Dict[str, List[dic
             if str(slot.get("item_no", "")) == "109107"
         ]
         logger.warning(
-            "full_pallet gift holder Side A fallback debug: initial_side_a_count=%s fallback_used=%s fallback_considered=%s assigned_109107=%s final_side_a_count=%s",
+            "full_pallet gift holder Side A fallback debug: initial_side_a_count=%s fallback_used=%s orphan_segments_considered=%s fallback_considered=%s assigned_109107=%s final_side_a_count=%s",
             side_a_debug[0].get("initial_holder_count") if side_a_debug else len(by_side.get("A", [])),
             any(bool(e.get("fallback_used")) for e in side_a_debug),
+            [e.get("orphan_segment") for e in side_a_debug],
             side_a_debug,
             assigned_109107,
             len(by_side.get("A", [])),
