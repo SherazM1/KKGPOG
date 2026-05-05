@@ -5,9 +5,9 @@
       "width_in": 30.75,
       "height_in": 3.4375,
       "source_template": "assets/templates/source/sams_club_30_75_price_strip.eps",
-      "slot_centers_pt": [99.0, 387.0, 675.0, 963.0, 1251.0, 1539.0, 1827.0, 2115.0],
+      "slot_centers_pt": [109.0, 393.0, 677.0, 961.0, 1245.0, 1529.0, 1813.0, 2097.0],
       "slot_pitch_pt": 288.0,
-      "slot_width_pt": 250.0,
+      "slot_width_pt": 246.0,
       "footer": {
         "left_in": 0.08,
         "bottom_in": 0.055
@@ -26,47 +26,47 @@
         "item_width_ratio": 0.58
       },
       "price": {
-        "dollar_sign_size_pt": 16.0,
-        "dollar_sign_translate_y_pt": 12.6,
+        "dollar_sign_size_pt": 16.4,
+        "dollar_sign_translate_y_pt": 12.9,
         "dollar_sign_margin_right_pt": 0.8,
-        "dollars_size_pt": 47.0,
-        "dollars_line_height": 0.8,
+        "dollars_size_pt": 48.5,
+        "dollars_line_height": 0.80,
         "dollars_letter_spacing_pt": -1.0,
-        "cents_size_pt": 18.8,
-        "cents_translate_y_pt": 4.0,
-        "cents_margin_left_pt": 0.1,
+        "cents_size_pt": 19.2,
+        "cents_translate_y_pt": 4.2,
+        "cents_margin_left_pt": 0.05,
         "cents_letter_spacing_pt": -0.4
       },
       "fields": {
         "price": {
-          "left_pt": 4.0,
-          "top_pt": 59.5,
-          "box_height_pt": 45.0
+          "left_pt": 6.0,
+          "top_pt": 60.0,
+          "box_height_pt": 46.0
         },
         "brand": {
           "left_pt": 5.0,
-          "top_pt": 51.0,
+          "top_pt": 51.5,
           "width_ratio": 0.50,
           "font_size_pt": 7.5,
           "font_weight": 600
         },
         "item_number": {
-          "left_pt": 142.0,
+          "left_pt": 143.0,
           "top_pt": 92.0,
-          "width_ratio": 0.26,
+          "width_ratio": 0.25,
           "font_size_pt": 5.0,
           "font_weight": 400
         },
         "desc_1": {
           "left_pt": 5.0,
-          "top_pt": 58.0,
+          "top_pt": 59.2,
           "width_ratio": 0.50,
           "font_size_pt": 6.0,
           "font_weight": 400
         },
         "desc_2": {
           "left_pt": 5.0,
-          "top_pt": 66.2,
+          "top_pt": 66.7,
           "width_ratio": 0.50,
           "font_size_pt": 6.0,
           "font_weight": 400
@@ -77,9 +77,9 @@
       "width_in": 39.0,
       "height_in": 3.4375,
       "source_template": "assets/templates/source/sams_club_39_price_strip.eps",
-      "slot_centers_pt": [153.0, 465.75, 778.5, 1091.25, 1404.0, 1716.75, 2029.5, 2342.25, 2655.0],
+      "slot_centers_pt": [163.0, 472.25, 781.5, 1090.75, 1400.0, 1709.25, 2018.5, 2327.75, 2637.0],
       "slot_pitch_pt": 312.75,
-      "slot_width_pt": 270.0,
+      "slot_width_pt": 266.0,
       "footer": {
         "left_in": 0.08,
         "bottom_in": 0.055
@@ -98,47 +98,47 @@
         "item_width_ratio": 0.58
       },
       "price": {
-        "dollar_sign_size_pt": 16.0,
-        "dollar_sign_translate_y_pt": 12.6,
+        "dollar_sign_size_pt": 16.4,
+        "dollar_sign_translate_y_pt": 12.9,
         "dollar_sign_margin_right_pt": 0.8,
-        "dollars_size_pt": 47.0,
-        "dollars_line_height": 0.8,
+        "dollars_size_pt": 48.5,
+        "dollars_line_height": 0.80,
         "dollars_letter_spacing_pt": -1.0,
-        "cents_size_pt": 18.8,
-        "cents_translate_y_pt": 4.0,
-        "cents_margin_left_pt": 0.1,
+        "cents_size_pt": 19.2,
+        "cents_translate_y_pt": 4.2,
+        "cents_margin_left_pt": 0.05,
         "cents_letter_spacing_pt": -0.4
       },
       "fields": {
         "price": {
-          "left_pt": 4.0,
-          "top_pt": 59.5,
-          "box_height_pt": 45.0
+          "left_pt": 6.0,
+          "top_pt": 60.0,
+          "box_height_pt": 46.0
         },
         "brand": {
           "left_pt": 5.0,
-          "top_pt": 51.0,
+          "top_pt": 51.5,
           "width_ratio": 0.50,
           "font_size_pt": 7.5,
           "font_weight": 600
         },
         "item_number": {
-          "left_pt": 154.0,
+          "left_pt": 155.0,
           "top_pt": 92.0,
-          "width_ratio": 0.26,
+          "width_ratio": 0.25,
           "font_size_pt": 5.0,
           "font_weight": 400
         },
         "desc_1": {
           "left_pt": 5.0,
-          "top_pt": 58.8,
+          "top_pt": 59.2,
           "width_ratio": 0.50,
           "font_size_pt": 6.0,
           "font_weight": 400
         },
         "desc_2": {
           "left_pt": 5.0,
-          "top_pt": 66.2,
+          "top_pt": 66.7,
           "width_ratio": 0.50,
           "font_size_pt": 6.0,
           "font_weight": 400
