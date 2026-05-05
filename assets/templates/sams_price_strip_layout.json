@@ -26,48 +26,48 @@
         "item_width_ratio": 0.58
       },
       "price": {
-        "dollar_sign_size_pt": 15.5,
-        "dollar_sign_translate_y_pt": 13.5,
-        "dollar_sign_margin_right_pt": 1.0,
-        "dollars_size_pt": 44.0,
-        "dollars_line_height": 0.82,
-        "dollars_letter_spacing_pt": -0.9,
-        "cents_size_pt": 18.5,
-        "cents_translate_y_pt": 2.8,
-        "cents_margin_left_pt": 0.3,
+        "dollar_sign_size_pt": 16.0,
+        "dollar_sign_translate_y_pt": 12.6,
+        "dollar_sign_margin_right_pt": 0.8,
+        "dollars_size_pt": 47.0,
+        "dollars_line_height": 0.8,
+        "dollars_letter_spacing_pt": -1.0,
+        "cents_size_pt": 18.8,
+        "cents_translate_y_pt": 4.0,
+        "cents_margin_left_pt": 0.1,
         "cents_letter_spacing_pt": -0.4
       },
       "fields": {
         "price": {
-          "left_pt": 4.5,
-          "top_pt": 58.0,
-          "box_height_pt": 44.0
+          "left_pt": 4.0,
+          "top_pt": 59.5,
+          "box_height_pt": 45.0
         },
         "brand": {
           "left_pt": 5.0,
-          "top_pt": 48.5,
-          "width_ratio": 0.46,
+          "top_pt": 51.0,
+          "width_ratio": 0.50,
           "font_size_pt": 7.5,
           "font_weight": 600
         },
         "item_number": {
-          "left_pt": 148.0,
-          "top_pt": 90.0,
-          "width_ratio": 0.30,
+          "left_pt": 142.0,
+          "top_pt": 92.0,
+          "width_ratio": 0.26,
           "font_size_pt": 5.0,
           "font_weight": 400
         },
         "desc_1": {
           "left_pt": 5.0,
-          "top_pt": 57.0,
-          "width_ratio": 0.46,
+          "top_pt": 58.0,
+          "width_ratio": 0.50,
           "font_size_pt": 6.0,
           "font_weight": 400
         },
         "desc_2": {
           "left_pt": 5.0,
-          "top_pt": 64.5,
-          "width_ratio": 0.46,
+          "top_pt": 66.2,
+          "width_ratio": 0.50,
           "font_size_pt": 6.0,
           "font_weight": 400
         }
@@ -98,48 +98,48 @@
         "item_width_ratio": 0.58
       },
       "price": {
-        "dollar_sign_size_pt": 15.5,
-        "dollar_sign_translate_y_pt": 13.5,
-        "dollar_sign_margin_right_pt": 1.0,
-        "dollars_size_pt": 44.0,
-        "dollars_line_height": 0.82,
-        "dollars_letter_spacing_pt": -0.9,
-        "cents_size_pt": 18.5,
-        "cents_translate_y_pt": 2.8,
-        "cents_margin_left_pt": 0.3,
+        "dollar_sign_size_pt": 16.0,
+        "dollar_sign_translate_y_pt": 12.6,
+        "dollar_sign_margin_right_pt": 0.8,
+        "dollars_size_pt": 47.0,
+        "dollars_line_height": 0.8,
+        "dollars_letter_spacing_pt": -1.0,
+        "cents_size_pt": 18.8,
+        "cents_translate_y_pt": 4.0,
+        "cents_margin_left_pt": 0.1,
         "cents_letter_spacing_pt": -0.4
       },
       "fields": {
         "price": {
-          "left_pt": 4.5,
-          "top_pt": 58.0,
-          "box_height_pt": 44.0
+          "left_pt": 4.0,
+          "top_pt": 59.5,
+          "box_height_pt": 45.0
         },
         "brand": {
           "left_pt": 5.0,
-          "top_pt": 48.5,
-          "width_ratio": 0.46,
+          "top_pt": 51.0,
+          "width_ratio": 0.50,
           "font_size_pt": 7.5,
           "font_weight": 600
         },
         "item_number": {
-          "left_pt": 160.0,
-          "top_pt": 90.0,
-          "width_ratio": 0.30,
+          "left_pt": 154.0,
+          "top_pt": 92.0,
+          "width_ratio": 0.26,
           "font_size_pt": 5.0,
           "font_weight": 400
         },
         "desc_1": {
           "left_pt": 5.0,
-          "top_pt": 57.0,
-          "width_ratio": 0.46,
+          "top_pt": 58.8,
+          "width_ratio": 0.50,
           "font_size_pt": 6.0,
           "font_weight": 400
         },
         "desc_2": {
           "left_pt": 5.0,
-          "top_pt": 64.5,
-          "width_ratio": 0.46,
+          "top_pt": 66.2,
+          "width_ratio": 0.50,
           "font_size_pt": 6.0,
           "font_weight": 400
         }
