@@ -30,7 +30,7 @@
         "dollar_sign_translate_y_pt": 12.9,
         "dollar_sign_margin_right_pt": 0.8,
         "dollars_size_pt": 48.5,
-        "dollars_line_height": 0.80,
+        "dollars_line_height": 0.8,
         "dollars_letter_spacing_pt": -1.0,
         "cents_size_pt": 19.2,
         "cents_translate_y_pt": 4.2,
@@ -46,7 +46,7 @@
         "brand": {
           "left_pt": 5.0,
           "top_pt": 51.5,
-          "width_ratio": 0.50,
+          "width_ratio": 0.5,
           "font_size_pt": 7.5,
           "font_weight": 600
         },
@@ -60,14 +60,14 @@
         "desc_1": {
           "left_pt": 5.0,
           "top_pt": 59.2,
-          "width_ratio": 0.50,
+          "width_ratio": 0.5,
           "font_size_pt": 6.0,
           "font_weight": 400
         },
         "desc_2": {
           "left_pt": 5.0,
           "top_pt": 66.7,
-          "width_ratio": 0.50,
+          "width_ratio": 0.5,
           "font_size_pt": 6.0,
           "font_weight": 400
         }
@@ -77,9 +77,9 @@
       "width_in": 39.0,
       "height_in": 3.4375,
       "source_template": "assets/templates/source/sams_club_39_price_strip.eps",
-      "slot_centers_pt": [163.0, 472.25, 781.5, 1090.75, 1400.0, 1709.25, 2018.5, 2327.75, 2637.0],
+      "slot_centers_pt": [171.0, 478.0, 785.0, 1092.0, 1399.0, 1706.0, 2013.0, 2320.0, 2627.0],
       "slot_pitch_pt": 312.75,
-      "slot_width_pt": 266.0,
+      "slot_width_pt": 262.0,
       "footer": {
         "left_in": 0.08,
         "bottom_in": 0.055
@@ -98,48 +98,48 @@
         "item_width_ratio": 0.58
       },
       "price": {
-        "dollar_sign_size_pt": 16.4,
-        "dollar_sign_translate_y_pt": 12.9,
-        "dollar_sign_margin_right_pt": 0.8,
-        "dollars_size_pt": 48.5,
-        "dollars_line_height": 0.80,
-        "dollars_letter_spacing_pt": -1.0,
-        "cents_size_pt": 19.2,
-        "cents_translate_y_pt": 4.2,
-        "cents_margin_left_pt": 0.05,
-        "cents_letter_spacing_pt": -0.4
+        "dollar_sign_size_pt": 16.2,
+        "dollar_sign_translate_y_pt": 12.2,
+        "dollar_sign_margin_right_pt": 0.55,
+        "dollars_size_pt": 48.0,
+        "dollars_line_height": 0.79,
+        "dollars_letter_spacing_pt": -1.15,
+        "cents_size_pt": 18.9,
+        "cents_translate_y_pt": 3.9,
+        "cents_margin_left_pt": 0.0,
+        "cents_letter_spacing_pt": -0.45
       },
       "fields": {
         "price": {
-          "left_pt": 6.0,
-          "top_pt": 60.0,
-          "box_height_pt": 46.0
+          "left_pt": 8.0,
+          "top_pt": 61.5,
+          "box_height_pt": 45.0
         },
         "brand": {
           "left_pt": 5.0,
-          "top_pt": 51.5,
-          "width_ratio": 0.50,
+          "top_pt": 53.0,
+          "width_ratio": 0.48,
           "font_size_pt": 7.5,
           "font_weight": 600
         },
         "item_number": {
-          "left_pt": 155.0,
-          "top_pt": 92.0,
-          "width_ratio": 0.25,
+          "left_pt": 149.0,
+          "top_pt": 93.0,
+          "width_ratio": 0.22,
           "font_size_pt": 5.0,
           "font_weight": 400
         },
         "desc_1": {
           "left_pt": 5.0,
-          "top_pt": 59.2,
-          "width_ratio": 0.50,
+          "top_pt": 60.8,
+          "width_ratio": 0.48,
           "font_size_pt": 6.0,
           "font_weight": 400
         },
         "desc_2": {
           "left_pt": 5.0,
-          "top_pt": 66.7,
-          "width_ratio": 0.50,
+          "top_pt": 68.0,
+          "width_ratio": 0.48,
           "font_size_pt": 6.0,
           "font_weight": 400
         }
