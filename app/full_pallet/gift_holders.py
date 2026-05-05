@@ -358,14 +358,82 @@ def _partition_top_slots_into_sides(top_slots: List[dict]) -> Dict[str, List[dic
         ),
     )
     segment_ids = sorted({int(s.get("segment_index", 0)) for s in slots_ordered})
-    segment_to_side = {seg_id: "ABCD"[idx] for idx, seg_id in enumerate(segment_ids[:4])}
+    slots_by_segment: Dict[int, List[dict]] = {
+        seg_id: [
+            s for s in slots_ordered
+            if int(s.get("segment_index", 0)) == seg_id
+        ]
+        for seg_id in segment_ids
+    }
 
-    for slot in slots_ordered:
-        seg_id = int(slot.get("segment_index", 0))
-        side = segment_to_side.get(seg_id)
-        if side is None:
-            continue
-        by_side[side].append(slot)
+    expected_side_slots = 5
+    seg_cursor = 0
+    fallback_events: List[dict] = []
+
+    for side in "ABCD":
+        if seg_cursor >= len(segment_ids):
+            break
+
+        seg_id = segment_ids[seg_cursor]
+        side_slots = list(slots_by_segment.get(seg_id, []))
+        initial_count = len(side_slots)
+        seg_cursor += 1
+
+        added_item_ids: List[str] = []
+        seen = {
+            (
+                str(s.get("item_no", "")).strip(),
+                int(s.get("start_col", -1)),
+                int(s.get("end_col", -1)),
+            )
+            for s in side_slots
+        }
+
+        while len(side_slots) < expected_side_slots and seg_cursor < len(segment_ids):
+            next_seg_id = segment_ids[seg_cursor]
+            next_slots = list(slots_by_segment.get(next_seg_id, []))
+            if not next_slots:
+                seg_cursor += 1
+                continue
+
+            needed = expected_side_slots - len(side_slots)
+
+            # Edge case only: a marketing panel can split a small trailing run
+            # from the side before it. Do not borrow part of a plausible next side.
+            if len(next_slots) > needed:
+                break
+
+            moved: List[dict] = []
+            for slot in next_slots[:needed]:
+                key = (
+                    str(slot.get("item_no", "")).strip(),
+                    int(slot.get("start_col", -1)),
+                    int(slot.get("end_col", -1)),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                moved.append(slot)
+                added_item_ids.append(str(slot.get("item_no", "")).strip())
+
+            side_slots.extend(moved)
+            remaining = next_slots[needed:]
+            if remaining:
+                slots_by_segment[next_seg_id] = remaining
+                break
+            seg_cursor += 1
+
+        by_side[side].extend(side_slots)
+        if added_item_ids:
+            fallback_events.append(
+                {
+                    "side": side,
+                    "initial_holder_count": initial_count,
+                    "fallback_used": True,
+                    "added_holder_ids": added_item_ids,
+                    "final_holder_count": len(side_slots),
+                }
+            )
 
     for side in "ABCD":
         by_side[side].sort(
@@ -374,6 +442,17 @@ def _partition_top_slots_into_sides(top_slots: List[dict]) -> Dict[str, List[dic
                 int(s.get("end_col", 0)),
             )
         )
+
+    for event in fallback_events:
+        logger.debug(
+            "full_pallet gift holder marketing-panel fallback: side=%s initial_holder_count=%s fallback_used=%s added_holder_ids=%s final_holder_count=%s",
+            event["side"],
+            event["initial_holder_count"],
+            event["fallback_used"],
+            event["added_holder_ids"],
+            event["final_holder_count"],
+        )
+
     return by_side
 
 
