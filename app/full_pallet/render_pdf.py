@@ -106,6 +106,15 @@ FULL_PALLET_MID_BAND_PROFILES = {
     },
 }
 
+BONUS_SOURCE_INSET_X = 0.060
+BONUS_SOURCE_INSET_TOP = 0.040
+BONUS_SOURCE_INSET_BOTTOM = 0.075
+BONUS_BD_SOURCE_INSET_X = 0.085
+BONUS_BD_SOURCE_INSET_TOP = 0.050
+BONUS_BD_SOURCE_INSET_BOTTOM = 0.095
+BONUS_BD_IMAGE_INSET_X = 0.026
+BONUS_BD_IMAGE_INSET_Y = 0.020
+
 
 def get_mid_band_physical_profile(side_letter: str) -> Dict[str, object]:
     side = str(side_letter or "").strip().upper()
@@ -1799,7 +1808,7 @@ def render_full_pallet_pdf(
                 source_inset_debug: Dict[str, object] = {}
                 image_sanitize_debug: Dict[str, object] = {}
                 if is_bonus_section and pixmap_page_img is not None:
-                    sanitized_source_bbox, source_inset_debug = _inset_bonus_source_bbox(cell.bbox)
+                    sanitized_source_bbox, source_inset_debug = _inset_bonus_source_bbox(cell.bbox, p.side_letter)
                     pix_img, pix_bbox, pixmap_debug = _crop_mid_band_pixmap_slot(
                         pixmap_page_img,
                         pixmap_page_zoom,
@@ -1807,6 +1816,8 @@ def render_full_pallet_pdf(
                     )
                     if pix_img is not None and pix_bbox is not None:
                         img, image_sanitize_debug = _sanitize_bonus_crop_image(pix_img)
+                        img, inner_inset_debug = _apply_bonus_inner_image_inset(img, p.side_letter)
+                        image_sanitize_debug.update(inner_inset_debug)
                         image_crop_bbox_used = pix_bbox
                         render_path_used = "pixmap_bonus"
                     else:
@@ -1823,6 +1834,8 @@ def render_full_pallet_pdf(
                         )
                         if is_bonus_section:
                             img, image_sanitize_debug = _sanitize_bonus_crop_image(img)
+                            img, inner_inset_debug = _apply_bonus_inner_image_inset(img, p.side_letter)
+                            image_sanitize_debug.update(inner_inset_debug)
                             image_crop_bbox_used = sanitized_source_bbox
                         render_path_used = "fallback_previous_path" if fallback_used else render_path_used
                     except Exception as exc:
@@ -1884,16 +1897,25 @@ def render_full_pallet_pdf(
                             "trim_inset_applied": bool(
                                 source_inset_debug.get("source_inset_applied")
                                 or image_sanitize_debug.get("sanitized_crop_used")
+                                or image_sanitize_debug.get("bonus_inner_image_inset_applied")
                             ),
                             "neighboring_edge_contamination_detected": bool(
                                 image_sanitize_debug.get("neighboring_edge_contamination_detected")
                             ),
                             "image_edge_trim_bbox": image_sanitize_debug.get("image_edge_trim_bbox"),
                             "image_edge_trim_px": image_sanitize_debug.get("image_edge_trim_px", [0, 0, 0, 0]),
+                            "bonus_inner_image_inset_applied": bool(
+                                image_sanitize_debug.get("bonus_inner_image_inset_applied", False)
+                            ),
+                            "bonus_inner_image_inset_px": image_sanitize_debug.get("bonus_inner_image_inset_px", [0, 0, 0, 0]),
+                            "bonus_inner_image_inset_side_profile": image_sanitize_debug.get(
+                                "bonus_inner_image_inset_side_profile"
+                            ),
                             "crop_clipped_to_hard_bounds": bool(norm_debug.get("hard_clip_applied")),
                             "sanitized_crop_used": bool(
                                 source_inset_debug.get("source_inset_applied")
                                 or image_sanitize_debug.get("sanitized_crop_used")
+                                or image_sanitize_debug.get("bonus_inner_image_inset_applied")
                             ),
                             "source_crop_width": bw,
                             "source_crop_height": bh,
@@ -2938,17 +2960,23 @@ def render_full_pallet_pdf(
 
     def _inset_bonus_source_bbox(
         bbox: Tuple[float, float, float, float],
+        side_letter: str,
     ) -> Tuple[Tuple[float, float, float, float], Dict[str, object]]:
         x0, y0, x1, y1 = bbox
         w = max(1.0, float(x1 - x0))
         h = max(1.0, float(y1 - y0))
+        side = str(side_letter or "").strip().upper()
+        is_bd_side = side in {"B", "D"}
 
         # Asymmetric source-crop cleanup for BONUS.
         # Most contamination is bottom-edge barcode/neighbor-card junk,
         # so trim bottom slightly more than top.
-        inset_x = max(2.0, min(4.5, w * 0.060))
-        inset_top = max(1.25, min(3.0, h * 0.040))
-        inset_bottom = max(2.5, min(5.0, h * 0.075))
+        inset_x_pct = BONUS_BD_SOURCE_INSET_X if is_bd_side else BONUS_SOURCE_INSET_X
+        inset_top_pct = BONUS_BD_SOURCE_INSET_TOP if is_bd_side else BONUS_SOURCE_INSET_TOP
+        inset_bottom_pct = BONUS_BD_SOURCE_INSET_BOTTOM if is_bd_side else BONUS_SOURCE_INSET_BOTTOM
+        inset_x = max(2.0, min(6.0 if is_bd_side else 4.5, w * inset_x_pct))
+        inset_top = max(1.25, min(3.8 if is_bd_side else 3.0, h * inset_top_pct))
+        inset_bottom = max(2.5, min(6.5 if is_bd_side else 5.0, h * inset_bottom_pct))
 
         sanitized = (
             float(x0 + inset_x),
@@ -2964,9 +2992,58 @@ def render_full_pallet_pdf(
             "source_inset_top": float(inset_top),
             "source_inset_bottom": float(inset_bottom),
             "source_inset_reason": "bonus_asymmetric_bottom_neighbor_contamination_guard",
+            "source_inset_side_profile": "bd_bonus_tighter" if is_bd_side else "default_bonus",
             "original_source_bbox": [float(x0), float(y0), float(x1), float(y1)],
             "sanitized_source_bbox": list(sanitized),
         }
+
+    def _apply_bonus_inner_image_inset(
+        img: Image.Image,
+        side_letter: str,
+    ) -> Tuple[Image.Image, Dict[str, object]]:
+        debug: Dict[str, object] = {
+            "bonus_inner_image_inset_applied": False,
+            "bonus_inner_image_inset_px": [0, 0, 0, 0],
+            "bonus_inner_image_inset_side_profile": "none",
+        }
+        if img is None:
+            return img, debug
+
+        side = str(side_letter or "").strip().upper()
+        if side not in {"B", "D"}:
+            return img, debug
+
+        try:
+            src = img.convert("RGB")
+            w, h = src.size
+            if w < 30 or h < 30:
+                debug["bonus_inner_image_inset_side_profile"] = "bd_bonus_skipped_tiny"
+                return img, debug
+
+            inset_x = max(1, min(8, int(round(w * BONUS_BD_IMAGE_INSET_X))))
+            inset_y = max(1, min(7, int(round(h * BONUS_BD_IMAGE_INSET_Y))))
+            left = inset_x
+            top = inset_y
+            right = w - inset_x
+            bottom = h - inset_y
+            if right <= left + 12 or bottom <= top + 12:
+                debug["bonus_inner_image_inset_side_profile"] = "bd_bonus_skipped_too_aggressive"
+                return img, debug
+
+            cleaned = src.crop((left, top, right, bottom))
+            debug.update(
+                {
+                    "bonus_inner_image_inset_applied": True,
+                    "bonus_inner_image_inset_px": [left, top, w - right, h - bottom],
+                    "bonus_inner_image_inset_side_profile": "bd_bonus_inner_bleed_guard",
+                    "bonus_inner_image_original_size": [w, h],
+                    "bonus_inner_image_cleaned_size": [cleaned.width, cleaned.height],
+                }
+            )
+            return cleaned, debug
+        except Exception as exc:
+            debug["bonus_inner_image_inset_side_profile"] = f"bd_bonus_inner_inset_error: {exc}"
+            return img, debug
 
     def _sanitize_bonus_crop_image(img: Image.Image) -> Tuple[Image.Image, Dict[str, object]]:
         """
