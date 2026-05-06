@@ -26,48 +26,48 @@
         "item_width_ratio": 0.58
       },
       "price": {
-        "dollar_sign_size_pt": 17.2,
-        "dollar_sign_translate_y_pt": 10.6,
-        "dollar_sign_margin_right_pt": 0.35,
+        "dollar_sign_size_pt": 17.4,
+        "dollar_sign_translate_y_pt": 9.8,
+        "dollar_sign_margin_right_pt": 0.25,
         "dollars_size_pt": 47.0,
         "dollars_line_height": 0.79,
         "dollars_letter_spacing_pt": -1.0,
-        "cents_size_pt": 19.0,
-        "cents_translate_y_pt": 2.0,
+        "cents_size_pt": 19.2,
+        "cents_translate_y_pt": 1.6,
         "cents_margin_left_pt": 0.0,
         "cents_letter_spacing_pt": -0.35
       },
       "fields": {
         "price": {
           "left_pt": 72.0,
-          "top_pt": 136.0,
-          "box_height_pt": 46.0
+          "top_pt": 129.0,
+          "box_height_pt": 48.0
         },
         "brand": {
           "left_pt": 72.0,
           "top_pt": 88.0,
-          "width_ratio": 0.5,
+          "width_ratio": 0.50,
           "font_size_pt": 7.5,
           "font_weight": 600
         },
         "item_number": {
-          "left_pt": 171.0,
-          "top_pt": 159.0,
-          "width_ratio": 0.17,
+          "left_pt": 176.0,
+          "top_pt": 160.0,
+          "width_ratio": 0.15,
           "font_size_pt": 5.0,
           "font_weight": 400
         },
         "desc_1": {
           "left_pt": 72.0,
           "top_pt": 95.0,
-          "width_ratio": 0.5,
+          "width_ratio": 0.50,
           "font_size_pt": 6.0,
           "font_weight": 400
         },
         "desc_2": {
           "left_pt": 72.0,
           "top_pt": 102.0,
-          "width_ratio": 0.5,
+          "width_ratio": 0.50,
           "font_size_pt": 6.0,
           "font_weight": 400
         }
@@ -98,22 +98,22 @@
         "item_width_ratio": 0.58
       },
       "price": {
-        "dollar_sign_size_pt": 17.2,
-        "dollar_sign_translate_y_pt": 10.6,
-        "dollar_sign_margin_right_pt": 0.35,
+        "dollar_sign_size_pt": 17.4,
+        "dollar_sign_translate_y_pt": 9.8,
+        "dollar_sign_margin_right_pt": 0.25,
         "dollars_size_pt": 47.0,
         "dollars_line_height": 0.79,
         "dollars_letter_spacing_pt": -1.0,
-        "cents_size_pt": 19.0,
-        "cents_translate_y_pt": 2.0,
+        "cents_size_pt": 19.2,
+        "cents_translate_y_pt": 1.6,
         "cents_margin_left_pt": 0.0,
         "cents_letter_spacing_pt": -0.35
       },
       "fields": {
         "price": {
           "left_pt": 77.0,
-          "top_pt": 136.0,
-          "box_height_pt": 45.0
+          "top_pt": 129.0,
+          "box_height_pt": 48.0
         },
         "brand": {
           "left_pt": 77.0,
@@ -123,9 +123,9 @@
           "font_weight": 600
         },
         "item_number": {
-          "left_pt": 183.0,
-          "top_pt": 159.0,
-          "width_ratio": 0.17,
+          "left_pt": 188.0,
+          "top_pt": 160.0,
+          "width_ratio": 0.15,
           "font_size_pt": 5.0,
           "font_weight": 400
         },
