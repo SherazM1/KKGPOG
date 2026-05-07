@@ -10,7 +10,7 @@
       "slot_width_pt": 252.0,
       "footer": {
         "left_in": 1.092,
-        "bottom_in": 0.165
+        "bottom_in": 0.36
       },
       "ticket": {
         "composition_top_pt": 70.0,
@@ -82,7 +82,7 @@
       "slot_width_pt": 270.0,
       "footer": {
         "left_in": 1.092,
-        "bottom_in": 0.165
+        "bottom_in": 0.36
       },
       "ticket": {
         "composition_top_pt": 70.0,
