@@ -9,7 +9,7 @@
       "slot_pitch_pt": 288.0,
       "slot_width_pt": 252.0,
       "footer": {
-        "left_in": 0.33,
+        "left_in": 1.05,
         "bottom_in": 0.055
       },
       "ticket": {
@@ -51,7 +51,7 @@
           "font_weight": 600
         },
         "item_number": {
-          "left_pt": 170.0,
+          "left_pt": 140.0,
           "top_pt": 159.0,
           "width_ratio": 0.12,
           "font_size_pt": 5.0,
@@ -81,7 +81,7 @@
       "slot_pitch_pt": 312.75,
       "slot_width_pt": 270.0,
       "footer": {
-        "left_in": 0.33,
+        "left_in": 1.05,
         "bottom_in": 0.055
       },
       "ticket": {
@@ -123,7 +123,7 @@
           "font_weight": 600
         },
         "item_number": {
-          "left_pt": 187.0,
+          "left_pt": 157.0,
           "top_pt": 159.0,
           "width_ratio": 0.12,
           "font_size_pt": 5.0,
