@@ -39,7 +39,7 @@
       },
       "fields": {
         "price": {
-          "left_pt": 72.0,
+          "left_pt": 64.0,
           "top_pt": 129.0,
           "box_height_pt": 48.0
         },
@@ -51,8 +51,8 @@
           "font_weight": 600
         },
         "item_number": {
-          "left_pt": 190.0,
-          "top_pt": 164.0,
+          "left_pt": 170.0,
+          "top_pt": 166.0,
           "width_ratio": 0.12,
           "font_size_pt": 5.0,
           "font_weight": 400
@@ -111,7 +111,7 @@
       },
       "fields": {
         "price": {
-          "left_pt": 77.0,
+          "left_pt": 69.0,
           "top_pt": 129.0,
           "box_height_pt": 48.0
         },
@@ -123,8 +123,8 @@
           "font_weight": 600
         },
         "item_number": {
-          "left_pt": 207.0,
-          "top_pt": 164.0,
+          "left_pt": 187.0,
+          "top_pt": 166.0,
           "width_ratio": 0.12,
           "font_size_pt": 5.0,
           "font_weight": 400
