@@ -9,7 +9,7 @@
       "slot_pitch_pt": 288.0,
       "slot_width_pt": 252.0,
       "footer": {
-        "left_in": 0.08,
+        "left_in": 0.33,
         "bottom_in": 0.055
       },
       "ticket": {
@@ -26,21 +26,21 @@
         "item_width_ratio": 0.58
       },
       "price": {
-        "dollar_sign_size_pt": 18.8,
-        "dollar_sign_translate_y_pt": 6.4,
+        "dollar_sign_size_pt": 19.6,
+        "dollar_sign_translate_y_pt": 3.0,
         "dollar_sign_margin_right_pt": 0.05,
         "dollars_size_pt": 47.0,
         "dollars_line_height": 0.78,
         "dollars_letter_spacing_pt": -0.85,
         "cents_size_pt": 19.8,
-        "cents_translate_y_pt": -0.2,
+        "cents_translate_y_pt": -4.0,
         "cents_margin_left_pt": -0.25,
         "cents_letter_spacing_pt": -0.3
       },
       "fields": {
         "price": {
           "left_pt": 64.0,
-          "top_pt": 129.0,
+          "top_pt": 122.0,
           "box_height_pt": 48.0
         },
         "brand": {
@@ -52,7 +52,7 @@
         },
         "item_number": {
           "left_pt": 170.0,
-          "top_pt": 166.0,
+          "top_pt": 159.0,
           "width_ratio": 0.12,
           "font_size_pt": 5.0,
           "font_weight": 400
@@ -81,7 +81,7 @@
       "slot_pitch_pt": 312.75,
       "slot_width_pt": 270.0,
       "footer": {
-        "left_in": 0.08,
+        "left_in": 0.33,
         "bottom_in": 0.055
       },
       "ticket": {
@@ -98,21 +98,21 @@
         "item_width_ratio": 0.58
       },
       "price": {
-        "dollar_sign_size_pt": 18.8,
-        "dollar_sign_translate_y_pt": 6.4,
+        "dollar_sign_size_pt": 19.6,
+        "dollar_sign_translate_y_pt": 3.0,
         "dollar_sign_margin_right_pt": 0.05,
         "dollars_size_pt": 47.0,
         "dollars_line_height": 0.78,
         "dollars_letter_spacing_pt": -0.85,
         "cents_size_pt": 19.8,
-        "cents_translate_y_pt": -0.2,
+        "cents_translate_y_pt": -4.0,
         "cents_margin_left_pt": -0.25,
         "cents_letter_spacing_pt": -0.3
       },
       "fields": {
         "price": {
           "left_pt": 69.0,
-          "top_pt": 129.0,
+          "top_pt": 122.0,
           "box_height_pt": 48.0
         },
         "brand": {
@@ -124,7 +124,7 @@
         },
         "item_number": {
           "left_pt": 187.0,
-          "top_pt": 166.0,
+          "top_pt": 159.0,
           "width_ratio": 0.12,
           "font_size_pt": 5.0,
           "font_weight": 400
