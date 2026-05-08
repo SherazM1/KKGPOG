@@ -9,8 +9,8 @@
       "slot_pitch_pt": 288.0,
       "slot_width_pt": 252.0,
       "footer": {
-        "left_in": 1.092,
-        "bottom_in": 0.36
+        "left_in": 1.134,
+        "bottom_in": 0.402
       },
       "ticket": {
         "composition_top_pt": 70.0,
@@ -81,8 +81,8 @@
       "slot_pitch_pt": 312.75,
       "slot_width_pt": 270.0,
       "footer": {
-        "left_in": 1.092,
-        "bottom_in": 0.36
+        "left_in": 1.134,
+        "bottom_in": 0.402
       },
       "ticket": {
         "composition_top_pt": 70.0,

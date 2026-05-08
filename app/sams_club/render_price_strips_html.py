@@ -38,6 +38,8 @@ except ImportError:
 
 _PAGE_WIDTH = 11.0 * inch
 _PAGE_HEIGHT = 2.45 * inch
+BLEED_IN = 0.25
+_BLEED_PT = BLEED_IN * inch
 _DEFAULT_FOOTER_HEIGHT = 0.14 * inch
 _STRIP_COMPOSITION_WIDTH_RATIO = 0.94
 _STRIP_MARGIN_MIN = 0.07 * inch
@@ -814,8 +816,8 @@ async def _render_page_to_pdf(
         await page.set_content(html_content)
         await page.evaluate("() => document.fonts.ready")
         pdf_bytes = await page.pdf(
-            width=f"{width / inch}in",
-            height=f"{height / inch}in",
+            width=f"{(width + (_BLEED_PT * 2)) / inch}in",
+            height=f"{(height + (_BLEED_PT * 2)) / inch}in",
             print_background=True,
         )
         return pdf_bytes
@@ -858,6 +860,14 @@ def _generate_strip_html(row_data: SamsPriceStripRow, strip_w: float, strip_h: f
 """
 
     layout_profile = _resolve_layout_profile(strip_w, strip_h, warnings)
+    page_w = strip_w + (_BLEED_PT * 2)
+    page_h = strip_h + (_BLEED_PT * 2)
+    crop_mark_len = 12.0
+    crop_mark_gap = 3.0
+    trim_left = _BLEED_PT
+    trim_top = _BLEED_PT
+    trim_right = _BLEED_PT + strip_w
+    trim_bottom = _BLEED_PT + strip_h
     positions = _resolve_ticket_positions_from_profile(
         strip_w,
         len(row_data.segments),
@@ -906,13 +916,22 @@ def _generate_strip_html(row_data: SamsPriceStripRow, strip_w: float, strip_h: f
 }}
 
 html, body {{
-    width: {strip_w}pt;
-    height: {strip_h}pt;
+    width: {page_w}pt;
+    height: {page_h}pt;
     margin: 0;
     padding: 0;
     overflow: hidden;
     background: white;
     font-family: "Gibson", Arial, sans-serif;
+}}
+
+.trim-artwork {{
+    position: absolute;
+    left: {_BLEED_PT}pt;
+    top: {_BLEED_PT}pt;
+    width: {strip_w}pt;
+    height: {strip_h}pt;
+    overflow: hidden;
 }}
 
 .ticket {{
@@ -1047,12 +1066,46 @@ html, body {{
     white-space: nowrap;
     letter-spacing: 0;
 }}
+
+.crop-mark {{
+    position: absolute;
+    background: #bfbfbf;
+    pointer-events: none;
+}}
+
+.crop-mark.horizontal {{
+    height: 0.5pt;
+}}
+
+.crop-mark.vertical {{
+    width: 0.5pt;
+}}
         """,
         "</style>",
         "</head>",
         "<body>",
+        (
+            f'<div class="crop-mark horizontal" style="left: {trim_left - crop_mark_gap - crop_mark_len}pt; '
+            f'top: {trim_top}pt; width: {crop_mark_len}pt;"></div>'
+            f'<div class="crop-mark vertical" style="left: {trim_left}pt; '
+            f'top: {trim_top - crop_mark_gap - crop_mark_len}pt; height: {crop_mark_len}pt;"></div>'
+            f'<div class="crop-mark horizontal" style="left: {trim_right + crop_mark_gap}pt; '
+            f'top: {trim_top}pt; width: {crop_mark_len}pt;"></div>'
+            f'<div class="crop-mark vertical" style="left: {trim_right}pt; '
+            f'top: {trim_top - crop_mark_gap - crop_mark_len}pt; height: {crop_mark_len}pt;"></div>'
+            f'<div class="crop-mark horizontal" style="left: {trim_left - crop_mark_gap - crop_mark_len}pt; '
+            f'top: {trim_bottom}pt; width: {crop_mark_len}pt;"></div>'
+            f'<div class="crop-mark vertical" style="left: {trim_left}pt; '
+            f'top: {trim_bottom + crop_mark_gap}pt; height: {crop_mark_len}pt;"></div>'
+            f'<div class="crop-mark horizontal" style="left: {trim_right + crop_mark_gap}pt; '
+            f'top: {trim_bottom}pt; width: {crop_mark_len}pt;"></div>'
+            f'<div class="crop-mark vertical" style="left: {trim_right}pt; '
+            f'top: {trim_bottom + crop_mark_gap}pt; height: {crop_mark_len}pt;"></div>'
+        ),
+        '<div class="trim-artwork">',
         "\n".join(ticket_htmls),
         f'<div class="footer">{html.escape(footer_text)}</div>',
+        "</div>",
         "</body>",
         "</html>",
     ]
