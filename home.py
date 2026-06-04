@@ -13,6 +13,7 @@ from app.shared.upload_utils import (
     build_named_image_index,
     build_named_image_index_from_folder,
     images_upload_to_pdf_bytes,
+    upc_a_from_11,
 )
 
 # Renderer toggle: set to True to use the new HTML/Playwright renderer, False for the old ReportLab renderer
@@ -440,6 +441,46 @@ def main() -> None:
         if not fp_pages:
             st.error("No product cells detected in Labels PDF.")
             return
+
+        if named_image_index.images:
+            required_upcs = []
+            seen_required = set()
+            for page in fp_pages:
+                for cell in page.cells:
+                    if not cell.last5:
+                        continue
+                    from app.shared.matching import resolve_full_pallet
+
+                    match = resolve_full_pallet(cell.last5, cell.name, fp_matrix_idx)
+                    if match is None:
+                        continue
+                    upc = str(match.upc12 or "").strip()
+                    if upc and upc not in seen_required:
+                        required_upcs.append(upc)
+                        seen_required.add(upc)
+
+            missing_image_upcs = []
+            matched_image_count = 0
+            for upc in required_upcs:
+                stripped = upc.lstrip("0")
+                keys = []
+                if len(stripped) == 11:
+                    keys.append(upc_a_from_11(stripped))
+                keys.extend([upc, stripped, stripped[-5:] if len(stripped) >= 5 else ""])
+                if any(key and key in named_image_index.images for key in keys):
+                    matched_image_count += 1
+                else:
+                    missing_image_upcs.append(upc)
+
+            st.caption(
+                f"Local image library matches {matched_image_count} of {len(required_upcs)} unique planogram UPC(s)."
+            )
+            if missing_image_upcs:
+                with st.expander("Missing local images by UPC"):
+                    for upc in missing_image_upcs[:300]:
+                        st.write(upc)
+                    if len(missing_image_upcs) > 300:
+                        st.write(f"...and {len(missing_image_upcs) - 300} more.")
 
         st.subheader(f"Detected {len(fp_pages)} side(s) - one output page per side")
         rows = build_full_pallet_rows(fp_pages, fp_matrix_idx)
