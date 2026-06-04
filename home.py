@@ -443,7 +443,7 @@ def main() -> None:
             return
 
         if named_image_index.images:
-            required_upcs = []
+            image_report_rows = []
             seen_required = set()
             for page in fp_pages:
                 for cell in page.cells:
@@ -456,31 +456,45 @@ def main() -> None:
                         continue
                     upc = str(match.upc12 or "").strip()
                     if upc and upc not in seen_required:
-                        required_upcs.append(upc)
                         seen_required.add(upc)
+                        stripped = upc.lstrip("0")
+                        expected_image_upc = upc_a_from_11(stripped) if len(stripped) == 11 else upc
+                        keys = [expected_image_upc, upc, stripped, stripped[-5:] if len(stripped) >= 5 else ""]
+                        matched_key = next((key for key in keys if key and key in named_image_index.images), "")
+                        image_report_rows.append(
+                            {
+                                "Status": "FOUND" if matched_key else "MISSING",
+                                "Display UPC": upc,
+                                "Expected Image UPC": expected_image_upc,
+                                "Last5": stripped[-5:] if len(stripped) >= 5 else "",
+                                "Card Name": match.display_name,
+                                "Matched Key": matched_key,
+                                "Matched File": str(named_image_index.images.get(matched_key, "")) if matched_key else "",
+                            }
+                        )
 
-            missing_image_upcs = []
-            matched_image_count = 0
-            for upc in required_upcs:
-                stripped = upc.lstrip("0")
-                keys = []
-                if len(stripped) == 11:
-                    keys.append(upc_a_from_11(stripped))
-                keys.extend([upc, stripped, stripped[-5:] if len(stripped) >= 5 else ""])
-                if any(key and key in named_image_index.images for key in keys):
-                    matched_image_count += 1
-                else:
-                    missing_image_upcs.append(upc)
-
+            matched_image_count = sum(1 for row in image_report_rows if row["Status"] == "FOUND")
+            missing_image_rows = [row for row in image_report_rows if row["Status"] == "MISSING"]
             st.caption(
-                f"Local image library matches {matched_image_count} of {len(required_upcs)} unique planogram UPC(s)."
+                f"Local image library matches {matched_image_count} of {len(image_report_rows)} unique planogram UPC(s)."
             )
-            if missing_image_upcs:
+            if image_report_rows:
+                report_df = pd.DataFrame(image_report_rows).sort_values(["Status", "Display UPC"])
+                st.download_button(
+                    "Download Local Image Match Report CSV",
+                    report_df.to_csv(index=False).encode("utf-8"),
+                    file_name="local_image_match_report.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+            if missing_image_rows:
                 with st.expander("Missing local images by UPC"):
-                    for upc in missing_image_upcs[:300]:
-                        st.write(upc)
-                    if len(missing_image_upcs) > 300:
-                        st.write(f"...and {len(missing_image_upcs) - 300} more.")
+                    for row in missing_image_rows[:300]:
+                        st.write(
+                            f"{row['Display UPC']} | expected image UPC {row['Expected Image UPC']} | {row['Card Name']}"
+                        )
+                    if len(missing_image_rows) > 300:
+                        st.write(f"...and {len(missing_image_rows) - 300} more.")
 
         st.subheader(f"Detected {len(fp_pages)} side(s) - one output page per side")
         rows = build_full_pallet_rows(fp_pages, fp_matrix_idx)
