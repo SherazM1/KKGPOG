@@ -436,9 +436,16 @@ def render_full_pallet_pdf(
             payload = named_images.get(key)
             if not payload:
                 continue
-            img = image_from_bytes(payload)
-            if img is not None:
-                return img, key
+            if isinstance(payload, (bytes, bytearray)):
+                img = image_from_bytes(bytes(payload))
+                if img is not None:
+                    return img, key
+            else:
+                try:
+                    with Image.open(str(payload)) as image:
+                        return image.convert("RGBA"), key
+                except Exception:
+                    continue
         return None, None
 
     def _best_row_for_label(candidates: List[MatrixRow], label_text: str) -> Optional[MatrixRow]:

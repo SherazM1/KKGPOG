@@ -16,7 +16,7 @@ SUPPORTED_UPLOAD_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", "
 
 @dataclass
 class NamedImageIndex:
-    images: Dict[str, bytes] = field(default_factory=dict)
+    images: Dict[str, Any] = field(default_factory=dict)
     indexed_images: int = 0
     duplicate_keys: int = 0
     ignored_files: int = 0
@@ -108,6 +108,32 @@ def build_named_image_index(uploaded: Any) -> NamedImageIndex:
                     result.duplicate_keys += 1
                     continue
                 result.images[key] = entry_payload
+    return result
+
+
+def build_named_image_index_from_folder(folder_path: str) -> NamedImageIndex:
+    result = NamedImageIndex()
+    root = Path(str(folder_path or "").strip().strip('"'))
+    if not root.exists() or not root.is_dir():
+        return result
+
+    for path in sorted(root.rglob("*"), key=lambda p: str(p).lower()):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in SUPPORTED_UPLOAD_IMAGE_EXTENSIONS:
+            result.ignored_files += 1
+            continue
+        keys = _keys_from_image_name(str(path.name))
+        if not keys:
+            result.ignored_files += 1
+            continue
+        result.indexed_images += 1
+        path_text = str(path)
+        for key in keys:
+            if key in result.images:
+                result.duplicate_keys += 1
+                continue
+            result.images[key] = path_text
     return result
 
 
