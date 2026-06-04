@@ -1652,6 +1652,74 @@ def render_full_pallet_pdf(
             "crop_inset": 0.018,
         }
 
+    def _metadata_slots_from_middle_grid_candidates(
+        p: FullPalletPage,
+        candidates: List[dict],
+    ) -> Tuple[List[dict], Dict[str, object]]:
+        metadata_slots: List[dict] = []
+        candidate_by_index: Dict[int, dict] = {}
+        for candidate in candidates:
+            try:
+                row_index = int(candidate.get("row_index", 0))
+                slot_in_row = int(candidate.get("slot_in_row", 0))
+            except Exception:
+                continue
+            index = row_index * 8 + slot_in_row
+            if 0 <= index < 24 and index not in candidate_by_index:
+                candidate_by_index[index] = candidate
+
+        for index in range(24):
+            row = index // 8
+            col = index % 8
+            candidate = candidate_by_index.get(index)
+            slot = candidate.get("slot") if candidate else None
+            match = candidate.get("resolved_match") if candidate else None
+            resolved_upc12 = (candidate.get("upc12") if candidate else None) or (match.upc12 if match else None)
+            resolved_name = (
+                (match.display_name if match and match.display_name else "")
+                or (candidate.get("resolved_name") if candidate else "")
+                or (candidate.get("display_name") if candidate else "")
+            )
+            raw_label_text = str(getattr(slot, "raw_label_text", "") or "") if slot is not None else ""
+            parsed_name = str(getattr(slot, "parsed_name", "") or "") if slot is not None else ""
+            last5 = _to_last5((candidate.get("last5") if candidate else "") or (getattr(slot, "last5", "") if slot is not None else ""))
+            metadata_slots.append(
+                {
+                    "side": p.side_letter,
+                    "index": index,
+                    "row": row,
+                    "col": col,
+                    "group_name": "left" if col <= 1 else "center" if col <= 5 else "right",
+                    "slot_id": str(candidate.get("slot_id") if candidate else f"{p.side_letter}-MB-R{row + 1}-S{col + 1}"),
+                    "label_bbox_used": list(getattr(slot, "bbox", (0.0, 0.0, 0.0, 0.0))) if slot is not None else [0.0, 0.0, 0.0, 0.0],
+                    "bbox_expansion_used": False,
+                    "raw_label_text": raw_label_text,
+                    "parsed_name": parsed_name,
+                    "last5": last5,
+                    "digit_tokens_found": [last5] if last5 else [],
+                    "identity_digit_tokens_found": [last5] if last5 else [],
+                    "rejected_price_tokens": [],
+                    "last5_candidates_tried": [last5] if last5 else [],
+                    "matrix_match_found": bool(match),
+                    "recovery_attempted": False,
+                    "recovery_source": None,
+                    "rejected_reason": None,
+                    "resolved_upc12": resolved_upc12,
+                    "resolved_name": resolved_name or "",
+                    "resolved_cpp": (candidate.get("cpp") if candidate else None) if candidate else None,
+                    "resolution_method": candidate.get("resolve_fallback_path") if candidate else "missing_candidate",
+                    "unresolved_reason": None if (resolved_upc12 or resolved_name) else "missing_candidate",
+                }
+            )
+
+        resolved_count = len([m for m in metadata_slots if m.get("resolved_upc12") or m.get("resolved_name")])
+        return metadata_slots, {
+            "metadata_source": "labels_pdf_cell_candidates",
+            "metadata_count": len(metadata_slots),
+            "resolved_count": resolved_count,
+            "unresolved_count": len(metadata_slots) - resolved_count,
+        }
+
     def _measure_section_shape(
         p: FullPalletPage,
         sec_rows: List[int],
@@ -3659,6 +3727,89 @@ def render_full_pallet_pdf(
 
         return cleaned, rejected
 
+    def _build_middle_grid_section_candidate_records(
+        p: FullPalletPage,
+        section: Optional[FullPalletMidBandSection],
+    ) -> Tuple[List[dict], List[dict], int, Dict[str, object]]:
+        if section is None:
+            return [], [], 0, {"section_row_normalization": "no_section"}
+
+        source_rows = [
+            sorted(list(row.slots), key=lambda slot: (float(slot.bbox[0] + slot.bbox[2]) / 2.0, int(slot.slot_order)))
+            for row in sorted(section.rows, key=lambda row: int(row.row_index))
+        ]
+        normalized_rows: List[List[FullPalletMidBandSlot]] = []
+        idx = 0
+        while idx < len(source_rows) and len(normalized_rows) < 3:
+            merged: List[FullPalletMidBandSlot] = []
+            start_idx = idx
+            while idx < len(source_rows) and len(merged) < 8:
+                merged.extend(source_rows[idx])
+                idx += 1
+            merged = sorted(merged, key=lambda slot: (float(slot.bbox[0] + slot.bbox[2]) / 2.0, int(slot.slot_order)))
+            if merged:
+                normalized_rows.append(merged[:8])
+            if idx == start_idx:
+                idx += 1
+
+        candidates: List[dict] = []
+        rejected: List[dict] = []
+        source_index = 0
+        for row_index, row_slots in enumerate(normalized_rows[:3]):
+            for slot_in_row, source_slot in enumerate(row_slots[:8]):
+                match = resolve_full_pallet(source_slot.last5, source_slot.raw_label_text or source_slot.parsed_name, matrix_idx) if source_slot.last5 else None
+                normalized_slot = FullPalletMidBandSlot(
+                    slot_id=f"{p.side_letter}-MB-R{row_index + 1}-S{slot_in_row + 1}",
+                    side_letter=p.side_letter,
+                    row_index=row_index,
+                    block_name=("left" if slot_in_row <= 1 else "center" if slot_in_row <= 5 else "right"),
+                    block_pos_index=(slot_in_row if slot_in_row <= 1 else slot_in_row - 2 if slot_in_row <= 5 else slot_in_row - 6),
+                    slot_order=source_index,
+                    slot_in_row=slot_in_row,
+                    bbox=source_slot.bbox,
+                    raw_label_text=source_slot.raw_label_text,
+                    parsed_name=source_slot.parsed_name,
+                    last5=source_slot.last5,
+                    qty=source_slot.qty,
+                    extraction_bbox=source_slot.extraction_bbox,
+                    accepted_words=source_slot.accepted_words,
+                    rejected_nearby_word_count=source_slot.rejected_nearby_word_count,
+                    resolved_upc12=match.upc12 if match else None,
+                    resolved_display_name=match.display_name if match else None,
+                    resolved_cpp_qty=match.cpp_qty if match else None,
+                )
+                record = {
+                    "side": p.side_letter,
+                    "slot": normalized_slot,
+                    "source_index": source_index,
+                    "slot_id": normalized_slot.slot_id,
+                    "group": normalized_slot.block_name,
+                    "row_index": row_index,
+                    "slot_in_row": slot_in_row,
+                    "slot_order": source_index,
+                    "last5": _to_last5(source_slot.last5),
+                    "upc12": match.upc12 if match else None,
+                    "cpp": match.cpp_qty if match else None,
+                    "resolved_match": match,
+                    "resolved_name": match.display_name if match else (source_slot.parsed_name or source_slot.raw_label_text or "").strip(),
+                    "display_name": match.display_name if match else (source_slot.parsed_name or source_slot.raw_label_text or "").strip(),
+                    "resolve_fallback_path": "section_last5_matrix" if match else "unresolved_section",
+                    "resolve_trace": {"fallback_path": "section_last5_matrix" if match else "unresolved_section"},
+                }
+                cleaned, rejected_one = _clean_middle_grid_candidate_records([record])
+                if cleaned:
+                    candidates.extend(cleaned)
+                else:
+                    rejected.extend(rejected_one)
+                source_index += 1
+
+        row_debug = {
+            "section_row_normalization": "merged_partial_rows_to_3x8",
+            "source_section_row_counts": [len(row) for row in source_rows],
+            "normalized_section_row_counts": [len(row) for row in normalized_rows],
+        }
+        return candidates[:24], rejected, sum(len(row) for row in source_rows), row_debug
+
     def _build_middle_grid_cell_candidate_records(
         p: FullPalletPage,
     ) -> Tuple[List[dict], List[dict], int, Dict[str, object]]:
@@ -4187,8 +4338,12 @@ def render_full_pallet_pdf(
         )
         profile = get_mid_band_physical_profile(p.side_letter)
         cleaned_candidate_records, rejected_middle_candidates, raw_middle_candidate_count, middle_grid_row_debug = (
-            _build_middle_grid_cell_candidate_records(p)
+            _build_middle_grid_section_candidate_records(p, section)
         )
+        if len(cleaned_candidate_records) < 24:
+            cleaned_candidate_records, rejected_middle_candidates, raw_middle_candidate_count, middle_grid_row_debug = (
+                _build_middle_grid_cell_candidate_records(p)
+            )
         selection = select_mid_band_cards_for_display(
             p.side_letter,
             cleaned_candidate_records,
@@ -4341,9 +4496,14 @@ def render_full_pallet_pdf(
             if cell.get("bbox") is not None
         ]
         
-        # Call bbox-text-only helper to build metadata from labels.pdf
-        # This is the single source of truth for middle-grid text metadata (UPC, name, CPP)
-        if label_page is not None:
+        # Prefer the parsed label-cell candidates for text metadata. They are
+        # workbook-resolved and independent of the optional image source.
+        if len(cleaned_candidate_records) >= 24:
+            metadata_slots, metadata_summary = _metadata_slots_from_middle_grid_candidates(
+                p,
+                cleaned_candidate_records,
+            )
+        elif label_page is not None:
             metadata_slots, metadata_summary = _build_middle_grid_metadata_from_label_bboxes_text_only(
                 p,
                 matrix_idx,

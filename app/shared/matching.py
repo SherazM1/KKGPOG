@@ -117,7 +117,29 @@ def load_full_pallet_matrix_index(matrix_bytes: bytes) -> Dict[str, List[MatrixR
     df = df_raw.iloc[hrow + 1 :].copy()
     df.columns = headers
 
-    name_col = _pick_col(headers, ["NAME", "DESCRIPTION"], 1 if len(headers) > 1 else 0)
+    name_col: Optional[str] = None
+    preferred_name_headers = [
+        "NAME",
+        "ITEM_NAME",
+        "ITEM_DESCRIPTION",
+        "DESCRIPTION",
+        "PRODUCT_NAME",
+        "PRODUCT_DESCRIPTION",
+    ]
+    for preferred in preferred_name_headers:
+        if preferred in headers:
+            name_col = preferred
+            break
+    if name_col is None:
+        for header in headers:
+            upper = header.upper()
+            if ("NAME" in upper or "DESCRIPTION" in upper) and not any(
+                blocked in upper for blocked in ("POG", "PLANOGRAM", "STORE")
+            ):
+                name_col = header
+                break
+    if name_col is None:
+        name_col = _pick_col(headers, ["DESCRIPTION", "NAME"], 1 if len(headers) > 1 else 0)
     cpp_col = _pick_col_optional(headers, ["CPP"])
 
     # ── FIX A: use ONLY the 11-digit UPC column as the index key ─────────────
