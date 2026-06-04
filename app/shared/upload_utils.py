@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import zipfile
 from pathlib import Path
-from typing import Any, Iterable, List, Sequence, Tuple
+from typing import Any, List, Sequence, Tuple
 
 import fitz
 from PIL import Image
@@ -62,6 +62,20 @@ def _label_page_sizes(labels_pdf_bytes: bytes) -> List[Tuple[float, float]]:
     finally:
         labels_doc.close()
     return sizes
+
+
+def blank_images_pdf_from_labels(labels_pdf_bytes: bytes) -> bytes:
+    """Create a blank image-source PDF with pages aligned to the labels PDF."""
+    page_sizes = _label_page_sizes(labels_pdf_bytes)
+    out_doc = fitz.open()
+    try:
+        if not page_sizes:
+            out_doc.new_page(width=612.0, height=792.0)
+        for page_w, page_h in page_sizes:
+            out_doc.new_page(width=page_w, height=page_h)
+        return out_doc.tobytes()
+    finally:
+        out_doc.close()
 
 
 def images_upload_to_pdf_bytes(uploaded: Any, labels_pdf_bytes: bytes) -> bytes:

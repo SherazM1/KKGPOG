@@ -7,7 +7,7 @@ from app.sams_club.extract_price_strips import build_sams_price_strip_rows
 from app.sams_club.render_planogram import render_sams_planogram_pdf
 from app.sams_club.service import build_sams_planogram_structure, detect_sams_pogs
 from app.shared.constants import DISPLAY_FULL_PALLET, DISPLAY_SAMS_CLUB, DISPLAY_STANDARD, N_COLS
-from app.shared.upload_utils import images_upload_to_pdf_bytes
+from app.shared.upload_utils import blank_images_pdf_from_labels, images_upload_to_pdf_bytes
 
 # Renderer toggle: set to True to use the new HTML/Playwright renderer, False for the old ReportLab renderer
 USE_HTML_PRICE_STRIP_RENDERER = True
@@ -93,12 +93,6 @@ def main() -> None:
             st.divider()
             matrix_file = st.file_uploader("Matrix Excel (.xlsx)", type=["xlsx"])
             labels_pdf = st.file_uploader("Labels PDF", type=["pdf"])
-            images_pdf = st.file_uploader(
-                "Images PDF / Images / ZIP",
-                type=["pdf", "zip", "jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff"],
-                accept_multiple_files=True,
-                help="Upload the existing images PDF, one or more page images, or a ZIP/folder selection of page images.",
-            )
 
             if display_type == DISPLAY_FULL_PALLET:
                 pptx_file = st.file_uploader(
@@ -298,17 +292,20 @@ def main() -> None:
                         )
         return
 
-    if not (matrix_file and labels_pdf and images_pdf):
-        st.info("Upload Matrix XLSX + Labels PDF + Images PDF/images/ZIP to begin.")
+    if not (matrix_file and labels_pdf):
+        st.info("Upload Matrix XLSX + Labels PDF to begin.")
         return
 
     matrix_bytes = matrix_file.getvalue()
     labels_bytes = labels_pdf.getvalue()
-    try:
-        images_bytes = images_upload_to_pdf_bytes(images_pdf, labels_bytes)
-    except Exception as e:
-        st.error(f"Unable to read image source upload: {e}")
-        return
+    if images_pdf:
+        try:
+            images_bytes = images_upload_to_pdf_bytes(images_pdf, labels_bytes)
+        except Exception as e:
+            st.error(f"Unable to read image source upload: {e}")
+            return
+    else:
+        images_bytes = blank_images_pdf_from_labels(labels_bytes)
 
     if display_type == DISPLAY_STANDARD:
         from app.standard_display.service import prepare_standard_display, render_standard_display_pdf
