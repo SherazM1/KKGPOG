@@ -7,6 +7,7 @@ from app.sams_club.extract_price_strips import build_sams_price_strip_rows
 from app.sams_club.render_planogram import render_sams_planogram_pdf
 from app.sams_club.service import build_sams_planogram_structure, detect_sams_pogs
 from app.shared.constants import DISPLAY_FULL_PALLET, DISPLAY_SAMS_CLUB, DISPLAY_STANDARD, N_COLS
+from app.shared.upload_utils import images_upload_to_pdf_bytes
 
 # Renderer toggle: set to True to use the new HTML/Playwright renderer, False for the old ReportLab renderer
 USE_HTML_PRICE_STRIP_RENDERER = True
@@ -33,6 +34,11 @@ def main() -> None:
     sams_selected_pog = None
     build_sams = False
     generate_sams_price_strips = False
+    pptx_file = None
+    gift_file = None
+    ppt_cpp_global = 0
+    show_debug = False
+    show_layout_overlay = False
 
     with st.sidebar:
         st.header("Configuration")
@@ -87,7 +93,23 @@ def main() -> None:
             st.divider()
             matrix_file = st.file_uploader("Matrix Excel (.xlsx)", type=["xlsx"])
             labels_pdf = st.file_uploader("Labels PDF", type=["pdf"])
-            images_pdf = st.file_uploader("Images PDF", type=["pdf"])
+            images_pdf = st.file_uploader(
+                "Images PDF / Images / ZIP",
+                type=["pdf", "zip", "jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff"],
+                accept_multiple_files=True,
+                help="Upload the existing images PDF, one or more page images, or a ZIP/folder selection of page images.",
+            )
+
+            if display_type == DISPLAY_FULL_PALLET:
+                pptx_file = st.file_uploader(
+                    "Top Cards Blueprint (.pptx, .ppt, .pdf, images, ZIP)",
+                    type=["pptx", "ppt", "pdf", "zip", "jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff"],
+                    help="PPTX uses the existing PowerPoint parser. PDF/images/ZIP use the visual fallback in the same side/page order.",
+                )
+                gift_file = st.file_uploader("2025 D82 POG Workbook (.xlsx)", type=["xlsx"])
+                ppt_cpp_global = st.number_input("PPT Cards CPP (Global)", min_value=0, value=0, step=1)
+                show_debug = st.checkbox("Show debug details")
+                show_layout_overlay = st.checkbox("Show Full Pallet layout overlay")
 
             st.divider()
             title_prefix = st.text_input("PDF title prefix", "POG")
@@ -277,12 +299,16 @@ def main() -> None:
         return
 
     if not (matrix_file and labels_pdf and images_pdf):
-        st.info("Upload Matrix XLSX + Labels PDF + Images PDF to begin.")
+        st.info("Upload Matrix XLSX + Labels PDF + Images PDF/images/ZIP to begin.")
         return
 
     matrix_bytes = matrix_file.getvalue()
     labels_bytes = labels_pdf.getvalue()
-    images_bytes = images_pdf.getvalue()
+    try:
+        images_bytes = images_upload_to_pdf_bytes(images_pdf, labels_bytes)
+    except Exception as e:
+        st.error(f"Unable to read image source upload: {e}")
+        return
 
     if display_type == DISPLAY_STANDARD:
         from app.standard_display.service import prepare_standard_display, render_standard_display_pdf
@@ -323,22 +349,24 @@ def main() -> None:
                 render_full_pallet_display_pdf,
                 validate_ppt_cards,
             )
+            from app.full_pallet.ppt_visual import load_visual_ppt_cards
         except ModuleNotFoundError as e:
             st.error(f"Full Pallet mode dependency missing: {e.name}. Please install project requirements.")
             return
 
-        pptx_file = st.file_uploader("Top Cards Blueprint (.pptx)", type=["pptx"])
-        gift_file = st.file_uploader("2025 D82 POG Workbook (.xlsx)", type=["xlsx"])
-        ppt_cpp_global = st.number_input("PPT Cards CPP (Global)", min_value=0, value=0, step=1)
-        show_debug = st.checkbox("Show debug details")
-        show_layout_overlay = st.checkbox("Show Full Pallet layout overlay")
-
         if not (pptx_file and gift_file):
-            st.info("Upload PPTX + POG XLSX for Full Pallet mode.")
+            st.info("Upload Top Cards Blueprint + POG XLSX for Full Pallet mode.")
             return
 
         try:
-            ppt_cards = parse_ppt_cards(pptx_file.getvalue())
+            ppt_ext = f".{str(pptx_file.name).rsplit('.', 1)[-1].lower()}" if "." in str(pptx_file.name) else ""
+            if ppt_ext == ".pptx":
+                ppt_cards = parse_ppt_cards(pptx_file.getvalue())
+            elif ppt_ext == ".ppt":
+                st.error("Legacy .ppt files are not supported by the parser. Save or export the PowerPoint as .pptx or PDF.")
+                return
+            else:
+                ppt_cards = load_visual_ppt_cards(pptx_file)
         except ImportError:
             st.error(
                 "python-pptx is not installed. Full Pallet mode requires python-pptx to parse the Top Cards Blueprint."
