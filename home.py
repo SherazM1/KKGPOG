@@ -7,7 +7,7 @@ from app.sams_club.extract_price_strips import build_sams_price_strip_rows
 from app.sams_club.render_planogram import render_sams_planogram_pdf
 from app.sams_club.service import build_sams_planogram_structure, detect_sams_pogs
 from app.shared.constants import DISPLAY_FULL_PALLET, DISPLAY_SAMS_CLUB, DISPLAY_STANDARD, N_COLS
-from app.shared.upload_utils import blank_images_pdf_from_labels, images_upload_to_pdf_bytes
+from app.shared.upload_utils import blank_images_pdf_from_labels, build_named_image_index, images_upload_to_pdf_bytes
 
 # Renderer toggle: set to True to use the new HTML/Playwright renderer, False for the old ReportLab renderer
 USE_HTML_PRICE_STRIP_RENDERER = True
@@ -93,6 +93,15 @@ def main() -> None:
             st.divider()
             matrix_file = st.file_uploader("Matrix Excel (.xlsx)", type=["xlsx"])
             labels_pdf = st.file_uploader("Labels PDF", type=["pdf"])
+            images_pdf = st.file_uploader(
+                "Card Images PDF / UPC Image ZIPs (optional)",
+                type=["pdf", "zip", "jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff"],
+                accept_multiple_files=True,
+                help=(
+                    "Optional. Upload one or more PDFs for existing page-crop behavior, "
+                    "or ZIPs/images named by UPC to place images by resolved product."
+                ),
+            )
 
             if display_type == DISPLAY_FULL_PALLET:
                 pptx_file = st.file_uploader(
@@ -301,11 +310,13 @@ def main() -> None:
     if images_pdf:
         try:
             images_bytes = images_upload_to_pdf_bytes(images_pdf, labels_bytes)
+            named_image_index = build_named_image_index(images_pdf)
         except Exception as e:
             st.error(f"Unable to read image source upload: {e}")
             return
     else:
         images_bytes = blank_images_pdf_from_labels(labels_bytes)
+        named_image_index = None
 
     if display_type == DISPLAY_STANDARD:
         from app.standard_display.service import prepare_standard_display, render_standard_display_pdf
@@ -427,6 +438,7 @@ def main() -> None:
                         ppt_cpp_global,
                         show_debug,
                         show_layout_overlay,
+                        named_image_index.images if named_image_index else None,
                     )
                 except Exception as e:
                     if show_debug:

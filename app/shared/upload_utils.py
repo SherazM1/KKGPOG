@@ -1,15 +1,25 @@
 from __future__ import annotations
 
 import io
+import re
 import zipfile
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 import fitz
 from PIL import Image
 
 
 SUPPORTED_UPLOAD_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+
+
+@dataclass
+class NamedImageIndex:
+    images: Dict[str, bytes] = field(default_factory=dict)
+    indexed_images: int = 0
+    duplicate_keys: int = 0
+    ignored_files: int = 0
 
 
 def _uploaded_name(uploaded: Any, fallback: str = "") -> str:
@@ -52,6 +62,55 @@ def _image_entries_from_uploads(uploaded_files: Sequence[Any]) -> List[Tuple[str
     return entries
 
 
+def _keys_from_image_name(name: str) -> List[str]:
+    stem = Path(name).stem
+    digit_tokens = re.findall(r"\d{5,14}", stem)
+    keys: List[str] = []
+    seen: set[str] = set()
+    for token in digit_tokens:
+        digits = re.sub(r"[^0-9]", "", token)
+        candidates = [digits, digits[-5:]]
+        if len(digits) in {11, 12}:
+            candidates.append(digits.zfill(12))
+        if len(digits) > 12:
+            candidates.append(digits[-12:])
+        for candidate in candidates:
+            if candidate and candidate not in seen:
+                keys.append(candidate)
+                seen.add(candidate)
+    return keys
+
+
+def build_named_image_index(uploaded: Any) -> NamedImageIndex:
+    uploaded_files = coerce_uploaded_file_list(uploaded)
+    result = NamedImageIndex()
+    for uploaded_file in uploaded_files:
+        name = _uploaded_name(uploaded_file, "uploaded")
+        ext = Path(name).suffix.lower()
+        payload = _uploaded_bytes(uploaded_file)
+        entries: List[Tuple[str, bytes]] = []
+        if ext == ".zip":
+            entries = _image_entries_from_zip(payload)
+        elif ext in SUPPORTED_UPLOAD_IMAGE_EXTENSIONS:
+            entries = [(name, payload)]
+        else:
+            result.ignored_files += 1
+            continue
+
+        for entry_name, entry_payload in entries:
+            keys = _keys_from_image_name(entry_name)
+            if not keys:
+                result.ignored_files += 1
+                continue
+            result.indexed_images += 1
+            for key in keys:
+                if key in result.images:
+                    result.duplicate_keys += 1
+                    continue
+                result.images[key] = entry_payload
+    return result
+
+
 def _label_page_sizes(labels_pdf_bytes: bytes) -> List[Tuple[float, float]]:
     sizes: List[Tuple[float, float]] = []
     labels_doc = fitz.open(stream=labels_pdf_bytes, filetype="pdf")
@@ -89,19 +148,20 @@ def images_upload_to_pdf_bytes(uploaded: Any, labels_pdf_bytes: bytes) -> bytes:
     if not uploaded_files:
         raise ValueError("No image source files were uploaded.")
 
-    if len(uploaded_files) == 1:
-        only = uploaded_files[0]
-        only_name = _uploaded_name(only, "")
-        if Path(only_name).suffix.lower() == ".pdf":
-            return _uploaded_bytes(only)
-
     image_entries = _image_entries_from_uploads(uploaded_files)
-    if not image_entries:
-        raise ValueError("Upload a PDF, image file, or ZIP containing image files.")
-
     page_sizes = _label_page_sizes(labels_pdf_bytes)
     out_doc = fitz.open()
     try:
+        for uploaded_file in uploaded_files:
+            name = _uploaded_name(uploaded_file, "")
+            if Path(name).suffix.lower() != ".pdf":
+                continue
+            src = fitz.open(stream=_uploaded_bytes(uploaded_file), filetype="pdf")
+            try:
+                out_doc.insert_pdf(src)
+            finally:
+                src.close()
+
         for idx, (_name, payload) in enumerate(image_entries):
             with Image.open(io.BytesIO(payload)) as image:
                 image.load()
@@ -121,6 +181,8 @@ def images_upload_to_pdf_bytes(uploaded: Any, labels_pdf_bytes: bytes) -> bytes:
 
             page = out_doc.new_page(width=page_w, height=page_h)
             page.insert_image(page.rect, stream=image_bytes, keep_proportion=False)
+        if out_doc.page_count == 0:
+            raise ValueError("Upload a PDF, image file, or ZIP containing image files.")
         return out_doc.tobytes()
     finally:
         out_doc.close()

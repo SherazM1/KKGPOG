@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from app.full_pallet.extract import extract_full_pallet_pages
 from app.full_pallet.gift_holders import load_gift_card_holders
@@ -63,6 +63,7 @@ def render_full_pallet_display_pdf(
     ppt_cpp_global: int,
     debug: bool = False,
     debug_overlay: bool = False,
+    named_image_index: Optional[Dict[str, bytes]] = None,
 ) -> bytes:
     return render_full_pallet_pdf(
         fp_pages,
@@ -75,6 +76,7 @@ def render_full_pallet_display_pdf(
         ppt_cpp_global=ppt_cpp_global,
         debug=debug,
         debug_overlay=debug_overlay,
+        named_image_index=named_image_index,
 )
 
 

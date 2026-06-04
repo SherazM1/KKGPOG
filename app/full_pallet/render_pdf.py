@@ -381,6 +381,7 @@ def render_full_pallet_pdf(
     ppt_cpp_global: Optional[int] = None,
     debug: bool = False,
     debug_overlay: bool = False,
+    named_image_index: Optional[Dict[str, bytes]] = None,
 ) -> bytes:
     buf = io.BytesIO()
     images_doc = fitz.open(stream=images_pdf_bytes, filetype="pdf")
@@ -410,6 +411,35 @@ def render_full_pallet_pdf(
     upc_to_rows: Dict[str, List[MatrixRow]] = {}
     for row in all_matrix_rows:
         upc_to_rows.setdefault((row.upc12 or "").strip(), []).append(row)
+
+    named_images = dict(named_image_index or {})
+
+    def _named_image_for_item(upc12: Optional[str], last5: Optional[str]) -> Tuple[Optional[Image.Image], Optional[str]]:
+        keys: List[str] = []
+        seen: set[str] = set()
+        for raw in [upc12, str(upc12 or "").lstrip("0"), last5]:
+            digits = re.sub(r"[^0-9]", "", str(raw or ""))
+            if not digits:
+                continue
+            candidates = [digits]
+            if len(digits) >= 5:
+                candidates.append(digits[-5:])
+            if len(digits) in {11, 12}:
+                candidates.append(digits.zfill(12))
+                candidates.append(digits[-11:])
+            for candidate in candidates:
+                if candidate and candidate not in seen:
+                    keys.append(candidate)
+                    seen.add(candidate)
+
+        for key in keys:
+            payload = named_images.get(key)
+            if not payload:
+                continue
+            img = image_from_bytes(payload)
+            if img is not None:
+                return img, key
+        return None, None
 
     def _best_row_for_label(candidates: List[MatrixRow], label_text: str) -> Optional[MatrixRow]:
         if not candidates:
@@ -1923,7 +1953,13 @@ def render_full_pallet_pdf(
                 sanitized_source_bbox = cell.bbox
                 source_inset_debug: Dict[str, object] = {}
                 image_sanitize_debug: Dict[str, object] = {}
-                if is_bonus_section and pixmap_page_img is not None:
+                named_img, named_key = _named_image_for_item(upc12, last5_key)
+                if named_img is not None:
+                    img = named_img
+                    image_crop_bbox_used = None
+                    render_path_used = "named_image_index"
+                    source_crop_id = str(named_key or source_crop_id)
+                elif is_bonus_section and pixmap_page_img is not None:
                     sanitized_source_bbox, source_inset_debug = _inset_bonus_source_bbox(cell.bbox, p.side_letter)
                     pix_img, pix_bbox, pixmap_debug = _crop_mid_band_pixmap_slot(
                         pixmap_page_img,
@@ -4809,7 +4845,23 @@ def render_full_pallet_pdf(
             selected_image_source_id: Optional[str] = None
             img: Optional[Image.Image] = None
             image_source_index = int(idx)
-            if (
+            named_img, named_key = _named_image_for_item(upc12, meta.get("last5") or slot.last5)
+            if named_img is not None:
+                img = named_img
+                image_crop_bbox_used = None
+                image_crop_source = "named_image_index"
+                chosen_crop_source_type = "named_image_index"
+                crop_selection_path = "resolved_upc_to_named_image"
+                fallback_used = False
+                fallback_type = ""
+                final_crop_slot_aligned = True
+                crop_flagged_suspicious = False
+                suspicious_reasons = []
+                image_binding_method = "named_upc"
+                image_identity_confident = True
+                selected_image_source_id = named_key
+                exact_image_binding_count += 1
+            elif (
                 (ac_pixmap_enabled or strict_side_guardrails)
                 and pixmap_page_img is not None
                 and 0 <= image_source_index < len(pixmap_flat_cells)
