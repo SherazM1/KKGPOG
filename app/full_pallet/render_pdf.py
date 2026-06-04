@@ -40,7 +40,7 @@ from app.shared.text_utils import (
     _norm_name,
     _to_last5,
 )
-from app.shared.upload_utils import upc_a_from_11
+from app.shared.upload_utils import NamedImageIndex, upc_a_from_11
 
 FULL_PALLET_MID_BAND_PROFILES = {
     "A": {
@@ -382,7 +382,7 @@ def render_full_pallet_pdf(
     ppt_cpp_global: Optional[int] = None,
     debug: bool = False,
     debug_overlay: bool = False,
-    named_image_index: Optional[Dict[str, bytes]] = None,
+    named_image_index: Optional[object] = None,
 ) -> bytes:
     buf = io.BytesIO()
     images_doc = fitz.open(stream=images_pdf_bytes, filetype="pdf")
@@ -413,9 +413,37 @@ def render_full_pallet_pdf(
     for row in all_matrix_rows:
         upc_to_rows.setdefault((row.upc12 or "").strip(), []).append(row)
 
-    named_images = dict(named_image_index or {})
+    if isinstance(named_image_index, NamedImageIndex):
+        named_images = dict(named_image_index.images or {})
+        named_names = dict(named_image_index.names or {})
+    else:
+        named_images = dict(named_image_index or {})
+        named_names = {}
 
-    def _named_image_for_item(upc12: Optional[str], last5: Optional[str]) -> Tuple[Optional[Image.Image], Optional[str]]:
+    def _image_from_named_payload(payload: object) -> Optional[Image.Image]:
+        if isinstance(payload, (bytes, bytearray)):
+            img = image_from_bytes(bytes(payload))
+            return img
+        path_text = str(payload)
+        if path_text.lower().endswith(".pdf"):
+            try:
+                src = fitz.open(path_text)
+                try:
+                    if src.page_count <= 0:
+                        return None
+                    pix = src[0].get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                    return Image.frombytes("RGB", (pix.width, pix.height), pix.samples).convert("RGBA")
+                finally:
+                    src.close()
+            except Exception:
+                return None
+        try:
+            with Image.open(path_text) as image:
+                return image.convert("RGBA")
+        except Exception:
+            return None
+
+    def _named_image_for_item(upc12: Optional[str], last5: Optional[str], name: Optional[str] = None) -> Tuple[Optional[Image.Image], Optional[str]]:
         keys: List[str] = []
         seen: set[str] = set()
         raw_upc = re.sub(r"[^0-9]", "", str(upc12 or ""))
@@ -446,16 +474,27 @@ def render_full_pallet_pdf(
             payload = named_images.get(key)
             if not payload:
                 continue
-            if isinstance(payload, (bytes, bytearray)):
-                img = image_from_bytes(bytes(payload))
-                if img is not None:
-                    return img, key
-            else:
-                try:
-                    with Image.open(str(payload)) as image:
-                        return image.convert("RGBA"), key
-                except Exception:
+            img = _image_from_named_payload(payload)
+            if img is not None:
+                return img, key
+
+        # Name fallback is allowed only when filename also carried a UPC that
+        # agrees with this item. UPC remains the source of truth.
+        if name and named_names:
+            target = _norm_name(name)
+            for file_name_key, entries in named_names.items():
+                file_norm = _norm_name(file_name_key)
+                if not file_norm:
                     continue
+                ratio = difflib.SequenceMatcher(None, target, file_norm).ratio()
+                if ratio < 0.72 and target not in file_norm and file_norm not in target:
+                    continue
+                for file_upc_key, payload in entries:
+                    if file_upc_key not in set(keys):
+                        continue
+                    img = _image_from_named_payload(payload)
+                    if img is not None:
+                        return img, f"name+upc:{file_upc_key}"
         return None, None
 
     def _best_row_for_label(candidates: List[MatrixRow], label_text: str) -> Optional[MatrixRow]:
@@ -1970,7 +2009,7 @@ def render_full_pallet_pdf(
                 sanitized_source_bbox = cell.bbox
                 source_inset_debug: Dict[str, object] = {}
                 image_sanitize_debug: Dict[str, object] = {}
-                named_img, named_key = _named_image_for_item(upc12, last5_key)
+                named_img, named_key = _named_image_for_item(upc12, last5_key, disp_name)
                 if named_img is not None:
                     img = named_img
                     image_crop_bbox_used = None
@@ -4862,7 +4901,7 @@ def render_full_pallet_pdf(
             selected_image_source_id: Optional[str] = None
             img: Optional[Image.Image] = None
             image_source_index = int(idx)
-            named_img, named_key = _named_image_for_item(upc12, meta.get("last5") or slot.last5)
+            named_img, named_key = _named_image_for_item(upc12, meta.get("last5") or slot.last5, disp_name)
             if named_img is not None:
                 img = named_img
                 image_crop_bbox_used = None

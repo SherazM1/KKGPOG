@@ -9,11 +9,13 @@ from typing import Any, Dict, List, Sequence, Tuple
 
 
 SUPPORTED_UPLOAD_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+SUPPORTED_NAMED_IMAGE_EXTENSIONS = SUPPORTED_UPLOAD_IMAGE_EXTENSIONS | {".pdf"}
 
 
 @dataclass
 class NamedImageIndex:
     images: Dict[str, Any] = field(default_factory=dict)
+    names: Dict[str, List[Tuple[str, Any]]] = field(default_factory=dict)
     ambiguous_keys: set[str] = field(default_factory=set)
     indexed_images: int = 0
     duplicate_keys: int = 0
@@ -96,6 +98,17 @@ def _keys_from_image_name(name: str) -> List[str]:
     return keys
 
 
+def _name_key_from_image_name(name: str) -> str:
+    stem = Path(name).stem
+    stem = re.sub(r"[_\-]+", " ", stem)
+    stem = re.sub(r"(?i)\bUPC\b", " ", stem)
+    stem = re.sub(r"\d{5,14}", " ", stem)
+    stem = re.sub(r"\([^)]*\)", " ", stem)
+    stem = re.sub(r"\$?\d+(?:\.\d{2})?", " ", stem)
+    stem = re.sub(r"[^A-Za-z0-9 ]+", " ", stem)
+    return re.sub(r"\s+", " ", stem).strip().upper()
+
+
 def _store_image_key(result: NamedImageIndex, key: str, value: Any) -> None:
     if not key or key in result.ambiguous_keys:
         return
@@ -106,6 +119,15 @@ def _store_image_key(result: NamedImageIndex, key: str, value: Any) -> None:
             result.ambiguous_keys.add(key)
         return
     result.images[key] = value
+
+
+def _store_name_key(result: NamedImageIndex, name_key: str, upc_keys: List[str], value: Any) -> None:
+    if not name_key or not upc_keys:
+        return
+    strong_upc_keys = [key for key in upc_keys if len(key) >= 11]
+    if not strong_upc_keys:
+        return
+    result.names.setdefault(name_key, []).append((strong_upc_keys[0], value))
 
 
 def build_named_image_index(uploaded: Any) -> NamedImageIndex:
@@ -132,6 +154,7 @@ def build_named_image_index(uploaded: Any) -> NamedImageIndex:
             result.indexed_images += 1
             for key in keys:
                 _store_image_key(result, key, entry_payload)
+            _store_name_key(result, _name_key_from_image_name(entry_name), keys, entry_payload)
     return result
 
 
@@ -144,7 +167,7 @@ def build_named_image_index_from_folder(folder_path: str) -> NamedImageIndex:
     for path in sorted(root.rglob("*"), key=lambda p: str(p).lower()):
         if not path.is_file():
             continue
-        if path.suffix.lower() not in SUPPORTED_UPLOAD_IMAGE_EXTENSIONS:
+        if path.suffix.lower() not in SUPPORTED_NAMED_IMAGE_EXTENSIONS:
             result.ignored_files += 1
             continue
         keys = _keys_from_image_name(str(path.name))
@@ -155,6 +178,7 @@ def build_named_image_index_from_folder(folder_path: str) -> NamedImageIndex:
         path_text = str(path)
         for key in keys:
             _store_image_key(result, key, path_text)
+        _store_name_key(result, _name_key_from_image_name(path.name), keys, path_text)
     return result
 
 

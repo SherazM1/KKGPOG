@@ -505,7 +505,7 @@ def main() -> None:
                         ppt_cpp_global,
                         show_debug,
                         show_layout_overlay,
-                        named_image_index.images if named_image_index.images else None,
+                        named_image_index if named_image_index.images else None,
                     )
                 except Exception as e:
                     if show_debug:
