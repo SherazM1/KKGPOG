@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
+import difflib
+import re
 
 from app.sams_club.extract_price_strips import build_sams_price_strip_rows
 from app.sams_club.render_planogram import render_sams_planogram_pdf
@@ -47,6 +49,7 @@ def main() -> None:
     show_debug = False
     show_layout_overlay = False
     image_library_path = ""
+    image_alias_file = None
 
     with st.sidebar:
         st.header("Configuration")
@@ -118,6 +121,14 @@ def main() -> None:
                     help=(
                         "Paste a local folder path containing UPC-named card images. "
                         "The app scans it recursively and only uses images needed by the planogram."
+                    ),
+                )
+                image_alias_file = st.file_uploader(
+                    "Approved Image UPC Alias File (.csv, .xlsx)",
+                    type=["csv", "xlsx"],
+                    help=(
+                        "Optional. Upload approved mappings with current_upc and image_upc columns. "
+                        "Only approved rows are used for rendering."
                     ),
                 )
                 pptx_file = st.file_uploader(
@@ -323,6 +334,34 @@ def main() -> None:
 
     matrix_bytes = matrix_file.getvalue()
     labels_bytes = labels_pdf.getvalue()
+    image_aliases: dict[str, str] = {}
+    if image_alias_file is not None:
+        try:
+            alias_name = str(image_alias_file.name or "").lower()
+            if alias_name.endswith(".csv"):
+                alias_df = pd.read_csv(image_alias_file, dtype=str)
+            else:
+                alias_df = pd.read_excel(image_alias_file, dtype=str)
+            alias_cols = {re.sub(r"[^a-z0-9]+", "_", str(col).strip().lower()).strip("_"): col for col in alias_df.columns}
+            current_col = alias_cols.get("current_upc") or alias_cols.get("planogram_upc") or alias_cols.get("display_upc")
+            image_col = alias_cols.get("image_upc") or alias_cols.get("old_upc") or alias_cols.get("alias_upc")
+            status_col = alias_cols.get("status")
+            if current_col and image_col:
+                for _, row in alias_df.iterrows():
+                    status = str(row.get(status_col, "approved") if status_col else "approved").strip().lower()
+                    if status not in {"approved", "approve", "yes", "y", "use", "1", "true"}:
+                        continue
+                    current = re.sub(r"[^0-9]", "", str(row.get(current_col, "") or ""))
+                    image = re.sub(r"[^0-9]", "", str(row.get(image_col, "") or ""))
+                    if current and image:
+                        image_aliases[current] = image
+                        image_aliases[current.lstrip("0")] = image
+                st.caption(f"Loaded {len(set(image_aliases.values()))} approved image UPC alias(es).")
+            else:
+                st.warning("Alias file needs current_upc and image_upc columns.")
+        except Exception as e:
+            st.error(f"Unable to read image alias file: {e}")
+            return
     named_image_index = NamedImageIndex()
     if image_library_path:
         named_image_index = build_named_image_index_from_folder(image_library_path)
@@ -444,6 +483,7 @@ def main() -> None:
 
         if named_image_index.images:
             image_report_rows = []
+            suggested_alias_rows = []
             seen_required = set()
             for page in fp_pages:
                 for cell in page.cells:
@@ -459,19 +499,62 @@ def main() -> None:
                         seen_required.add(upc)
                         stripped = upc.lstrip("0")
                         expected_image_upc = upc_a_from_11(stripped) if len(stripped) == 11 else upc
-                        keys = [expected_image_upc, upc, stripped, stripped[-5:] if len(stripped) >= 5 else ""]
+                        alias_upc = image_aliases.get(upc) or image_aliases.get(stripped)
+                        alias_expected_upc = ""
+                        if alias_upc:
+                            alias_stripped = alias_upc.lstrip("0")
+                            alias_expected_upc = upc_a_from_11(alias_stripped) if len(alias_stripped) == 11 else alias_upc
+                        keys = [
+                            expected_image_upc,
+                            upc,
+                            stripped,
+                            alias_expected_upc,
+                            alias_upc or "",
+                            stripped[-5:] if len(stripped) >= 5 else "",
+                        ]
                         matched_key = next((key for key in keys if key and key in named_image_index.images), "")
                         image_report_rows.append(
                             {
                                 "Status": "FOUND" if matched_key else "MISSING",
                                 "Display UPC": upc,
                                 "Expected Image UPC": expected_image_upc,
+                                "Approved Alias Image UPC": alias_upc or "",
                                 "Last5": stripped[-5:] if len(stripped) >= 5 else "",
                                 "Card Name": match.display_name,
                                 "Matched Key": matched_key,
                                 "Matched File": str(named_image_index.images.get(matched_key, "")) if matched_key else "",
                             }
                         )
+                        if not matched_key and named_image_index.names:
+                            target_name = re.sub(r"[^A-Z0-9 ]+", " ", str(match.display_name or "").upper())
+                            target_name = re.sub(r"\s+", " ", target_name).strip()
+                            suggestions = []
+                            for image_name, entries in named_image_index.names.items():
+                                image_norm = re.sub(r"[^A-Z0-9 ]+", " ", str(image_name or "").upper())
+                                image_norm = re.sub(r"\s+", " ", image_norm).strip()
+                                if not image_norm:
+                                    continue
+                                ratio = difflib.SequenceMatcher(None, target_name, image_norm).ratio()
+                                if target_name in image_norm or image_norm in target_name:
+                                    ratio = max(ratio, 0.88)
+                                if ratio < 0.72:
+                                    continue
+                                for image_upc, payload in entries:
+                                    suggestions.append((ratio, image_upc, image_name, str(payload)))
+                            suggestions.sort(key=lambda item: item[0], reverse=True)
+                            for ratio, image_upc, image_name, payload in suggestions[:5]:
+                                suggested_alias_rows.append(
+                                    {
+                                        "status": "review",
+                                        "current_upc": upc,
+                                        "current_name": match.display_name,
+                                        "suggested_image_upc": image_upc,
+                                        "suggested_image_name": image_name,
+                                        "confidence": round(float(ratio), 4),
+                                        "matched_file": payload,
+                                        "reason": "filename name similarity; review before approval",
+                                    }
+                                )
 
             matched_image_count = sum(1 for row in image_report_rows if row["Status"] == "FOUND")
             missing_image_rows = [row for row in image_report_rows if row["Status"] == "MISSING"]
@@ -484,6 +567,18 @@ def main() -> None:
                     "Download Local Image Match Report CSV",
                     report_df.to_csv(index=False).encode("utf-8"),
                     file_name="local_image_match_report.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+            if suggested_alias_rows:
+                suggestion_df = pd.DataFrame(suggested_alias_rows).sort_values(
+                    ["confidence", "current_upc"],
+                    ascending=[False, True],
+                )
+                st.download_button(
+                    "Download Suggested Image Alias CSV",
+                    suggestion_df.to_csv(index=False).encode("utf-8"),
+                    file_name="suggested_image_aliases.csv",
                     mime="text/csv",
                     use_container_width=True,
                 )
@@ -520,6 +615,7 @@ def main() -> None:
                         show_debug,
                         show_layout_overlay,
                         named_image_index if named_image_index.images else None,
+                        image_aliases if image_aliases else None,
                     )
                 except Exception as e:
                     if show_debug:

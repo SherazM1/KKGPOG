@@ -64,6 +64,7 @@ def render_full_pallet_display_pdf(
     debug: bool = False,
     debug_overlay: bool = False,
     named_image_index: Optional[Any] = None,
+    image_aliases: Optional[Dict[str, str]] = None,
 ) -> bytes:
     return render_full_pallet_pdf(
         fp_pages,
@@ -77,6 +78,7 @@ def render_full_pallet_display_pdf(
         debug=debug,
         debug_overlay=debug_overlay,
         named_image_index=named_image_index,
+        image_aliases=image_aliases,
 )
 
 

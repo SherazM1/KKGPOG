@@ -383,6 +383,7 @@ def render_full_pallet_pdf(
     debug: bool = False,
     debug_overlay: bool = False,
     named_image_index: Optional[object] = None,
+    image_aliases: Optional[Dict[str, str]] = None,
 ) -> bytes:
     buf = io.BytesIO()
     images_doc = fitz.open(stream=images_pdf_bytes, filetype="pdf")
@@ -419,6 +420,33 @@ def render_full_pallet_pdf(
     else:
         named_images = dict(named_image_index or {})
         named_names = {}
+    image_alias_map = {
+        re.sub(r"[^0-9]", "", str(k or "")): re.sub(r"[^0-9]", "", str(v or ""))
+        for k, v in dict(image_aliases or {}).items()
+        if re.sub(r"[^0-9]", "", str(k or "")) and re.sub(r"[^0-9]", "", str(v or ""))
+    }
+
+    def _candidate_image_keys_for_upc(raw: Optional[str]) -> List[str]:
+        digits = re.sub(r"[^0-9]", "", str(raw or ""))
+        if not digits:
+            return []
+        keys: List[str] = []
+        candidates = [digits, digits.lstrip("0")]
+        stripped = digits.lstrip("0")
+        if len(stripped) == 11:
+            candidates.append(upc_a_from_11(stripped))
+        if len(digits) == 11:
+            candidates.append(upc_a_from_11(digits))
+        if len(digits) in {11, 12}:
+            candidates.extend([digits.zfill(12), digits[-11:]])
+        if len(digits) >= 5:
+            candidates.append(digits[-5:])
+        seen_local: set[str] = set()
+        for candidate in candidates:
+            if candidate and candidate not in seen_local:
+                keys.append(candidate)
+                seen_local.add(candidate)
+        return keys
 
     def _image_from_named_payload(payload: object) -> Optional[Image.Image]:
         if isinstance(payload, (bytes, bytearray)):
@@ -448,24 +476,14 @@ def render_full_pallet_pdf(
         seen: set[str] = set()
         raw_upc = re.sub(r"[^0-9]", "", str(upc12 or ""))
         stripped_upc = raw_upc.lstrip("0")
-        if len(stripped_upc) == 11:
-            checked_upc = upc_a_from_11(stripped_upc)
-        elif len(raw_upc) == 11:
-            checked_upc = upc_a_from_11(raw_upc)
-        else:
-            checked_upc = ""
+        alias_upc = (
+            image_alias_map.get(raw_upc)
+            or image_alias_map.get(stripped_upc)
+            or image_alias_map.get(raw_upc.zfill(12))
+        )
 
-        for raw in [checked_upc, raw_upc, stripped_upc, last5]:
-            digits = re.sub(r"[^0-9]", "", str(raw or ""))
-            if not digits:
-                continue
-            candidates = [digits]
-            if len(digits) >= 5:
-                candidates.append(digits[-5:])
-            if len(digits) in {11, 12}:
-                candidates.append(digits.zfill(12))
-                candidates.append(digits[-11:])
-            for candidate in candidates:
+        for raw in [raw_upc, stripped_upc, alias_upc, last5]:
+            for candidate in _candidate_image_keys_for_upc(raw):
                 if candidate and candidate not in seen:
                     keys.append(candidate)
                     seen.add(candidate)
