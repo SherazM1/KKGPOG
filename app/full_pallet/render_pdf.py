@@ -1075,6 +1075,25 @@ def render_full_pallet_pdf(
             gap_units.append(max(1, int(unit)))
         return sec_cols, gap_units
 
+    def _bonus_clean_row_groups(p: FullPalletPage, sec_rows: List[int]) -> List[List[int]]:
+        """Merge split bonus rows like B/D's 4+2 top group into one display row."""
+        row_ids = list(sec_rows)
+        groups: List[List[int]] = []
+        idx = 0
+        while idx < len(row_ids):
+            row_id = row_ids[idx]
+            count = sum(1 for cell in p.cells if cell.row == row_id)
+            if idx + 1 < len(row_ids):
+                next_row_id = row_ids[idx + 1]
+                next_count = sum(1 for cell in p.cells if cell.row == next_row_id)
+                if 0 < count < 8 and 0 < next_count < 8 and count + next_count <= 8:
+                    groups.append([row_id, next_row_id])
+                    idx += 2
+                    continue
+            groups.append([row_id])
+            idx += 1
+        return groups
+
     def _build_non_ppt_slot_map_for_side(
         p: FullPalletPage,
         global_rows: List[int],
@@ -1749,6 +1768,11 @@ def render_full_pallet_pdf(
 
         policy = _section_shape_policy(section_kind)
         sec_rows_sorted = list(sec_rows)
+        render_row_groups = (
+            _bonus_clean_row_groups(p, sec_rows_sorted)
+            if section_kind == "bonus"
+            else [[row_id] for row_id in sec_rows_sorted]
+        )
         sec_cols, sec_gap_units = _section_cols_and_gaps(
             p, sec_rows_sorted, global_cols, global_gap_units
         )
@@ -1767,7 +1791,8 @@ def render_full_pallet_pdf(
             min(policy["max_card_h"], card_w * policy["card_ratio"]),
         )
         row_gutter = policy["row_gutter"]
-        total_h = len(sec_rows_sorted) * card_h + max(0, len(sec_rows_sorted) - 1) * row_gutter
+        render_row_count = len(render_row_groups)
+        total_h = render_row_count * card_h + max(0, render_row_count - 1) * row_gutter
         if include_bar:
             total_h += SECTION_BAR_H + SECTION_BAR_GAP
 
@@ -1786,6 +1811,7 @@ def render_full_pallet_pdf(
             "total_h": total_h,
             "crop_zoom": policy["crop_zoom"],
             "crop_inset": policy["crop_inset"],
+            "render_row_groups": render_row_groups,
         }
 
     def _draw_shape_preserving_section(
@@ -1816,6 +1842,7 @@ def render_full_pallet_pdf(
         sec_col_rank = {c_: i for i, c_ in enumerate(sec_cols)}
         rmap = {r: i for i, r in enumerate(sec_rows_sorted)}
         row_set = set(sec_rows_sorted)
+        is_bonus_section = str(label or "").upper() == "BONUS"
 
         occ: Dict[Tuple[int, int], CellData] = {}
         for cell in p.cells:
@@ -1829,9 +1856,16 @@ def render_full_pallet_pdf(
         rightmost_used = max(rightmost_used, content_x0 + float(plan["right"]))
 
         grid_top = y_cursor
-        n_rows = int(plan["n_rows"])
+        render_row_groups = list(plan.get("render_row_groups") or [[row_id] for row_id in sec_rows_sorted])
+        n_rows = len(render_row_groups) if is_bonus_section else int(plan["n_rows"])
         n_cols = int(plan["n_cols"])
-        is_bonus_section = str(label or "").upper() == "BONUS"
+        bonus_render_rows: List[List[CellData]] = []
+        if is_bonus_section:
+            for row_group in render_row_groups:
+                row_ids = {int(row_id) for row_id in row_group}
+                row_cells = [cell for cell in p.cells if cell.row in row_ids]
+                row_cells.sort(key=lambda cell: (render_row_groups.index(row_group), cell.row, cell.col))
+                bonus_render_rows.append(row_cells)
         pixmap_page_img: Optional[Image.Image] = None
         pixmap_page_zoom = 3.0
         if is_bonus_section:
@@ -1843,9 +1877,23 @@ def render_full_pallet_pdf(
 
         for ri in range(n_rows):
             y = grid_top - (ri + 1) * card_h - ri * row_gutter
-            for ci in range(n_cols):
-                x = xs[ci]
-                cell = occ.get((ri, ci))
+            if is_bonus_section:
+                row_cells = bonus_render_rows[ri] if ri < len(bonus_render_rows) else []
+                row_n_cols = len(row_cells)
+                if row_n_cols <= 0:
+                    continue
+                row_gap = 6.0
+                row_total_w = (row_n_cols * card_w) + max(0, row_n_cols - 1) * row_gap
+                row_start_x = content_x0 + max(0.0, (content_w - row_total_w) / 2.0)
+                row_xs = [row_start_x + idx * (card_w + row_gap) for idx in range(row_n_cols)]
+            else:
+                row_cells = []
+                row_n_cols = n_cols
+                row_xs = xs
+
+            for ci in range(row_n_cols):
+                x = row_xs[ci]
+                cell = row_cells[ci] if is_bonus_section else occ.get((ri, ci))
 
                 if cell is None:
                     continue
