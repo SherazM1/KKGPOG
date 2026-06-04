@@ -40,6 +40,7 @@ from app.shared.text_utils import (
     _norm_name,
     _to_last5,
 )
+from app.shared.upload_utils import upc_a_from_11
 
 FULL_PALLET_MID_BAND_PROFILES = {
     "A": {
@@ -417,7 +418,16 @@ def render_full_pallet_pdf(
     def _named_image_for_item(upc12: Optional[str], last5: Optional[str]) -> Tuple[Optional[Image.Image], Optional[str]]:
         keys: List[str] = []
         seen: set[str] = set()
-        for raw in [upc12, str(upc12 or "").lstrip("0"), last5]:
+        raw_upc = re.sub(r"[^0-9]", "", str(upc12 or ""))
+        stripped_upc = raw_upc.lstrip("0")
+        if len(stripped_upc) == 11:
+            checked_upc = upc_a_from_11(stripped_upc)
+        elif len(raw_upc) == 11:
+            checked_upc = upc_a_from_11(raw_upc)
+        else:
+            checked_upc = ""
+
+        for raw in [checked_upc, raw_upc, stripped_upc, last5]:
             digits = re.sub(r"[^0-9]", "", str(raw or ""))
             if not digits:
                 continue

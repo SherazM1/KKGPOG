@@ -7,9 +7,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
-import fitz
-from PIL import Image
-
 
 SUPPORTED_UPLOAD_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 
@@ -17,9 +14,24 @@ SUPPORTED_UPLOAD_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", "
 @dataclass
 class NamedImageIndex:
     images: Dict[str, Any] = field(default_factory=dict)
+    ambiguous_keys: set[str] = field(default_factory=set)
     indexed_images: int = 0
     duplicate_keys: int = 0
     ignored_files: int = 0
+
+
+def upc_a_check_digit(upc11: str) -> str:
+    digits = re.sub(r"[^0-9]", "", str(upc11 or ""))
+    if len(digits) != 11:
+        return ""
+    total = sum(int(d) * (3 if idx % 2 == 0 else 1) for idx, d in enumerate(digits))
+    return str((10 - (total % 10)) % 10)
+
+
+def upc_a_from_11(upc11: str) -> str:
+    digits = re.sub(r"[^0-9]", "", str(upc11 or ""))
+    check = upc_a_check_digit(digits)
+    return f"{digits}{check}" if check else ""
 
 
 def _uploaded_name(uploaded: Any, fallback: str = "") -> str:
@@ -70,8 +82,11 @@ def _keys_from_image_name(name: str) -> List[str]:
     for token in digit_tokens:
         digits = re.sub(r"[^0-9]", "", token)
         candidates = [digits, digits[-5:]]
+        if len(digits) == 11:
+            candidates.append(upc_a_from_11(digits))
         if len(digits) in {11, 12}:
             candidates.append(digits.zfill(12))
+            candidates.append(digits[-11:])
         if len(digits) > 12:
             candidates.append(digits[-12:])
         for candidate in candidates:
@@ -79,6 +94,18 @@ def _keys_from_image_name(name: str) -> List[str]:
                 keys.append(candidate)
                 seen.add(candidate)
     return keys
+
+
+def _store_image_key(result: NamedImageIndex, key: str, value: Any) -> None:
+    if not key or key in result.ambiguous_keys:
+        return
+    if key in result.images:
+        result.duplicate_keys += 1
+        if len(key) <= 5:
+            result.images.pop(key, None)
+            result.ambiguous_keys.add(key)
+        return
+    result.images[key] = value
 
 
 def build_named_image_index(uploaded: Any) -> NamedImageIndex:
@@ -104,10 +131,7 @@ def build_named_image_index(uploaded: Any) -> NamedImageIndex:
                 continue
             result.indexed_images += 1
             for key in keys:
-                if key in result.images:
-                    result.duplicate_keys += 1
-                    continue
-                result.images[key] = entry_payload
+                _store_image_key(result, key, entry_payload)
     return result
 
 
@@ -130,14 +154,13 @@ def build_named_image_index_from_folder(folder_path: str) -> NamedImageIndex:
         result.indexed_images += 1
         path_text = str(path)
         for key in keys:
-            if key in result.images:
-                result.duplicate_keys += 1
-                continue
-            result.images[key] = path_text
+            _store_image_key(result, key, path_text)
     return result
 
 
 def _label_page_sizes(labels_pdf_bytes: bytes) -> List[Tuple[float, float]]:
+    import fitz
+
     sizes: List[Tuple[float, float]] = []
     labels_doc = fitz.open(stream=labels_pdf_bytes, filetype="pdf")
     try:
@@ -151,6 +174,8 @@ def _label_page_sizes(labels_pdf_bytes: bytes) -> List[Tuple[float, float]]:
 
 def blank_images_pdf_from_labels(labels_pdf_bytes: bytes) -> bytes:
     """Create a blank image-source PDF with pages aligned to the labels PDF."""
+    import fitz
+
     page_sizes = _label_page_sizes(labels_pdf_bytes)
     out_doc = fitz.open()
     try:
@@ -170,6 +195,9 @@ def images_upload_to_pdf_bytes(uploaded: Any, labels_pdf_bytes: bytes) -> bytes:
     page-per-image PDF, using the labels PDF page sizes so existing bbox cropping
     remains in the same coordinate space.
     """
+    import fitz
+    from PIL import Image
+
     uploaded_files = list(uploaded) if isinstance(uploaded, list) else [uploaded]
     if not uploaded_files:
         raise ValueError("No image source files were uploaded.")
