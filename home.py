@@ -84,10 +84,12 @@ def _numeric_near_image_match(index: NamedImageIndex, raw_upc: object):
 # Renderer toggle: set to True to use the new HTML/Playwright renderer, False for the old ReportLab renderer
 USE_HTML_PRICE_STRIP_RENDERER = True
 
-if USE_HTML_PRICE_STRIP_RENDERER:
-    from app.sams_club.render_price_strips_html import render_sams_price_strips_pdf
-else:
-    from app.sams_club.render_price_strips import render_sams_price_strips_pdf
+def _load_sams_price_strip_renderer():
+    if USE_HTML_PRICE_STRIP_RENDERER:
+        from app.sams_club.render_price_strips_html import render_sams_price_strips_pdf
+    else:
+        from app.sams_club.render_price_strips import render_sams_price_strips_pdf
+    return render_sams_price_strips_pdf
 
 
 def main() -> None:
@@ -343,6 +345,7 @@ def main() -> None:
                     st.session_state["sams_price_strip_pdf_result"] = None
                 else:
                     with st.spinner("Rendering Sam's price strips PDF..."):
+                        render_sams_price_strips_pdf = _load_sams_price_strip_renderer()
                         st.session_state["sams_price_strip_pdf_result"] = render_sams_price_strips_pdf(
                             strip_build.strip_rows,
                             generated_by="Kendal King",
@@ -614,7 +617,7 @@ def main() -> None:
                             if numeric_key:
                                 matched_key = numeric_key
                                 matched_file = numeric_file
-                                match_status = "FOUND_NUMERIC_NEAR"
+                                match_status = "REVIEW_NUMERIC_NEAR"
                         image_report_rows.append(
                             {
                                 "Status": match_status,
@@ -627,7 +630,23 @@ def main() -> None:
                                 "Matched File": matched_file,
                             }
                         )
-                        if not matched_key and named_image_index.names:
+                        if match_status == "REVIEW_NUMERIC_NEAR":
+                            candidate_upc_match = re.search(r"numeric-near:(\d+)", matched_key)
+                            candidate_upc = candidate_upc_match.group(1) if candidate_upc_match else ""
+                            suggested_alias_rows.append(
+                                {
+                                    "status": "review",
+                                    "current_upc": upc,
+                                    "current_name": match.display_name,
+                                    "image_upc": candidate_upc,
+                                    "suggested_image_upc": candidate_upc,
+                                    "suggested_image_name": "",
+                                    "confidence": 0.5,
+                                    "matched_file": matched_file,
+                                    "reason": "review only: numeric-near candidate; not used for rendering unless approved",
+                                }
+                            )
+                        if match_status == "MISSING" and named_image_index.names:
                             suggestions = []
                             for image_name, entries in named_image_index.names.items():
                                 image_norm = re.sub(r"[^A-Z0-9 ]+", " ", str(image_name or "").upper())
@@ -680,7 +699,10 @@ def main() -> None:
                     for idx, row in enumerate(rows_for_upc):
                         conf = float(row["confidence"])
                         reason_text = str(row.get("reason") or "")
-                        if (
+                        if "review only: numeric-near candidate" in reason_text:
+                            row["status"] = "review"
+                            row["reason"] = reason_text
+                        elif (
                             idx == 0
                             and "near UPC core" in reason_text
                             and conf >= 0.88
@@ -702,8 +724,9 @@ def main() -> None:
 
             matched_image_count = sum(1 for row in image_report_rows if str(row["Status"]).startswith("FOUND"))
             missing_image_rows = [row for row in image_report_rows if row["Status"] == "MISSING"]
+            review_image_count = sum(1 for row in image_report_rows if str(row["Status"]).startswith("REVIEW"))
             st.caption(
-                f"Local image library matches {matched_image_count} of {len(image_report_rows)} unique planogram UPC(s)."
+                f"Local image library safely matches {matched_image_count} of {len(image_report_rows)} unique planogram UPC(s); {review_image_count} numeric candidate(s) need review."
             )
             if image_report_rows:
                 report_df = pd.DataFrame(image_report_rows).sort_values(["Status", "Display UPC"])

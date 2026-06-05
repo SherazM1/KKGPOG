@@ -591,11 +591,6 @@ def render_full_pallet_pdf(
                     img = _image_from_named_payload(top_payload)
                     if img is not None:
                         return img, f"name+near-upc:{top_upc}:{reason}"
-        payload, numeric_key = _numeric_near_payload_for_upc(raw_upc or stripped_upc)
-        if payload is not None:
-            img = _image_from_named_payload(payload)
-            if img is not None:
-                return img, numeric_key
         return None, None
 
     def _best_row_for_label(candidates: List[MatrixRow], label_text: str) -> Optional[MatrixRow]:
