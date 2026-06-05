@@ -5,7 +5,7 @@ import re
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
 SUPPORTED_UPLOAD_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
@@ -34,6 +34,81 @@ def upc_a_from_11(upc11: str) -> str:
     digits = re.sub(r"[^0-9]", "", str(upc11 or ""))
     check = upc_a_check_digit(digits)
     return f"{digits}{check}" if check else ""
+
+
+def upc_digit_variants(raw: Optional[str]) -> List[str]:
+    digits = re.sub(r"[^0-9]", "", str(raw or ""))
+    if not digits:
+        return []
+    variants = [
+        digits,
+        digits.lstrip("0"),
+        digits.zfill(12) if len(digits) in {11, 12} else "",
+        digits[-11:] if len(digits) in {11, 12} else "",
+        digits[-12:] if len(digits) > 12 else "",
+    ]
+    stripped = digits.lstrip("0")
+    if len(stripped) == 11:
+        variants.append(upc_a_from_11(stripped))
+    if len(digits) == 11:
+        variants.append(upc_a_from_11(digits))
+
+    result: List[str] = []
+    seen: set[str] = set()
+    for variant in variants:
+        if variant and variant not in seen:
+            result.append(variant)
+            seen.add(variant)
+    return result
+
+
+def upc_near_match_reason(target_upc: Optional[str], image_upc: Optional[str]) -> Optional[str]:
+    target_variants = [v for v in upc_digit_variants(target_upc) if len(v) >= 10]
+    image_variants = [v for v in upc_digit_variants(image_upc) if len(v) >= 10]
+    if not target_variants or not image_variants:
+        return None
+
+    def _core(value: str) -> str:
+        digits = re.sub(r"[^0-9]", "", str(value or "")).lstrip("0")
+        if len(digits) == 12:
+            return digits[:11]
+        return digits
+
+    target_cores = {_core(v) for v in target_variants if len(_core(v)) >= 10}
+    image_cores = {_core(v) for v in image_variants if len(_core(v)) >= 10}
+    if target_cores & image_cores:
+        return "same UPC core/check-digit variant"
+
+    def _one_edit_apart(a: str, b: str) -> bool:
+        if abs(len(a) - len(b)) > 1:
+            return False
+        if len(a) == len(b):
+            return sum(1 for x, y in zip(a, b) if x != y) <= 1
+        if len(a) > len(b):
+            a, b = b, a
+        i = j = edits = 0
+        while i < len(a) and j < len(b):
+            if a[i] == b[j]:
+                i += 1
+                j += 1
+            else:
+                edits += 1
+                if edits > 1:
+                    return False
+                j += 1
+        return True
+
+    for target in target_cores:
+        for image in image_cores:
+            if len(target) >= 10 and len(image) >= 10:
+                if _one_edit_apart(target, image):
+                    return "near UPC core: one digit changed/added/dropped"
+                shorter, longer = (target, image) if len(target) <= len(image) else (image, target)
+                if len(shorter) >= 10 and shorter in longer:
+                    return "near UPC core: extra leading/trailing digit"
+                if len(target) >= 11 and len(image) >= 11 and target[1:10] == image[1:10]:
+                    return "near UPC core: matching middle digits"
+    return None
 
 
 def _uploaded_name(uploaded: Any, fallback: str = "") -> str:
@@ -83,14 +158,7 @@ def _keys_from_image_name(name: str) -> List[str]:
     seen: set[str] = set()
     for token in digit_tokens:
         digits = re.sub(r"[^0-9]", "", token)
-        candidates = [digits, digits[-5:]]
-        if len(digits) == 11:
-            candidates.append(upc_a_from_11(digits))
-        if len(digits) in {11, 12}:
-            candidates.append(digits.zfill(12))
-            candidates.append(digits[-11:])
-        if len(digits) > 12:
-            candidates.append(digits[-12:])
+        candidates = upc_digit_variants(digits) + [digits[-5:]]
         for candidate in candidates:
             if candidate and candidate not in seen:
                 keys.append(candidate)

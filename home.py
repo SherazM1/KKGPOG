@@ -16,6 +16,7 @@ from app.shared.upload_utils import (
     build_named_image_index_from_folder,
     images_upload_to_pdf_bytes,
     upc_a_from_11,
+    upc_near_match_reason,
 )
 
 # Renderer toggle: set to True to use the new HTML/Playwright renderer, False for the old ReportLab renderer
@@ -513,21 +514,47 @@ def main() -> None:
                             stripped[-5:] if len(stripped) >= 5 else "",
                         ]
                         matched_key = next((key for key in keys if key and key in named_image_index.images), "")
+                        matched_file = str(named_image_index.images.get(matched_key, "")) if matched_key else ""
+                        match_status = "FOUND" if matched_key else "MISSING"
+                        target_name = re.sub(r"[^A-Z0-9 ]+", " ", str(match.display_name or "").upper())
+                        target_name = re.sub(r"\s+", " ", target_name).strip()
+                        if not matched_key and target_name and named_image_index.names:
+                            near_matches = []
+                            for image_name, entries in named_image_index.names.items():
+                                image_norm = re.sub(r"[^A-Z0-9 ]+", " ", str(image_name or "").upper())
+                                image_norm = re.sub(r"\s+", " ", image_norm).strip()
+                                if not image_norm:
+                                    continue
+                                ratio = difflib.SequenceMatcher(None, target_name, image_norm).ratio()
+                                if target_name in image_norm or image_norm in target_name:
+                                    ratio = max(ratio, 0.88)
+                                if ratio < 0.78:
+                                    continue
+                                for image_upc, payload in entries:
+                                    reason = upc_near_match_reason(upc, image_upc)
+                                    if reason:
+                                        near_matches.append((ratio, image_upc, str(payload), reason))
+                            near_matches.sort(key=lambda item: item[0], reverse=True)
+                            if near_matches:
+                                top_ratio, image_upc, payload, reason = near_matches[0]
+                                second_ratio = near_matches[1][0] if len(near_matches) > 1 else 0.0
+                                if top_ratio >= 0.86 or top_ratio - second_ratio >= 0.08:
+                                    matched_key = f"name+near-upc:{image_upc}"
+                                    matched_file = payload
+                                    match_status = "FOUND_NEAR"
                         image_report_rows.append(
                             {
-                                "Status": "FOUND" if matched_key else "MISSING",
+                                "Status": match_status,
                                 "Display UPC": upc,
                                 "Expected Image UPC": expected_image_upc,
                                 "Approved Alias Image UPC": alias_upc or "",
                                 "Last5": stripped[-5:] if len(stripped) >= 5 else "",
                                 "Card Name": match.display_name,
                                 "Matched Key": matched_key,
-                                "Matched File": str(named_image_index.images.get(matched_key, "")) if matched_key else "",
+                                "Matched File": matched_file,
                             }
                         )
                         if not matched_key and named_image_index.names:
-                            target_name = re.sub(r"[^A-Z0-9 ]+", " ", str(match.display_name or "").upper())
-                            target_name = re.sub(r"\s+", " ", target_name).strip()
                             suggestions = []
                             for image_name, entries in named_image_index.names.items():
                                 image_norm = re.sub(r"[^A-Z0-9 ]+", " ", str(image_name or "").upper())
@@ -540,23 +567,67 @@ def main() -> None:
                                 if ratio < 0.72:
                                     continue
                                 for image_upc, payload in entries:
-                                    suggestions.append((ratio, image_upc, image_name, str(payload)))
+                                    near_reason = upc_near_match_reason(upc, image_upc)
+                                    if near_reason:
+                                        ratio = max(ratio, 0.86)
+                                    suggestions.append((ratio, image_upc, image_name, str(payload), near_reason))
                             suggestions.sort(key=lambda item: item[0], reverse=True)
-                            for ratio, image_upc, image_name, payload in suggestions[:5]:
+                            for ratio, image_upc, image_name, payload, near_reason in suggestions[:5]:
                                 suggested_alias_rows.append(
                                     {
                                         "status": "review",
                                         "current_upc": upc,
                                         "current_name": match.display_name,
+                                        "image_upc": image_upc,
                                         "suggested_image_upc": image_upc,
                                         "suggested_image_name": image_name,
                                         "confidence": round(float(ratio), 4),
                                         "matched_file": payload,
-                                        "reason": "filename name similarity; review before approval",
+                                        "reason": near_reason or "filename name similarity; review before approval",
                                     }
                                 )
 
-            matched_image_count = sum(1 for row in image_report_rows if row["Status"] == "FOUND")
+            if suggested_alias_rows:
+                deduped_suggestions: dict[tuple[str, str], dict] = {}
+                for row in suggested_alias_rows:
+                    key = (str(row["current_upc"]), str(row["suggested_image_upc"]))
+                    existing = deduped_suggestions.get(key)
+                    if existing is None or float(row["confidence"]) > float(existing["confidence"]):
+                        deduped_suggestions[key] = row
+
+                by_current: dict[str, list[dict]] = {}
+                for row in deduped_suggestions.values():
+                    by_current.setdefault(str(row["current_upc"]), []).append(row)
+
+                cleaned_suggestion_rows = []
+                for current_upc, rows_for_upc in by_current.items():
+                    rows_for_upc.sort(key=lambda row: float(row["confidence"]), reverse=True)
+                    top_conf = float(rows_for_upc[0]["confidence"]) if rows_for_upc else 0.0
+                    second_conf = float(rows_for_upc[1]["confidence"]) if len(rows_for_upc) > 1 else 0.0
+                    for idx, row in enumerate(rows_for_upc):
+                        conf = float(row["confidence"])
+                        reason_text = str(row.get("reason") or "")
+                        if (
+                            idx == 0
+                            and "near UPC core" in reason_text
+                            and conf >= 0.88
+                            and (len(rows_for_upc) == 1 or top_conf - second_conf >= 0.04)
+                        ):
+                            row["status"] = "approved"
+                            row["reason"] = f"auto-approved: {reason_text} plus filename name match"
+                        elif idx == 0 and conf >= 0.92 and (len(rows_for_upc) == 1 or top_conf - second_conf >= 0.025):
+                            row["status"] = "approved"
+                            row["reason"] = "auto-approved: single high-confidence filename name match; UPC alias still required"
+                        elif conf >= 0.84:
+                            row["status"] = "review"
+                            row["reason"] = f"review: {reason_text}" if reason_text else "review: plausible filename name match"
+                        else:
+                            row["status"] = "ignore"
+                            row["reason"] = "ignore: low filename name similarity"
+                        cleaned_suggestion_rows.append(row)
+                suggested_alias_rows = cleaned_suggestion_rows
+
+            matched_image_count = sum(1 for row in image_report_rows if str(row["Status"]).startswith("FOUND"))
             missing_image_rows = [row for row in image_report_rows if row["Status"] == "MISSING"]
             st.caption(
                 f"Local image library matches {matched_image_count} of {len(image_report_rows)} unique planogram UPC(s)."

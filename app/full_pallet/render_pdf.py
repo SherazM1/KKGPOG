@@ -40,7 +40,7 @@ from app.shared.text_utils import (
     _norm_name,
     _to_last5,
 )
-from app.shared.upload_utils import NamedImageIndex, upc_a_from_11
+from app.shared.upload_utils import NamedImageIndex, upc_a_from_11, upc_near_match_reason
 
 FULL_PALLET_MID_BAND_PROFILES = {
     "A": {
@@ -513,6 +513,29 @@ def render_full_pallet_pdf(
                     img = _image_from_named_payload(payload)
                     if img is not None:
                         return img, f"name+upc:{file_upc_key}"
+            near_matches: List[Tuple[float, str, str, object, str]] = []
+            for file_name_key, entries in named_names.items():
+                file_norm = _norm_name(file_name_key)
+                if not file_norm:
+                    continue
+                ratio = difflib.SequenceMatcher(None, target, file_norm).ratio()
+                if target in file_norm or file_norm in target:
+                    ratio = max(ratio, 0.88)
+                if ratio < 0.78:
+                    continue
+                for file_upc_key, payload in entries:
+                    reason = upc_near_match_reason(raw_upc or stripped_upc, file_upc_key)
+                    if not reason:
+                        continue
+                    near_matches.append((ratio, file_upc_key, file_name_key, payload, reason))
+            near_matches.sort(key=lambda item: item[0], reverse=True)
+            if near_matches:
+                top_ratio, top_upc, _top_name, top_payload, reason = near_matches[0]
+                second_ratio = near_matches[1][0] if len(near_matches) > 1 else 0.0
+                if top_ratio >= 0.86 or top_ratio - second_ratio >= 0.08:
+                    img = _image_from_named_payload(top_payload)
+                    if img is not None:
+                        return img, f"name+near-upc:{top_upc}:{reason}"
         return None, None
 
     def _best_row_for_label(candidates: List[MatrixRow], label_text: str) -> Optional[MatrixRow]:
