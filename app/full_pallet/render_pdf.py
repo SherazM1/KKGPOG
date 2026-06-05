@@ -4576,10 +4576,28 @@ def render_full_pallet_pdf(
         cleaned_candidate_records, rejected_middle_candidates, raw_middle_candidate_count, middle_grid_row_debug = (
             _build_middle_grid_section_candidate_records(p, section)
         )
-        if len(cleaned_candidate_records) < 24:
+        cell_candidate_records, cell_rejected_middle_candidates, cell_raw_middle_candidate_count, cell_middle_grid_row_debug = (
+            _build_middle_grid_cell_candidate_records(p)
+        )
+        prefer_cell_candidates = (
+            str(p.side_letter or "").upper() in {"B", "D"}
+            and len(cell_candidate_records) >= 24
+        )
+        if len(cleaned_candidate_records) < 24 or prefer_cell_candidates:
+            previous_section_candidate_count = len(cleaned_candidate_records)
+            previous_middle_grid_row_debug = dict(middle_grid_row_debug)
             cleaned_candidate_records, rejected_middle_candidates, raw_middle_candidate_count, middle_grid_row_debug = (
-                _build_middle_grid_cell_candidate_records(p)
+                cell_candidate_records,
+                cell_rejected_middle_candidates,
+                cell_raw_middle_candidate_count,
+                cell_middle_grid_row_debug,
             )
+            middle_grid_row_debug = {
+                **middle_grid_row_debug,
+                "candidate_source_preference": "label_cell_candidates_for_bd_side" if prefer_cell_candidates else "label_cell_candidates_fallback",
+                "previous_section_candidate_count": previous_section_candidate_count,
+                "previous_section_row_debug": previous_middle_grid_row_debug,
+            }
         selection = select_mid_band_cards_for_display(
             p.side_letter,
             cleaned_candidate_records,
@@ -4991,6 +5009,8 @@ def render_full_pallet_pdf(
             pixmap_slot_bbox: Optional[Tuple[float, float, float, float]] = None
             pixmap_slot_bbox_before_padding: Optional[Tuple[float, float, float, float]] = None
             ac_pixmap_source_cell: Optional[dict] = None
+            label_bbox_crop: Optional[Tuple[float, float, float, float]] = None
+            label_image_pdf_aligned = False
             image_binding_method = "fallback_none"
             image_identity_confident = False
             wrong_image_fallback_prevented = False
@@ -5013,7 +5033,50 @@ def render_full_pallet_pdf(
                 image_identity_confident = True
                 selected_image_source_id = named_key
                 exact_image_binding_count += 1
-            elif (
+            else:
+                raw_label_bbox = meta.get("label_bbox_used")
+                if (
+                    img_page is not None
+                    and label_page is not None
+                    and raw_label_bbox
+                    and len(raw_label_bbox) == 4
+                ):
+                    try:
+                        iw, ih = float(img_page.rect.width), float(img_page.rect.height)
+                        lw, lh = float(label_page.rect.width), float(label_page.rect.height)
+                        label_bbox_crop = tuple(map(float, raw_label_bbox))
+                        label_image_pdf_aligned = abs(iw - lw) <= 1.0 and abs(ih - lh) <= 1.0
+                    except Exception:
+                        label_bbox_crop = None
+                        label_image_pdf_aligned = False
+                if label_image_pdf_aligned and label_bbox_crop is not None and upc12:
+                    try:
+                        img = crop_image_cell(
+                            images_doc,
+                            p.page_index,
+                            label_bbox_crop,
+                            zoom=float(plan["crop_zoom"]),
+                            inset=0.02,
+                        )
+                        image_crop_bbox_used = label_bbox_crop
+                        image_crop_source = "images_pdf_label_bbox"
+                        chosen_crop_source_type = "images_pdf_label_bbox"
+                        crop_selection_path = "resolved_metadata_label_bbox_to_aligned_images_pdf"
+                        fallback_used = False
+                        fallback_type = ""
+                        final_crop_slot_aligned = True
+                        crop_flagged_suspicious = False
+                        suspicious_reasons = []
+                        image_binding_method = "metadata_label_bbox_aligned_pdf"
+                        image_identity_confident = True
+                        selected_image_source_id = f"label_bbox:{idx}"
+                        exact_image_binding_count += 1
+                    except Exception as exc:
+                        img = None
+                        crop_error = str(exc)
+            if (
+                img is None
+                and
                 (ac_pixmap_enabled or strict_side_guardrails)
                 and pixmap_page_img is not None
                 and 0 <= image_source_index < len(pixmap_flat_cells)
@@ -5062,7 +5125,7 @@ def render_full_pallet_pdf(
                     suspicious_reasons = list(suspicious_reasons) + ["missing_ac_pixmap_source_bbox"]
                     crop_flagged_suspicious = True
                     fallback_used = True
-            elif ac_pixmap_enabled or strict_side_guardrails:
+            if img is None and (ac_pixmap_enabled or strict_side_guardrails):
                 rejected_crop_reasons = list(rejected_crop_reasons) + ["no_ordered_images_pdf_art_cell_for_clean_slot_index"]
                 suspicious_reasons = list(suspicious_reasons) + ["no_ordered_images_pdf_art_cell_for_clean_slot_index"]
                 crop_flagged_suspicious = True

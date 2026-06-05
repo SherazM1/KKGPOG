@@ -81,6 +81,17 @@ def _numeric_near_image_match(index: NamedImageIndex, raw_upc: object):
     return f"numeric-near:{candidates[0][2]}:prefix{best_prefix}:distance{best_distance}", candidates[0][3]
 
 
+def _upload_contains_pdf(uploaded: object) -> bool:
+    if uploaded is None:
+        return False
+    files = uploaded if isinstance(uploaded, (list, tuple)) else [uploaded]
+    for file_obj in files:
+        name = str(getattr(file_obj, "name", "") or "").lower()
+        if name.endswith(".pdf"):
+            return True
+    return False
+
+
 # Renderer toggle: set to True to use the new HTML/Playwright renderer, False for the old ReportLab renderer
 USE_HTML_PRICE_STRIP_RENDERER = True
 
@@ -429,7 +440,10 @@ def main() -> None:
             st.error(f"Unable to read image alias file: {e}")
             return
     named_image_index = NamedImageIndex()
-    if image_library_path:
+    image_source_has_pdf = _upload_contains_pdf(images_pdf)
+    if image_source_has_pdf and display_type == DISPLAY_FULL_PALLET:
+        st.caption("Using uploaded image PDF as the card image source. Local UPC image library matching is ignored for this run.")
+    if image_library_path and not image_source_has_pdf:
         named_image_index = build_named_image_index_from_folder(image_library_path)
         if display_type == DISPLAY_FULL_PALLET:
             if named_image_index.indexed_images:
@@ -439,16 +453,17 @@ def main() -> None:
     if images_pdf:
         try:
             images_bytes = images_upload_to_pdf_bytes(images_pdf, labels_bytes)
-            uploaded_image_index = build_named_image_index(images_pdf)
-            named_image_index.images.update(uploaded_image_index.images)
-            for image_name, entries in getattr(uploaded_image_index, "names", {}).items():
-                named_image_index.names.setdefault(image_name, []).extend(entries)
-            if not hasattr(named_image_index, "numeric_upcs"):
-                named_image_index.numeric_upcs = []
-            named_image_index.numeric_upcs.extend(getattr(uploaded_image_index, "numeric_upcs", []) or [])
-            named_image_index.indexed_images += uploaded_image_index.indexed_images
-            named_image_index.duplicate_keys += uploaded_image_index.duplicate_keys
-            named_image_index.ignored_files += uploaded_image_index.ignored_files
+            if not image_source_has_pdf:
+                uploaded_image_index = build_named_image_index(images_pdf)
+                named_image_index.images.update(uploaded_image_index.images)
+                for image_name, entries in getattr(uploaded_image_index, "names", {}).items():
+                    named_image_index.names.setdefault(image_name, []).extend(entries)
+                if not hasattr(named_image_index, "numeric_upcs"):
+                    named_image_index.numeric_upcs = []
+                named_image_index.numeric_upcs.extend(getattr(uploaded_image_index, "numeric_upcs", []) or [])
+                named_image_index.indexed_images += uploaded_image_index.indexed_images
+                named_image_index.duplicate_keys += uploaded_image_index.duplicate_keys
+                named_image_index.ignored_files += uploaded_image_index.ignored_files
         except Exception as e:
             st.error(f"Unable to read image source upload: {e}")
             return
@@ -781,7 +796,7 @@ def main() -> None:
                         ppt_cpp_global,
                         show_debug,
                         show_layout_overlay,
-                        named_image_index if named_image_index.images else None,
+                        None if image_source_has_pdf else (named_image_index if named_image_index.images else None),
                         image_aliases if image_aliases else None,
                     )
                 except Exception as e:
