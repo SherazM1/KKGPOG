@@ -40,7 +40,21 @@ from app.shared.text_utils import (
     _norm_name,
     _to_last5,
 )
-from app.shared.upload_utils import NamedImageIndex, upc_a_from_11, upc_near_match_reason
+from app.shared.upload_utils import NamedImageIndex, upc_a_from_11
+
+try:
+    from app.shared.upload_utils import upc_near_match_reason
+except ImportError:
+    def upc_near_match_reason(target_upc: object, image_upc: object) -> Optional[str]:
+        target = re.sub(r"[^0-9]", "", str(target_upc or "")).lstrip("0")
+        image = re.sub(r"[^0-9]", "", str(image_upc or "")).lstrip("0")
+        if not target or not image:
+            return None
+        target_core = target[:11] if len(target) == 12 else target
+        image_core = image[:11] if len(image) == 12 else image
+        if target_core == image_core:
+            return "same UPC core/check-digit variant"
+        return None
 
 FULL_PALLET_MID_BAND_PROFILES = {
     "A": {

@@ -4,20 +4,38 @@ import pandas as pd
 import streamlit as st
 import difflib
 import re
+from typing import Optional
 
 from app.sams_club.extract_price_strips import build_sams_price_strip_rows
 from app.sams_club.render_planogram import render_sams_planogram_pdf
 from app.sams_club.service import build_sams_planogram_structure, detect_sams_pogs
 from app.shared.constants import DISPLAY_FULL_PALLET, DISPLAY_SAMS_CLUB, DISPLAY_STANDARD, N_COLS
-from app.shared.upload_utils import (
-    NamedImageIndex,
-    blank_images_pdf_from_labels,
-    build_named_image_index,
-    build_named_image_index_from_folder,
-    images_upload_to_pdf_bytes,
-    upc_a_from_11,
-    upc_near_match_reason,
+from app.shared import upload_utils as _upload_utils
+
+NamedImageIndex = _upload_utils.NamedImageIndex
+blank_images_pdf_from_labels = _upload_utils.blank_images_pdf_from_labels
+build_named_image_index = _upload_utils.build_named_image_index
+images_upload_to_pdf_bytes = _upload_utils.images_upload_to_pdf_bytes
+upc_a_from_11 = _upload_utils.upc_a_from_11
+build_named_image_index_from_folder = getattr(
+    _upload_utils,
+    "build_named_image_index_from_folder",
+    lambda _folder_path: NamedImageIndex(),
 )
+
+try:
+    upc_near_match_reason = _upload_utils.upc_near_match_reason
+except AttributeError:
+    def upc_near_match_reason(target_upc: object, image_upc: object) -> Optional[str]:
+        target = re.sub(r"[^0-9]", "", str(target_upc or "")).lstrip("0")
+        image = re.sub(r"[^0-9]", "", str(image_upc or "")).lstrip("0")
+        if not target or not image:
+            return None
+        target_core = target[:11] if len(target) == 12 else target
+        image_core = image[:11] if len(image) == 12 else image
+        if target_core == image_core:
+            return "same UPC core/check-digit variant"
+        return None
 
 # Renderer toggle: set to True to use the new HTML/Playwright renderer, False for the old ReportLab renderer
 USE_HTML_PRICE_STRIP_RENDERER = True
