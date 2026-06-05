@@ -431,9 +431,11 @@ def render_full_pallet_pdf(
     if isinstance(named_image_index, NamedImageIndex):
         named_images = dict(named_image_index.images or {})
         named_names = dict(named_image_index.names or {})
+        named_numeric_upcs = list(named_image_index.numeric_upcs or [])
     else:
         named_images = dict(named_image_index or {})
         named_names = {}
+        named_numeric_upcs = []
     image_alias_map = {
         re.sub(r"[^0-9]", "", str(k or "")): re.sub(r"[^0-9]", "", str(v or ""))
         for k, v in dict(image_aliases or {}).items()
@@ -484,6 +486,45 @@ def render_full_pallet_pdf(
                 return image.convert("RGBA")
         except Exception:
             return None
+
+    def _numeric_near_payload_for_upc(raw: Optional[str]) -> Tuple[Optional[object], Optional[str]]:
+        target_digits = re.sub(r"[^0-9]", "", str(raw or "")).lstrip("0")
+        if not target_digits or not named_numeric_upcs:
+            return None, None
+        if len(target_digits) > 12:
+            target_digits = target_digits[-12:]
+        target_core = target_digits[:11] if len(target_digits) == 12 else target_digits
+        if len(target_core) < 10:
+            return None, None
+        candidates: List[Tuple[int, int, str, object]] = []
+        for image_upc, payload in named_numeric_upcs:
+            image_digits = re.sub(r"[^0-9]", "", str(image_upc or "")).lstrip("0")
+            if len(image_digits) > 12:
+                image_digits = image_digits[-12:]
+            image_core = image_digits[:11] if len(image_digits) == 12 else image_digits
+            if len(image_core) < 10:
+                continue
+            shared_prefix = 0
+            for a, b in zip(target_core, image_core):
+                if a != b:
+                    break
+                shared_prefix += 1
+            if shared_prefix < 9:
+                continue
+            try:
+                distance = abs(int(target_core) - int(image_core))
+            except ValueError:
+                continue
+            if (shared_prefix >= 10 and distance <= 250) or distance <= 100:
+                candidates.append((-shared_prefix, distance, image_upc, payload))
+        if not candidates:
+            return None, None
+        candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+        best_prefix = -candidates[0][0]
+        best_distance = candidates[0][1]
+        if best_distance > 250 or (best_prefix < 10 and best_distance > 100):
+            return None, None
+        return candidates[0][3], f"numeric-near:{candidates[0][2]}:prefix{best_prefix}:distance{best_distance}"
 
     def _named_image_for_item(upc12: Optional[str], last5: Optional[str], name: Optional[str] = None) -> Tuple[Optional[Image.Image], Optional[str]]:
         keys: List[str] = []
@@ -550,6 +591,11 @@ def render_full_pallet_pdf(
                     img = _image_from_named_payload(top_payload)
                     if img is not None:
                         return img, f"name+near-upc:{top_upc}:{reason}"
+        payload, numeric_key = _numeric_near_payload_for_upc(raw_upc or stripped_upc)
+        if payload is not None:
+            img = _image_from_named_payload(payload)
+            if img is not None:
+                return img, numeric_key
         return None, None
 
     def _best_row_for_label(candidates: List[MatrixRow], label_text: str) -> Optional[MatrixRow]:

@@ -16,6 +16,7 @@ SUPPORTED_NAMED_IMAGE_EXTENSIONS = SUPPORTED_UPLOAD_IMAGE_EXTENSIONS | {".pdf"}
 class NamedImageIndex:
     images: Dict[str, Any] = field(default_factory=dict)
     names: Dict[str, List[Tuple[str, Any]]] = field(default_factory=dict)
+    numeric_upcs: List[Tuple[str, Any]] = field(default_factory=list)
     ambiguous_keys: set[str] = field(default_factory=set)
     indexed_images: int = 0
     duplicate_keys: int = 0
@@ -198,6 +199,16 @@ def _store_name_key(result: NamedImageIndex, name_key: str, upc_keys: List[str],
     result.names.setdefault(name_key, []).append((strong_upc_keys[0], value))
 
 
+def _store_numeric_upcs(result: NamedImageIndex, upc_keys: List[str], value: Any) -> None:
+    seen_local: set[str] = set()
+    for key in upc_keys:
+        digits = re.sub(r"[^0-9]", "", str(key or ""))
+        if len(digits) < 10 or digits in seen_local:
+            continue
+        result.numeric_upcs.append((digits, value))
+        seen_local.add(digits)
+
+
 def build_named_image_index(uploaded: Any) -> NamedImageIndex:
     uploaded_files = coerce_uploaded_file_list(uploaded)
     result = NamedImageIndex()
@@ -222,6 +233,7 @@ def build_named_image_index(uploaded: Any) -> NamedImageIndex:
             result.indexed_images += 1
             for key in keys:
                 _store_image_key(result, key, entry_payload)
+            _store_numeric_upcs(result, keys, entry_payload)
             _store_name_key(result, _name_key_from_image_name(entry_name), keys, entry_payload)
     return result
 
@@ -246,6 +258,7 @@ def build_named_image_index_from_folder(folder_path: str) -> NamedImageIndex:
         path_text = str(path)
         for key in keys:
             _store_image_key(result, key, path_text)
+        _store_numeric_upcs(result, keys, path_text)
         _store_name_key(result, _name_key_from_image_name(path.name), keys, path_text)
     return result
 

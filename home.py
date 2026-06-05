@@ -37,6 +37,50 @@ except AttributeError:
             return "same UPC core/check-digit variant"
         return None
 
+
+def _numeric_near_image_match(index: NamedImageIndex, raw_upc: object):
+    target_digits = re.sub(r"[^0-9]", "", str(raw_upc or "")).lstrip("0")
+    numeric_upcs = list(getattr(index, "numeric_upcs", []) or [])
+    if not target_digits or not numeric_upcs:
+        return "", ""
+    if len(target_digits) > 12:
+        target_digits = target_digits[-12:]
+    target_core = target_digits[:11] if len(target_digits) == 12 else target_digits
+    if len(target_core) < 10:
+        return "", ""
+
+    candidates = []
+    for image_upc, payload in numeric_upcs:
+        image_digits = re.sub(r"[^0-9]", "", str(image_upc or "")).lstrip("0")
+        if len(image_digits) > 12:
+            image_digits = image_digits[-12:]
+        image_core = image_digits[:11] if len(image_digits) == 12 else image_digits
+        if len(image_core) < 10:
+            continue
+        shared_prefix = 0
+        for left, right in zip(target_core, image_core):
+            if left != right:
+                break
+            shared_prefix += 1
+        if shared_prefix < 9:
+            continue
+        try:
+            distance = abs(int(target_core) - int(image_core))
+        except ValueError:
+            continue
+        if (shared_prefix >= 10 and distance <= 250) or distance <= 100:
+            candidates.append((-shared_prefix, distance, image_upc, str(payload)))
+
+    if not candidates:
+        return "", ""
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+    best_prefix = -candidates[0][0]
+    best_distance = candidates[0][1]
+    if best_distance > 250 or (best_prefix < 10 and best_distance > 100):
+        return "", ""
+    return f"numeric-near:{candidates[0][2]}:prefix{best_prefix}:distance{best_distance}", candidates[0][3]
+
+
 # Renderer toggle: set to True to use the new HTML/Playwright renderer, False for the old ReportLab renderer
 USE_HTML_PRICE_STRIP_RENDERER = True
 
@@ -394,6 +438,11 @@ def main() -> None:
             images_bytes = images_upload_to_pdf_bytes(images_pdf, labels_bytes)
             uploaded_image_index = build_named_image_index(images_pdf)
             named_image_index.images.update(uploaded_image_index.images)
+            for image_name, entries in getattr(uploaded_image_index, "names", {}).items():
+                named_image_index.names.setdefault(image_name, []).extend(entries)
+            if not hasattr(named_image_index, "numeric_upcs"):
+                named_image_index.numeric_upcs = []
+            named_image_index.numeric_upcs.extend(getattr(uploaded_image_index, "numeric_upcs", []) or [])
             named_image_index.indexed_images += uploaded_image_index.indexed_images
             named_image_index.duplicate_keys += uploaded_image_index.duplicate_keys
             named_image_index.ignored_files += uploaded_image_index.ignored_files
@@ -560,6 +609,12 @@ def main() -> None:
                                     matched_key = f"name+near-upc:{image_upc}"
                                     matched_file = payload
                                     match_status = "FOUND_NEAR"
+                        if not matched_key:
+                            numeric_key, numeric_file = _numeric_near_image_match(named_image_index, expected_image_upc or upc)
+                            if numeric_key:
+                                matched_key = numeric_key
+                                matched_file = numeric_file
+                                match_status = "FOUND_NUMERIC_NEAR"
                         image_report_rows.append(
                             {
                                 "Status": match_status,
