@@ -487,6 +487,26 @@ def render_full_pallet_pdf(
         except Exception:
             return None
 
+    def _expand_aligned_label_bbox_for_image_crop(
+        bbox: Tuple[float, float, float, float],
+        page_width: float,
+        page_height: float,
+    ) -> Tuple[float, float, float, float]:
+        x0, y0, x1, y1 = map(float, bbox)
+        w = max(0.0, x1 - x0)
+        h = max(0.0, y1 - y0)
+        target_h = 34.0 if h < 24.0 else h
+        target_w = max(w, 24.0)
+        cx = (x0 + x1) / 2.0
+        cy = (y0 + y1) / 2.0
+        nx0 = max(0.0, cx - target_w / 2.0 - 1.0)
+        nx1 = min(page_width, cx + target_w / 2.0 + 1.0)
+        ny0 = max(0.0, cy - target_h / 2.0)
+        ny1 = min(page_height, cy + target_h / 2.0)
+        if ny1 <= ny0 or nx1 <= nx0:
+            return bbox
+        return (nx0, ny0, nx1, ny1)
+
     def _numeric_near_payload_for_upc(raw: Optional[str]) -> Tuple[Optional[object], Optional[str]]:
         target_digits = re.sub(r"[^0-9]", "", str(raw or "")).lstrip("0")
         if not target_digits or not named_numeric_upcs:
@@ -4223,11 +4243,15 @@ def render_full_pallet_pdf(
                     "resolve_fallback_path": "cell_last5_matrix" if match else "unresolved_cell",
                     "resolve_trace": {"fallback_path": "cell_last5_matrix" if match else "unresolved_cell"},
                 }
-                cleaned, rejected_one = _clean_middle_grid_candidate_records([record])
-                if cleaned:
-                    selected_records.extend(cleaned)
+                keep_resolved_cell_candidate = str(p.side_letter or "").upper() in {"B", "D"} and match is not None
+                if keep_resolved_cell_candidate:
+                    selected_records.append(record)
                 else:
-                    rejected.extend(rejected_one)
+                    cleaned, rejected_one = _clean_middle_grid_candidate_records([record])
+                    if cleaned:
+                        selected_records.extend(cleaned)
+                    else:
+                        rejected.extend(rejected_one)
                 source_index += 1
 
         row_debug = {
@@ -4244,6 +4268,122 @@ def render_full_pallet_pdf(
             "rejected_rows": rejected_rows,
         }
         return selected_records[:24], rejected, raw_candidate_count, row_debug
+
+    def _build_bd_middle_grid_structured_cell_candidate_records(
+        p: FullPalletPage,
+    ) -> Tuple[List[dict], List[dict], int, Dict[str, object]]:
+        bonus_y = _marker_y(p, "bonus_strip")
+        holders_y = _marker_y(p, "gift_card_holders")
+        cells_in_band: List[CellData] = []
+        for cell in p.cells:
+            _cx, cy = _cell_center(cell)
+            if holders_y is not None and cy <= float(holders_y) + 4.0:
+                continue
+            if bonus_y is not None and cy >= float(bonus_y) - 8.0:
+                continue
+            cells_in_band.append(cell)
+
+        row_to_cells: Dict[int, List[CellData]] = {}
+        for cell in cells_in_band:
+            row_to_cells.setdefault(int(cell.row), []).append(cell)
+
+        row_infos: List[dict] = []
+        for row_id, row_cells in row_to_cells.items():
+            ordered = sorted(row_cells, key=lambda c_: _cell_center(c_)[0])
+            if not ordered:
+                continue
+            x_centers = [float(_cell_center(c_)[0]) for c_ in ordered]
+            y_center = float(np.mean([_cell_center(c_)[1] for c_ in ordered]))
+            row_infos.append(
+                {
+                    "row_id": int(row_id),
+                    "y_center": y_center,
+                    "slot_count": len(ordered),
+                    "x_centers": [round(x, 2) for x in x_centers],
+                    "cells": ordered,
+                }
+            )
+        row_infos.sort(key=lambda row: float(row["y_center"]))
+
+        center_rows = [row for row in row_infos if len(row["cells"]) >= 4 and min(row["x_centers"]) > 220.0 and max(row["x_centers"]) < 380.0]
+        side_rows = [row for row in row_infos if len(row["cells"]) >= 4 and min(row["x_centers"]) < 220.0 and max(row["x_centers"]) > 380.0]
+        center_rows = center_rows[:3]
+        side_rows = side_rows[:3]
+
+        selected_records: List[dict] = []
+        rejected: List[dict] = []
+        source_index = 0
+
+        def _record_for_cell(cell: CellData, row_index: int, slot_in_row: int) -> dict:
+            nonlocal source_index
+            match = resolve_full_pallet(cell.last5, cell.name, matrix_idx) if cell.last5 else None
+            synthetic_slot = FullPalletMidBandSlot(
+                slot_id=f"{p.side_letter}-MB-R{row_index + 1}-S{slot_in_row + 1}",
+                side_letter=p.side_letter,
+                row_index=row_index,
+                block_name=("left" if slot_in_row <= 1 else "center" if slot_in_row <= 5 else "right"),
+                block_pos_index=(slot_in_row if slot_in_row <= 1 else slot_in_row - 2 if slot_in_row <= 5 else slot_in_row - 6),
+                slot_order=source_index,
+                slot_in_row=slot_in_row,
+                bbox=cell.bbox,
+                raw_label_text=cell.name,
+                parsed_name=cell.name,
+                last5=cell.last5,
+                qty=cell.qty,
+                extraction_bbox=cell.bbox,
+                accepted_words=[],
+                rejected_nearby_word_count=0,
+                resolved_upc12=match.upc12 if match else None,
+                resolved_display_name=match.display_name if match else None,
+                resolved_cpp_qty=match.cpp_qty if match else None,
+            )
+            record = {
+                "side": p.side_letter,
+                "slot": synthetic_slot,
+                "source_index": source_index,
+                "slot_id": synthetic_slot.slot_id,
+                "group": synthetic_slot.block_name,
+                "row_index": row_index,
+                "slot_in_row": slot_in_row,
+                "slot_order": source_index,
+                "last5": _to_last5(cell.last5),
+                "upc12": match.upc12 if match else None,
+                "cpp": match.cpp_qty if match else None,
+                "resolved_match": match,
+                "resolved_name": match.display_name if match else cell.name.strip(),
+                "display_name": match.display_name if match else cell.name.strip(),
+                "resolve_fallback_path": "bd_structured_cell_last5_matrix" if match else "bd_structured_unresolved_cell",
+                "resolve_trace": {"fallback_path": "bd_structured_cell_last5_matrix" if match else "bd_structured_unresolved_cell"},
+            }
+            source_index += 1
+            return record
+
+        for row_index in range(min(3, len(center_rows), len(side_rows))):
+            side_cells = sorted(side_rows[row_index]["cells"], key=lambda c_: _cell_center(c_)[0])
+            center_cells = sorted(center_rows[row_index]["cells"], key=lambda c_: _cell_center(c_)[0])
+            left_cells = side_cells[:2]
+            right_cells = side_cells[-2:]
+            row_cells = left_cells + center_cells[:4] + right_cells
+            if len(row_cells) != 8:
+                continue
+            for slot_in_row, cell in enumerate(row_cells):
+                selected_records.append(_record_for_cell(cell, row_index, slot_in_row))
+
+        row_debug = {
+            "structured_bd_rows": True,
+            "all_detected_rows": [
+                {
+                    "row_id": int(row["row_id"]),
+                    "y_center": round(float(row["y_center"]), 2),
+                    "slot_count": int(row["slot_count"]),
+                    "x_centers": row["x_centers"],
+                }
+                for row in row_infos
+            ],
+            "center_row_ids": [int(row["row_id"]) for row in center_rows],
+            "side_row_ids": [int(row["row_id"]) for row in side_rows],
+        }
+        return selected_records[:24], rejected, len(cells_in_band), row_debug
 
     def _build_mid_band_profile_comparison(
         p: FullPalletPage,
@@ -4576,25 +4716,41 @@ def render_full_pallet_pdf(
         cleaned_candidate_records, rejected_middle_candidates, raw_middle_candidate_count, middle_grid_row_debug = (
             _build_middle_grid_section_candidate_records(p, section)
         )
+        structured_bd_records: List[dict] = []
+        structured_bd_rejected: List[dict] = []
+        structured_bd_raw_count = 0
+        structured_bd_debug: Dict[str, object] = {}
+        if str(p.side_letter or "").upper() in {"B", "D"}:
+            structured_bd_records, structured_bd_rejected, structured_bd_raw_count, structured_bd_debug = (
+                _build_bd_middle_grid_structured_cell_candidate_records(p)
+            )
         cell_candidate_records, cell_rejected_middle_candidates, cell_raw_middle_candidate_count, cell_middle_grid_row_debug = (
             _build_middle_grid_cell_candidate_records(p)
         )
         prefer_cell_candidates = (
             str(p.side_letter or "").upper() in {"B", "D"}
-            and len(cell_candidate_records) >= 24
+            and len(structured_bd_records) >= 24
         )
         if len(cleaned_candidate_records) < 24 or prefer_cell_candidates:
             previous_section_candidate_count = len(cleaned_candidate_records)
             previous_middle_grid_row_debug = dict(middle_grid_row_debug)
-            cleaned_candidate_records, rejected_middle_candidates, raw_middle_candidate_count, middle_grid_row_debug = (
-                cell_candidate_records,
-                cell_rejected_middle_candidates,
-                cell_raw_middle_candidate_count,
-                cell_middle_grid_row_debug,
-            )
+            if prefer_cell_candidates:
+                cleaned_candidate_records, rejected_middle_candidates, raw_middle_candidate_count, middle_grid_row_debug = (
+                    structured_bd_records,
+                    structured_bd_rejected,
+                    structured_bd_raw_count,
+                    structured_bd_debug,
+                )
+            else:
+                cleaned_candidate_records, rejected_middle_candidates, raw_middle_candidate_count, middle_grid_row_debug = (
+                    cell_candidate_records,
+                    cell_rejected_middle_candidates,
+                    cell_raw_middle_candidate_count,
+                    cell_middle_grid_row_debug,
+                )
             middle_grid_row_debug = {
                 **middle_grid_row_debug,
-                "candidate_source_preference": "label_cell_candidates_for_bd_side" if prefer_cell_candidates else "label_cell_candidates_fallback",
+                "candidate_source_preference": "structured_bd_label_cell_candidates" if prefer_cell_candidates else "label_cell_candidates_fallback",
                 "previous_section_candidate_count": previous_section_candidate_count,
                 "previous_section_row_debug": previous_middle_grid_row_debug,
             }
@@ -5044,8 +5200,9 @@ def render_full_pallet_pdf(
                     try:
                         iw, ih = float(img_page.rect.width), float(img_page.rect.height)
                         lw, lh = float(label_page.rect.width), float(label_page.rect.height)
-                        label_bbox_crop = tuple(map(float, raw_label_bbox))
                         label_image_pdf_aligned = abs(iw - lw) <= 1.0 and abs(ih - lh) <= 1.0
+                        raw_crop_bbox = tuple(map(float, raw_label_bbox))
+                        label_bbox_crop = _expand_aligned_label_bbox_for_image_crop(raw_crop_bbox, iw, ih)
                     except Exception:
                         label_bbox_crop = None
                         label_image_pdf_aligned = False
@@ -5056,7 +5213,7 @@ def render_full_pallet_pdf(
                             p.page_index,
                             label_bbox_crop,
                             zoom=float(plan["crop_zoom"]),
-                            inset=0.02,
+                            inset=0.0,
                         )
                         image_crop_bbox_used = label_bbox_crop
                         image_crop_source = "images_pdf_label_bbox"
