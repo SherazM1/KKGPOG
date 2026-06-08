@@ -52,6 +52,52 @@ def build_full_pallet_rows(
     return rows
 
 
+def build_full_pallet_label_audit(
+    fp_pages: List[FullPalletPage],
+    fp_matrix_idx: Dict[str, List[MatrixRow]],
+) -> List[dict]:
+    rows: List[dict] = []
+    for pg in fp_pages:
+        marker_y: Dict[str, float] = {}
+        for ann in pg.annotations:
+            _x0, top, _x1, bottom = ann.bbox
+            marker_y[ann.kind] = (float(top) + float(bottom)) / 2.0
+        holders_y = marker_y.get("gift_card_holders")
+        bonus_y = marker_y.get("bonus_strip")
+
+        for cell in pg.cells:
+            x0, top, x1, bottom = cell.bbox
+            cy = (float(top) + float(bottom)) / 2.0
+            section = "unknown"
+            if holders_y is not None and cy < holders_y:
+                section = "top_or_holder"
+            elif bonus_y is not None and cy < bonus_y:
+                section = "middle_band"
+            elif bonus_y is not None:
+                section = "bonus"
+
+            match = resolve_full_pallet(cell.last5, cell.name, fp_matrix_idx) if cell.last5 else None
+            rows.append(
+                {
+                    "Status": "RESOLVED" if match else "UNRESOLVED",
+                    "Side": pg.side_letter,
+                    "Section": section,
+                    "Row": cell.row,
+                    "Col": cell.col,
+                    "Source Name": cell.name,
+                    "Source Last5": cell.last5,
+                    "Resolved UPC": match.upc12 if match else "",
+                    "Resolved Name": match.display_name if match else "",
+                    "Resolved CPP": match.cpp_qty if match else "",
+                    "Cell X0": round(float(x0), 2),
+                    "Cell Top": round(float(top), 2),
+                    "Cell X1": round(float(x1), 2),
+                    "Cell Bottom": round(float(bottom), 2),
+                }
+            )
+    return rows
+
+
 def render_full_pallet_display_pdf(
     fp_pages: List[FullPalletPage],
     images_bytes: bytes,

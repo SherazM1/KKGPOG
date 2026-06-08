@@ -501,6 +501,7 @@ def main() -> None:
     else:
         try:
             from app.full_pallet.service import (
+                build_full_pallet_label_audit,
                 build_full_pallet_rows,
                 load_full_pallet_matrix,
                 parse_full_pallet_pages,
@@ -566,6 +567,37 @@ def main() -> None:
         if not fp_pages:
             st.error("No product cells detected in Labels PDF.")
             return
+
+        label_audit_rows = build_full_pallet_label_audit(fp_pages, fp_matrix_idx)
+        label_audit_df = pd.DataFrame(label_audit_rows)
+        resolved_label_count = int((label_audit_df["Status"] == "RESOLVED").sum()) if not label_audit_df.empty else 0
+        total_label_count = int(len(label_audit_df))
+        unresolved_label_df = label_audit_df[label_audit_df["Status"] != "RESOLVED"] if not label_audit_df.empty else label_audit_df
+        side_counts = label_audit_df.groupby("Side").size().to_dict() if not label_audit_df.empty else {}
+        expected_side_count = max(side_counts.values()) if side_counts else 0
+        side_count_issues = {
+            side: count
+            for side, count in side_counts.items()
+            if expected_side_count and count != expected_side_count
+        }
+        if total_label_count and resolved_label_count == total_label_count and not side_count_issues:
+            st.success(f"Label/UPC resolution passed: {resolved_label_count} of {total_label_count} parsed label cells resolved.")
+        else:
+            st.warning(
+                f"Label/UPC resolution needs review: {resolved_label_count} of {total_label_count} parsed label cells resolved."
+            )
+            if side_count_issues:
+                st.warning(f"Uneven label counts by side: {side_count_issues}")
+        st.download_button(
+            "Download Full Pallet Label Placement Audit CSV",
+            label_audit_df.to_csv(index=False).encode("utf-8"),
+            file_name="full_pallet_label_placement_audit.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        if unresolved_label_df is not None and not unresolved_label_df.empty:
+            with st.expander("Unresolved label cells"):
+                st.dataframe(unresolved_label_df, use_container_width=True, height=260)
 
         if named_image_index.images:
             image_report_rows = []
