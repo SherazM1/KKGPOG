@@ -1291,16 +1291,17 @@ def render_full_pallet_pdf(
                 count == 1
                 and groups
                 and cols
-                and min(cols) == 0
             ):
+                singleton_col = int(cols[0])
                 prev_group = groups[-1]
                 prev_cells = [cell for cell in p.cells if cell.row in set(prev_group)]
                 prev_cols = [int(cell.col) for cell in prev_cells]
                 if (
-                    0 < len(prev_cells) < 10
+                    8 <= len(prev_cells) < 10
                     and len(prev_cells) + count <= 10
                     and prev_cols
-                    and max(prev_cols) >= 8
+                    and singleton_col not in set(prev_cols)
+                    and min(prev_cols) - 1 <= singleton_col <= max(prev_cols) + 1
                 ):
                     groups[-1] = prev_group + [row_id]
                     idx += 1
