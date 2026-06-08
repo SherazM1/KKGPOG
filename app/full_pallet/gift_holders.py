@@ -476,6 +476,7 @@ def _partition_top_slots_into_sides(top_slots: List[dict]) -> Dict[str, List[dic
                     considered["reject_reason"] = "duplicate_candidate"
                     continue
                 seen.add(key)
+                slot["_render_first"] = True
                 moved.append(slot)
                 added_item_ids.append(str(slot.get("item_no", "")).strip())
 
@@ -511,6 +512,7 @@ def _partition_top_slots_into_sides(top_slots: List[dict]) -> Dict[str, List[dic
     for side in "ABCD":
         by_side[side].sort(
             key=lambda s: (
+                0 if bool(s.get("_render_first")) else 1,
                 int(s.get("start_col", 0)),
                 int(s.get("end_col", 0)),
             )
