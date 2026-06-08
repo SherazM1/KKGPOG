@@ -203,9 +203,24 @@ def resolve_full_pallet(last5: str, label_name: str, idx: Dict[str, List[MatrixR
     if not rows:
         return None
     if len(rows) == 1:
-        return rows[0]
+        return _apply_known_label_name_correction(key, label_name, rows[0])
     target = _norm_name(label_name)
-    return max(rows, key=lambda r: difflib.SequenceMatcher(None, target, r.norm_name).ratio())
+    return _apply_known_label_name_correction(
+        key,
+        label_name,
+        max(rows, key=lambda r: difflib.SequenceMatcher(None, target, r.norm_name).ratio()),
+    )
+
+
+def _apply_known_label_name_correction(last5: str, label_name: str, row: MatrixRow) -> MatrixRow:
+    """Correct known matrix name swaps when the official label PDF confirms it."""
+    source_name = str(label_name or "").strip()
+    source_norm = _norm_name(source_name)
+    if last5 == "16659" and "PIZZA" in source_norm and "HUT" in source_norm:
+        return MatrixRow(row.upc12, _norm_name(source_name), source_name, row.cpp_qty)
+    if last5 == "16660" and "KFC" in source_norm:
+        return MatrixRow(row.upc12, _norm_name(source_name), source_name, row.cpp_qty)
+    return row
 
 
 

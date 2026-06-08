@@ -2066,7 +2066,10 @@ def render_full_pallet_pdf(
             for row_group in render_row_groups:
                 row_ids = {int(row_id) for row_id in row_group}
                 row_cells = [cell for cell in p.cells if cell.row in row_ids]
-                row_cells.sort(key=lambda cell: (render_row_groups.index(row_group), cell.row, cell.col))
+                # Merged BONUS rows can be physically split into an upper and lower
+                # source row while visually reading as one row. Keep the display
+                # order left-to-right across the merged row.
+                row_cells.sort(key=lambda cell: cell.col)
                 bonus_render_rows.append(row_cells)
         pixmap_page_img: Optional[Image.Image] = None
         pixmap_page_zoom = 3.0
