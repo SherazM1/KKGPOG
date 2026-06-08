@@ -201,7 +201,7 @@ def resolve_full_pallet(last5: str, label_name: str, idx: Dict[str, List[MatrixR
     key = _to_last5(last5)
     rows = idx.get(key, [])
     if not rows:
-        return None
+        return _resolve_known_missing_matrix_row(key, label_name)
     if len(rows) == 1:
         return _apply_known_label_name_correction(key, label_name, rows[0])
     target = _norm_name(label_name)
@@ -210,6 +210,24 @@ def resolve_full_pallet(last5: str, label_name: str, idx: Dict[str, List[MatrixR
         label_name,
         max(rows, key=lambda r: difflib.SequenceMatcher(None, target, r.norm_name).ratio()),
     )
+
+
+def _resolve_known_missing_matrix_row(last5: str, label_name: str) -> Optional[MatrixRow]:
+    """Resolve confirmed items that appear in label PDFs but are absent from some state matrices."""
+    source_name = str(label_name or "").strip()
+    source_norm = _norm_name(source_name)
+    known_rows = {
+        "16340": ("019674216340", "ALAMO DRAFTHOUSE $25 Reg", 30, ("ALAMO", "DRAFTH")),
+        "10092": ("019674210092", "TOP GOLF VGC MD", 30, ("TOP", "GOL")),
+        "13196": ("019674213196", "SCOOTERS COFFEE VGC", 30, ("SCOOTERS", "COFFEE")),
+    }
+    entry = known_rows.get(last5)
+    if entry is None:
+        return None
+    upc12, display_name, cpp, required_tokens = entry
+    if not all(token in source_norm for token in required_tokens):
+        return None
+    return MatrixRow(upc12, _norm_name(display_name), display_name, cpp)
 
 
 def _apply_known_label_name_correction(last5: str, label_name: str, row: MatrixRow) -> MatrixRow:
