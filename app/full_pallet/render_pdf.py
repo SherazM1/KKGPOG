@@ -1287,21 +1287,19 @@ def render_full_pallet_pdf(
             cells = [cell for cell in p.cells if cell.row == row_id]
             count = len(cells)
             cols = [int(cell.col) for cell in cells]
-            if (
-                count == 1
-                and groups
-                and cols
-            ):
-                singleton_col = int(cols[0])
+            if 1 <= count <= 2 and groups and cols:
+                current_cols = set(cols)
                 prev_group = groups[-1]
                 prev_cells = [cell for cell in p.cells if cell.row in set(prev_group)]
                 prev_cols = [int(cell.col) for cell in prev_cells]
+                combined_cols = sorted(set(prev_cols) | current_cols)
                 if (
                     8 <= len(prev_cells) < 10
                     and len(prev_cells) + count <= 10
                     and prev_cols
-                    and singleton_col not in set(prev_cols)
-                    and min(prev_cols) - 1 <= singleton_col <= max(prev_cols) + 1
+                    and current_cols.isdisjoint(set(prev_cols))
+                    and combined_cols == list(range(min(combined_cols), max(combined_cols) + 1))
+                    and len(combined_cols) == len(prev_cells) + count
                 ):
                     groups[-1] = prev_group + [row_id]
                     idx += 1
