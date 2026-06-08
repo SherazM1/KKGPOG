@@ -40,6 +40,30 @@ def _picture_blob_with_powerpoint_crop(shape, raw_blob: bytes) -> bytes:
         return raw_blob
 
 
+def _tighten_card_art_blob(raw_blob: bytes) -> bytes:
+    """Trim a small centered margin from PPT card art to remove residual neighbor bleed."""
+    try:
+        with Image.open(io.BytesIO(raw_blob)) as im:
+            im.load()
+            w, h = im.size
+            x_inset = int(round(w * 0.060))
+            y_inset = int(round(h * 0.010))
+            left = x_inset
+            right = w - x_inset
+            top = y_inset
+            bottom = h - y_inset
+
+            if right - left < max(4, w * 0.75) or bottom - top < max(4, h * 0.90):
+                return raw_blob
+
+            cropped = im.crop((left, top, right, bottom)).convert("RGBA")
+            out = io.BytesIO()
+            cropped.save(out, format="PNG")
+            return out.getvalue()
+    except Exception:
+        return raw_blob
+
+
 def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
     """Parse PPTX per-side slides and return PptSideCards with images.
 
@@ -243,6 +267,7 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
                     raw = chosen["blob"]
                     try:
                         from io import BytesIO as _BIO
+                        raw = _tighten_card_art_blob(raw)
                         im = Image.open(_BIO(raw)).convert("RGBA")
                         out = _BIO()
                         im.save(out, format="PNG")

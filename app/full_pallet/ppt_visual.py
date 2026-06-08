@@ -132,9 +132,9 @@ def _tighten_card_crop(rect: fitz.Rect, *, is_side: bool) -> fitz.Rect:
     if rect.width <= 4 or rect.height <= 4:
         return rect
 
-    x_inset = rect.width * (0.090 if is_side else 0.080)
-    top_inset = rect.height * 0.020
-    bottom_inset = rect.height * (0.035 if is_side else 0.025)
+    x_inset = rect.width * (0.125 if is_side else 0.115)
+    top_inset = rect.height * 0.025
+    bottom_inset = rect.height * (0.045 if is_side else 0.035)
     tightened = fitz.Rect(
         rect.x0 + x_inset,
         rect.y0 + top_inset,
