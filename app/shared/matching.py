@@ -220,6 +220,12 @@ def _resolve_known_missing_matrix_row(last5: str, label_name: str) -> Optional[M
         "16340": ("019674216340", "ALAMO DRAFTHOUSE $25 Reg", 30, ("ALAMO", "DRAFTH")),
         "10092": ("019674210092", "TOP GOLF VGC MD", 30, ("TOP", "GOL")),
         "13196": ("019674213196", "SCOOTERS COFFEE VGC", 30, ("SCOOTERS", "COFFEE")),
+        "11449": ("019674211449", "YARD HOUSE VGC MD", 20, ("YARD", "HOUSE")),
+        "10541": ("019674210541", "MOES SW GRILL VGC", 30, ("MOES", "GRILL")),
+        "10808": ("019674210808", "QDOBA VGC MD", 30, ("QDOBA",)),
+        "16708": ("019674216708", "BETMGM $99 + $30 BONUS $8.95 ACTVN FEE", 30, ("ACTVN", "FEE")),
+        "10807": ("019674210807", "MILLERSALEHOUSE VGC MD", 30, ("VGC",)),
+        "11027": ("019674211027", "CHUCK E CHEESE VGC MD", 30, ("CHUCK", "CHEESE")),
     }
     entry = known_rows.get(last5)
     if entry is None:
