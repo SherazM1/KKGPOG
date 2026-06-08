@@ -239,7 +239,7 @@ def _resolve_known_missing_matrix_row(last5: str, label_name: str) -> Optional[M
         "05343": ("019674205343", "D&B/MAIN EVENT MD", 20, ("VENT",)),
         "10006": ("019674210006", "BOB EVANS VGC MD", 30, ("BOB", "EVANS")),
         "12964": ("019674212964", "FIRST WATCH $25 REG", 30, ("FIRST", "WATCH")),
-        "10495": ("019674210495", "LONG JOHN SILVER'S VGC Reg", 30, ("LONG", "SILVER")),
+        "10495": ("019674210495", "LONG JOHN SILVER'S VGC Reg", 30, ("REG",)),
         "10129": ("019674210129", "FANDANGO / FANDANGO AT HOME VGC ($25-$100)", 30, ("D", "F")),
         "10866": ("019674210866", "Saltgrass Steakhouse VGC ($25-$500) MD", 30, ("SALTGRASS",)),
         "16310": ("019674216310", "Johnnies Charcoal Broiler VGC Reg", 20, ("BROILER",)),
@@ -249,6 +249,8 @@ def _resolve_known_missing_matrix_row(last5: str, label_name: str) -> Optional[M
         "15368": ("019674215368", "PF CHANG'S VGC ($25-$500) REG", 30, ("CHANG",)),
         "07303": ("019674207303", "ZAXBYS VGC HOLIDAY", 20, ("ZAXBYS",)),
         "11062": ("019674211062", "GO PLAY GOLF VGC MD", 20, ("PLAY", "GOLF")),
+        "10868": ("019674210868", "LANDRYS VGC MD", 30, ("LANDRYS",)),
+        "11441": ("019674211441", "CHEDDAR'S VGC ($10-$100) MD", 20, ("CHEDDAR",)),
     }
     entry = known_rows.get(last5)
     if entry is None:
