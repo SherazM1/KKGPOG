@@ -2080,7 +2080,7 @@ def render_full_pallet_pdf(
         render_row_groups = list(plan.get("render_row_groups") or [[row_id] for row_id in sec_rows_sorted])
         n_rows = len(render_row_groups) if is_bonus_section else int(plan["n_rows"])
         n_cols = int(plan["n_cols"])
-        bonus_render_rows: List[List[CellData]] = []
+        bonus_render_rows: List[List[Optional[CellData]]] = []
         if is_bonus_section:
             for row_group in render_row_groups:
                 row_ids = {int(row_id) for row_id in row_group}
@@ -2089,7 +2089,16 @@ def render_full_pallet_pdf(
                 # source row while visually reading as one row. Keep the display
                 # order left-to-right across the merged row.
                 row_cells.sort(key=lambda cell: cell.col)
-                bonus_render_rows.append(row_cells)
+                row_cols = [int(cell.col) for cell in row_cells]
+                if row_cols:
+                    expected_cols = list(range(min(row_cols), max(row_cols) + 1))
+                    if len(row_cells) >= 8 and len(expected_cols) <= 10 and len(expected_cols) > len(row_cells):
+                        by_col = {int(cell.col): cell for cell in row_cells}
+                        bonus_render_rows.append([by_col.get(col) for col in expected_cols])
+                    else:
+                        bonus_render_rows.append(list(row_cells))
+                else:
+                    bonus_render_rows.append([])
         pixmap_page_img: Optional[Image.Image] = None
         pixmap_page_zoom = 3.0
         if is_bonus_section:
@@ -2127,6 +2136,11 @@ def render_full_pallet_pdf(
                 cell = row_cells[ci] if is_bonus_section else occ.get((ri, ci))
 
                 if cell is None:
+                    if is_bonus_section:
+                        c.setFillColorRGB(1, 1, 1)
+                        c.setStrokeColorRGB(*EMPTY_STROKE)
+                        c.setLineWidth(0.45)
+                        c.rect(x, y, row_card_w, card_h, stroke=1, fill=1)
                     continue
 
                 key = (cell.row, cell.col)
