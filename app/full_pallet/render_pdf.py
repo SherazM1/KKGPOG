@@ -1284,7 +1284,27 @@ def render_full_pallet_pdf(
         idx = 0
         while idx < len(row_ids):
             row_id = row_ids[idx]
-            count = sum(1 for cell in p.cells if cell.row == row_id)
+            cells = [cell for cell in p.cells if cell.row == row_id]
+            count = len(cells)
+            cols = [int(cell.col) for cell in cells]
+            if (
+                count == 1
+                and groups
+                and cols
+                and min(cols) == 0
+            ):
+                prev_group = groups[-1]
+                prev_cells = [cell for cell in p.cells if cell.row in set(prev_group)]
+                prev_cols = [int(cell.col) for cell in prev_cells]
+                if (
+                    0 < len(prev_cells) < 10
+                    and len(prev_cells) + count <= 10
+                    and prev_cols
+                    and max(prev_cols) >= 8
+                ):
+                    groups[-1] = prev_group + [row_id]
+                    idx += 1
+                    continue
             if idx + 1 < len(row_ids):
                 next_row_id = row_ids[idx + 1]
                 next_count = sum(1 for cell in p.cells if cell.row == next_row_id)

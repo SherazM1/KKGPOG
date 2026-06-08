@@ -220,6 +220,9 @@ def _apply_known_label_name_correction(last5: str, label_name: str, row: MatrixR
         return MatrixRow(row.upc12, _norm_name(source_name), source_name, row.cpp_qty)
     if last5 == "16660" and "KFC" in source_norm:
         return MatrixRow(row.upc12, _norm_name(source_name), source_name, row.cpp_qty)
+    row_norm = _norm_name(row.display_name)
+    if last5 == "16708" and ("BETMGM" in source_norm or "BETMGM" in row_norm):
+        return MatrixRow(row.upc12, row.norm_name, row.display_name, 30)
     return row
 
 
