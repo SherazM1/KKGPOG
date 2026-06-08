@@ -2086,11 +2086,18 @@ def render_full_pallet_pdf(
                     continue
                 row_gap = 6.0
                 row_total_w = (row_n_cols * card_w) + max(0, row_n_cols - 1) * row_gap
+                row_card_w = card_w
+                if row_total_w > content_w:
+                    row_card_w = max(20.0, (content_w - max(0, row_n_cols - 1) * row_gap) / max(1, row_n_cols))
+                    row_total_w = (row_n_cols * row_card_w) + max(0, row_n_cols - 1) * row_gap
+                    overflow = True
                 row_start_x = content_x0 + max(0.0, (content_w - row_total_w) / 2.0)
-                row_xs = [row_start_x + idx * (card_w + row_gap) for idx in range(row_n_cols)]
+                row_start_x = min(max(content_x0, row_start_x), content_x0 + max(0.0, content_w - row_total_w))
+                row_xs = [row_start_x + idx * (row_card_w + row_gap) for idx in range(row_n_cols)]
             else:
                 row_cells = []
                 row_n_cols = n_cols
+                row_card_w = card_w
                 row_xs = xs
 
             for ci in range(row_n_cols):
@@ -2176,12 +2183,12 @@ def render_full_pallet_pdf(
                 c.setFillColorRGB(1, 1, 1)
                 c.setStrokeColorRGB(*FILLED_STROKE)
                 c.setLineWidth(0.75)
-                c.rect(x, y, card_w, card_h, stroke=1, fill=1)
+                c.rect(x, y, row_card_w, card_h, stroke=1, fill=1)
                 norm_debug = _draw_mid_band_card(
                     c,
                     x,
                     y,
-                    card_w,
+                    row_card_w,
                     card_h,
                     img,
                     upc_str,
