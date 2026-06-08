@@ -127,6 +127,25 @@ def _crop_page_png(page: fitz.Page, rect: fitz.Rect) -> bytes:
     return pix.tobytes("png")
 
 
+def _tighten_card_crop(rect: fitz.Rect, *, is_side: bool) -> fitz.Rect:
+    """Trim visual-export crops toward the card art to avoid adjacent-slot bleed."""
+    if rect.width <= 4 or rect.height <= 4:
+        return rect
+
+    x_inset = rect.width * (0.090 if is_side else 0.080)
+    top_inset = rect.height * 0.020
+    bottom_inset = rect.height * (0.035 if is_side else 0.025)
+    tightened = fitz.Rect(
+        rect.x0 + x_inset,
+        rect.y0 + top_inset,
+        rect.x1 - x_inset,
+        rect.y1 - bottom_inset,
+    )
+    if tightened.width < rect.width * 0.60 or tightened.height < rect.height * 0.70:
+        return rect
+    return tightened
+
+
 def _cards_from_labels(page: fitz.Page, labels: List[dict]) -> Tuple[List[PptCard], List[PptCard]]:
     width = float(page.rect.width)
     height = float(page.rect.height)
@@ -143,10 +162,11 @@ def _cards_from_labels(page: fitz.Page, labels: List[dict]) -> Tuple[List[PptCar
         x1 = label["cx"] + crop_w / 2
         y1 = max(1.0, label["top"] - height * 0.012)
         y0 = max(0.0, y1 - crop_h)
+        crop_rect = _tighten_card_crop(fitz.Rect(x0, y0, x1, y1), is_side=is_side)
         return PptCard(
             card_id=str(label.get("card_id") or idx + 1),
             title=str(label.get("title") or ""),
-            image_bytes=_crop_page_png(page, fitz.Rect(x0, y0, x1, y1)),
+            image_bytes=_crop_page_png(page, crop_rect),
             image_ext="png",
         )
 
@@ -171,7 +191,13 @@ def _cards_from_fixed_regions(page: fitz.Page) -> Tuple[List[PptCard], List[PptC
             PptCard(
                 card_id=str(idx + 1),
                 title="",
-                image_bytes=_crop_page_png(page, fitz.Rect(x0, height * 0.06, x0 + top_w, height * 0.36)),
+                image_bytes=_crop_page_png(
+                    page,
+                    _tighten_card_crop(
+                        fitz.Rect(x0, height * 0.06, x0 + top_w, height * 0.36),
+                        is_side=False,
+                    ),
+                ),
                 image_ext="png",
             )
         )
@@ -193,7 +219,10 @@ def _cards_from_fixed_regions(page: fitz.Page) -> Tuple[List[PptCard], List[PptC
                 PptCard(
                     card_id=str(idx + 1),
                     title="",
-                    image_bytes=_crop_page_png(page, fitz.Rect(x0, y0, x0 + side_w, y0 + side_h)),
+                    image_bytes=_crop_page_png(
+                        page,
+                        _tighten_card_crop(fitz.Rect(x0, y0, x0 + side_w, y0 + side_h), is_side=True),
+                    ),
                     image_ext="png",
                 )
             )

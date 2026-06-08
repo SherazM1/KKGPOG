@@ -10,6 +10,36 @@ from app.shared.models import PptCard, PptSideCards
 from app.shared.text_utils import _coerce_int
 
 
+def _picture_blob_with_powerpoint_crop(shape, raw_blob: bytes) -> bytes:
+    """Return a picture blob with PowerPoint crop settings applied."""
+    crop_left = max(0.0, float(getattr(shape, "crop_left", 0.0) or 0.0))
+    crop_right = max(0.0, float(getattr(shape, "crop_right", 0.0) or 0.0))
+    crop_top = max(0.0, float(getattr(shape, "crop_top", 0.0) or 0.0))
+    crop_bottom = max(0.0, float(getattr(shape, "crop_bottom", 0.0) or 0.0))
+
+    if max(crop_left, crop_right, crop_top, crop_bottom) <= 0.0001:
+        return raw_blob
+
+    try:
+        with Image.open(io.BytesIO(raw_blob)) as im:
+            im.load()
+            w, h = im.size
+            left = int(round(w * min(crop_left, 0.95)))
+            right = int(round(w * (1.0 - min(crop_right, 0.95))))
+            top = int(round(h * min(crop_top, 0.95)))
+            bottom = int(round(h * (1.0 - min(crop_bottom, 0.95))))
+
+            if right - left < max(4, w * 0.20) or bottom - top < max(4, h * 0.20):
+                return raw_blob
+
+            cropped = im.crop((left, top, right, bottom)).convert("RGBA")
+            out = io.BytesIO()
+            cropped.save(out, format="PNG")
+            return out.getvalue()
+    except Exception:
+        return raw_blob
+
+
 def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
     """Parse PPTX per-side slides and return PptSideCards with images.
 
@@ -49,9 +79,10 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
             for s in shapes:
                 st = getattr(s, "shape_type", None)
                 if st == MSO_SHAPE_TYPE.PICTURE:
-                    b = bytes(s.image.blob)
-                    if len(b) == WATERMARK_BLOB_SIZE:
+                    raw_blob = bytes(s.image.blob)
+                    if len(raw_blob) == WATERMARK_BLOB_SIZE:
                         continue
+                    b = _picture_blob_with_powerpoint_crop(s, raw_blob)
                     l = float(getattr(s, "left", 0) or 0)
                     t = float(getattr(s, "top", 0) or 0)
                     w = float(getattr(s, "width", 0) or 0)
@@ -69,8 +100,9 @@ def load_ppt_cards(pptx_bytes: bytes) -> Dict[str, PptSideCards]:
 
         st = getattr(sh, "shape_type", None)
         if st == MSO_SHAPE_TYPE.PICTURE:
-            b = bytes(sh.image.blob)
-            if len(b) != WATERMARK_BLOB_SIZE:
+            raw_blob = bytes(sh.image.blob)
+            if len(raw_blob) != WATERMARK_BLOB_SIZE:
+                b = _picture_blob_with_powerpoint_crop(sh, raw_blob)
                 l = float(getattr(sh, "left", 0) or 0)
                 t = float(getattr(sh, "top", 0) or 0)
                 w = float(getattr(sh, "width", 0) or 0)
