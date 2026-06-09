@@ -126,6 +126,11 @@ def main() -> None:
     show_layout_overlay = False
     image_library_path = ""
     image_alias_file = None
+    image_transfer_label_pdf = None
+    image_transfer_source_pdf = None
+    image_transfer_middle = True
+    image_transfer_bonus = True
+    run_image_transfer = False
 
     with st.sidebar:
         st.header("Configuration")
@@ -180,33 +185,18 @@ def main() -> None:
             st.divider()
             matrix_file = st.file_uploader("Matrix Excel (.xlsx)", type=["xlsx"])
             labels_pdf = st.file_uploader("Labels PDF", type=["pdf"])
-            images_pdf = st.file_uploader(
-                "Card Images PDF / UPC Image ZIPs (optional)",
-                type=["pdf", "zip", "jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff"],
-                accept_multiple_files=True,
-                help=(
-                    "Optional. Upload one or more PDFs for existing page-crop behavior, "
-                    "or ZIPs/images named by UPC to place images by resolved product."
-                ),
-            )
+            if display_type != DISPLAY_FULL_PALLET:
+                images_pdf = st.file_uploader(
+                    "Card Images PDF / UPC Image ZIPs (optional)",
+                    type=["pdf", "zip", "jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff"],
+                    accept_multiple_files=True,
+                    help=(
+                        "Optional. Upload one or more PDFs for existing page-crop behavior, "
+                        "or ZIPs/images named by UPC to place images by resolved product."
+                    ),
+                )
 
             if display_type == DISPLAY_FULL_PALLET:
-                image_library_path = st.text_input(
-                    "Local UPC Image Library Folder (optional)",
-                    value="",
-                    help=(
-                        "Paste a local folder path containing UPC-named card images. "
-                        "The app scans it recursively and only uses images needed by the planogram."
-                    ),
-                )
-                image_alias_file = st.file_uploader(
-                    "Approved Image UPC Alias File (.csv, .xlsx)",
-                    type=["csv", "xlsx"],
-                    help=(
-                        "Optional. Upload approved mappings with current_upc and image_upc columns. "
-                        "Only approved rows are used for rendering."
-                    ),
-                )
                 pptx_file = st.file_uploader(
                     "Top Cards Blueprint (.pptx, .ppt, .pdf, images, ZIP)",
                     type=["pptx", "ppt", "pdf", "zip", "jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff"],
@@ -216,6 +206,28 @@ def main() -> None:
                 ppt_cpp_global = st.number_input("PPT Cards CPP (Global)", min_value=0, value=0, step=1)
                 show_debug = st.checkbox("Show debug details")
                 show_layout_overlay = st.checkbox("Show Full Pallet layout overlay")
+
+                st.divider()
+                st.markdown("### Add Images to Existing Label POG")
+                image_transfer_label_pdf = st.file_uploader(
+                    "Generated Label-Only POG PDF",
+                    type=["pdf"],
+                    key="image_transfer_label_pdf",
+                    help="Upload the already-generated label POG. Existing labels and CPPs stay untouched.",
+                )
+                image_transfer_source_pdf = st.file_uploader(
+                    "Official Image PDF",
+                    type=["pdf"],
+                    key="image_transfer_source_pdf",
+                    help="Upload the matching official planogram PDF with card images.",
+                )
+                image_transfer_middle = st.checkbox("Transfer middle images", value=True)
+                image_transfer_bonus = st.checkbox("Transfer bonus images", value=True)
+                run_image_transfer = st.button(
+                    "Add Images to Existing Label POG",
+                    use_container_width=True,
+                    key="run_full_pallet_image_transfer",
+                )
 
             st.divider()
             title_prefix = st.text_input("PDF title prefix", "POG")
@@ -403,6 +415,57 @@ def main() -> None:
                             use_container_width=True,
                             key="download_sams_price_strips_pdf",
                         )
+        return
+
+    if display_type == DISPLAY_FULL_PALLET and run_image_transfer:
+        if not (image_transfer_label_pdf and image_transfer_source_pdf):
+            st.warning("Upload both the generated label-only POG PDF and the official image PDF.")
+            return
+        if not (image_transfer_middle or image_transfer_bonus):
+            st.warning("Select at least one section to transfer: middle or bonus.")
+            return
+        try:
+            from app.full_pallet.image_transfer import add_images_to_existing_label_pog
+        except ModuleNotFoundError as e:
+            st.error(f"Image transfer dependency missing: {e.name}. Please install project requirements.")
+            return
+
+        with st.spinner("Adding middle/bonus images to existing label POG..."):
+            try:
+                transfer_result = add_images_to_existing_label_pog(
+                    image_transfer_label_pdf.getvalue(),
+                    image_transfer_source_pdf.getvalue(),
+                    include_middle=bool(image_transfer_middle),
+                    include_bonus=bool(image_transfer_bonus),
+                )
+            except Exception as e:
+                if show_debug:
+                    st.exception(e)
+                else:
+                    st.error("Unable to add images to the label POG. Enable debug for details.")
+                return
+
+        audit_df = pd.DataFrame(transfer_result.audit_rows)
+        inserted_count = int((audit_df["Status"] == "INSERTED").sum()) if not audit_df.empty else 0
+        skipped_count = int((audit_df["Status"] != "INSERTED").sum()) if not audit_df.empty else 0
+        st.success(f"Image transfer complete: {inserted_count} slot image(s) inserted, {skipped_count} slot(s) skipped.")
+        st.download_button(
+            "Download POG With Images",
+            transfer_result.pdf_bytes,
+            file_name="pog_with_images.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
+        st.download_button(
+            "Download Image Transfer Audit CSV",
+            audit_df.to_csv(index=False).encode("utf-8"),
+            file_name="image_transfer_audit.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        if skipped_count:
+            with st.expander("Skipped image slots"):
+                st.dataframe(audit_df[audit_df["Status"] != "INSERTED"], use_container_width=True, height=260)
         return
 
     if not (matrix_file and labels_pdf):
