@@ -155,8 +155,16 @@ def _trim_raster_pixmap(pix: fitz.Pixmap) -> Optional[bytes]:
     px = rgb.load()
     xs: List[int] = []
     ys: List[int] = []
+    col_counts = [0] * rgb.width
+    row_counts = [0] * rgb.height
+    edge_ignore_x = max(4, int(rgb.width * 0.14))
+    edge_ignore_y = max(2, int(rgb.height * 0.04))
     for y in range(rgb.height):
         for x in range(rgb.width):
+            if x < edge_ignore_x or x >= rgb.width - edge_ignore_x:
+                continue
+            if y < edge_ignore_y or y >= rgb.height - edge_ignore_y:
+                continue
             r, g, b = px[x, y]
             maxc = max(r, g, b)
             minc = min(r, g, b)
@@ -168,13 +176,33 @@ def _trim_raster_pixmap(pix: fitz.Pixmap) -> Optional[bytes]:
             if saturation > 18 or (maxc < 180 and saturation > 8):
                 xs.append(x)
                 ys.append(y)
+                col_counts[x] += 1
+                row_counts[y] += 1
     if not xs or not ys:
         return None
 
-    left = max(0, min(xs) - 4)
-    top = max(0, min(ys) - 4)
-    right = min(rgb.width, max(xs) + 5)
-    bottom = min(rgb.height, max(ys) + 5)
+    x_clusters = _content_clusters(col_counts, max(2, int(rgb.height * 0.035)))
+    y_clusters = _content_clusters(row_counts, max(2, int(rgb.width * 0.035)))
+    x_clusters = _drop_outer_sliver_clusters(x_clusters, rgb.width)
+    y_clusters = _drop_outer_sliver_clusters(y_clusters, rgb.height)
+
+    if x_clusters:
+        x_min = min(start for start, _end in x_clusters)
+        x_max = max(end for _start, end in x_clusters)
+    else:
+        x_min = min(xs)
+        x_max = max(xs) + 1
+    if y_clusters:
+        y_min = min(start for start, _end in y_clusters)
+        y_max = max(end for _start, end in y_clusters)
+    else:
+        y_min = min(ys)
+        y_max = max(ys) + 1
+
+    left = max(0, x_min - 2)
+    top = max(0, y_min - 2)
+    right = min(rgb.width, x_max + 2)
+    bottom = min(rgb.height, y_max + 2)
     if right - left < 8 or bottom - top < 8:
         return None
 
@@ -186,9 +214,52 @@ def _trim_raster_pixmap(pix: fitz.Pixmap) -> Optional[bytes]:
     return out.getvalue()
 
 
+def _content_clusters(counts: Sequence[int], threshold: int) -> List[Tuple[int, int]]:
+    clusters: List[Tuple[int, int]] = []
+    start: Optional[int] = None
+    gap = 0
+    max_gap = 2
+    for index, count in enumerate(counts):
+        if count >= threshold:
+            if start is None:
+                start = index
+            gap = 0
+            continue
+        if start is None:
+            continue
+        gap += 1
+        if gap > max_gap:
+            clusters.append((start, index - gap + 1))
+            start = None
+            gap = 0
+    if start is not None:
+        clusters.append((start, len(counts) - gap))
+    return [(start, end) for start, end in clusters if end - start >= 2]
+
+
+def _drop_outer_sliver_clusters(clusters: Sequence[Tuple[int, int]], length: int) -> List[Tuple[int, int]]:
+    if len(clusters) <= 1:
+        return list(clusters)
+
+    edge = max(4, int(length * 0.07))
+    non_edge = [(start, end) for start, end in clusters if end > edge and start < length - edge]
+    if not non_edge:
+        return list(clusters)
+
+    filtered: List[Tuple[int, int]] = []
+    for start, end in non_edge:
+        width = end - start
+        touches_left = start <= edge
+        touches_right = end >= length - edge
+        if (touches_left or touches_right) and width <= max(5, int(length * 0.08)):
+            continue
+        filtered.append((start, end))
+    return filtered or non_edge
+
+
 def _padded_raster_rect(rect: fitz.Rect, page_rect: fitz.Rect) -> fitz.Rect:
-    x_pad = 1.8
-    y_pad = 0.8
+    x_pad = 0.2
+    y_pad = 0.25
     return fitz.Rect(
         max(page_rect.x0, rect.x0 - x_pad),
         max(page_rect.y0, rect.y0 - y_pad),
