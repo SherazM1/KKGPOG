@@ -117,7 +117,8 @@ def _transfer_section(
                 continue
             source_rect = source_row[col_index]
             try:
-                pix = source_page.get_pixmap(matrix=fitz.Matrix(4.0, 4.0), clip=source_rect, alpha=False)
+                crop_rect = _padded_raster_rect(source_rect, source_page.rect) if source_profile.kind == "raster_strip" else source_rect
+                pix = source_page.get_pixmap(matrix=fitz.Matrix(4.0, 4.0), clip=crop_rect, alpha=False)
                 if pix.width < 8 or pix.height < 8:
                     audit_rows.append(_audit(side, section, row_index, col_index, "SKIPPED", "tiny_source_crop"))
                     continue
@@ -135,7 +136,7 @@ def _transfer_section(
                         "INSERTED",
                         f"{source_profile.kind}_slot_grid",
                         target_rect,
-                        source_rect,
+                        crop_rect,
                     )
                 )
             except Exception as exc:
@@ -154,10 +155,6 @@ def _trim_raster_pixmap(pix: fitz.Pixmap) -> Optional[bytes]:
     px = rgb.load()
     xs: List[int] = []
     ys: List[int] = []
-    central_xs: List[int] = []
-    central_ys: List[int] = []
-    central_left = int(rgb.width * 0.18)
-    central_right = int(rgb.width * 0.82)
     for y in range(rgb.height):
         for x in range(rgb.width):
             r, g, b = px[x, y]
@@ -171,15 +168,8 @@ def _trim_raster_pixmap(pix: fitz.Pixmap) -> Optional[bytes]:
             if saturation > 18 or (maxc < 180 and saturation > 8):
                 xs.append(x)
                 ys.append(y)
-                if central_left <= x <= central_right:
-                    central_xs.append(x)
-                    central_ys.append(y)
     if not xs or not ys:
         return None
-
-    if len(central_xs) >= max(80, int(len(xs) * 0.35)):
-        xs = central_xs
-        ys = central_ys
 
     left = max(0, min(xs) - 4)
     top = max(0, min(ys) - 4)
@@ -194,6 +184,17 @@ def _trim_raster_pixmap(pix: fitz.Pixmap) -> Optional[bytes]:
     out = io.BytesIO()
     cropped.save(out, format="PNG")
     return out.getvalue()
+
+
+def _padded_raster_rect(rect: fitz.Rect, page_rect: fitz.Rect) -> fitz.Rect:
+    x_pad = 1.8
+    y_pad = 0.8
+    return fitz.Rect(
+        max(page_rect.x0, rect.x0 - x_pad),
+        max(page_rect.y0, rect.y0 - y_pad),
+        min(page_rect.x1, rect.x1 + x_pad),
+        min(page_rect.y1, rect.y1 + y_pad),
+    )
 
 
 def _audit(
