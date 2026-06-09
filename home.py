@@ -9,7 +9,7 @@ from typing import Optional
 from app.sams_club.extract_price_strips import build_sams_price_strip_rows
 from app.sams_club.render_planogram import render_sams_planogram_pdf
 from app.sams_club.service import build_sams_planogram_structure, detect_sams_pogs
-from app.shared.constants import DISPLAY_FULL_PALLET, DISPLAY_SAMS_CLUB, DISPLAY_STANDARD, N_COLS
+from app.shared.constants import DISPLAY_FULL_PALLET, DISPLAY_SAMS_CLUB, DISPLAY_STANDARD
 from app.shared import upload_utils as _upload_utils
 
 NamedImageIndex = _upload_utils.NamedImageIndex
@@ -536,7 +536,7 @@ def main() -> None:
     if display_type == DISPLAY_STANDARD:
         from app.standard_display.service import prepare_standard_display, render_standard_display_pdf
 
-        pages, matrix_idx, rows = prepare_standard_display(matrix_bytes, labels_bytes, N_COLS)
+        pages, matrix_idx, rows = prepare_standard_display(matrix_bytes, labels_bytes)
         if not pages:
             st.error("No 5-digit UPC tokens found in Labels PDF.")
             return

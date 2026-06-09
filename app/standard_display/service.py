@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from app.shared.matching import _resolve, load_matrix_index
 from app.shared.models import MatrixRow, PageData
@@ -11,7 +11,7 @@ from app.standard_display.render_pdf import render_standard_pog_pdf
 def prepare_standard_display(
     matrix_bytes: bytes,
     labels_bytes: bytes,
-    n_cols: int,
+    n_cols: Optional[int] = None,
 ) -> Tuple[List[PageData], Dict[str, List[MatrixRow]], List[dict]]:
     matrix_idx = load_matrix_index(matrix_bytes)
     pages = extract_pages_from_labels(labels_bytes, n_cols)
@@ -48,7 +48,7 @@ def run_standard_display(
     labels_bytes: bytes,
     images_bytes: bytes,
     title_prefix: str,
-    n_cols: int,
+    n_cols: Optional[int] = None,
 ) -> Tuple[List[dict], bytes]:
     pages, matrix_idx, rows = prepare_standard_display(matrix_bytes, labels_bytes, n_cols)
     pdf = render_standard_display_pdf(pages, images_bytes, matrix_idx, title_prefix)
