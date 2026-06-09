@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import io
 from typing import List, Optional, Sequence, Tuple
 
 import fitz
+from PIL import Image
 
 
 BBox = Tuple[float, float, float, float]
@@ -119,7 +121,15 @@ def _transfer_section(
                 if pix.width < 8 or pix.height < 8:
                     audit_rows.append(_audit(side, section, row_index, col_index, "SKIPPED", "tiny_source_crop"))
                     continue
-                target_page.insert_image(_target_image_area(target_rect), pixmap=pix, keep_proportion=True)
+                image_stream = _trim_raster_pixmap(pix) if source_profile.kind == "raster_strip" else None
+                if image_stream:
+                    target_page.insert_image(_target_image_area(target_rect), stream=image_stream, keep_proportion=False)
+                else:
+                    target_page.insert_image(
+                        _target_image_area(target_rect),
+                        pixmap=pix,
+                        keep_proportion=source_profile.kind != "raster_strip",
+                    )
                 audit_rows.append(
                     _audit(
                         side,
@@ -134,6 +144,47 @@ def _transfer_section(
                 )
             except Exception as exc:
                 audit_rows.append(_audit(side, section, row_index, col_index, "SKIPPED", str(exc), target_rect, source_rect))
+
+
+def _trim_raster_pixmap(pix: fitz.Pixmap) -> Optional[bytes]:
+    try:
+        image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+    except Exception:
+        return None
+    if image.width < 12 or image.height < 12:
+        return None
+
+    rgb = image.convert("RGB")
+    px = rgb.load()
+    xs: List[int] = []
+    ys: List[int] = []
+    for y in range(rgb.height):
+        for x in range(rgb.width):
+            r, g, b = px[x, y]
+            maxc = max(r, g, b)
+            minc = min(r, g, b)
+            saturation = maxc - minc
+            if maxc > 248 and minc > 240:
+                continue
+            if saturation < 8 and 170 <= minc <= 238:
+                continue
+            if maxc < 245 or saturation > 18:
+                xs.append(x)
+                ys.append(y)
+    if not xs or not ys:
+        return None
+
+    left = max(0, min(xs) - 4)
+    top = max(0, min(ys) - 4)
+    right = min(rgb.width, max(xs) + 5)
+    bottom = min(rgb.height, max(ys) + 5)
+    if right - left < 8 or bottom - top < 8:
+        return None
+
+    cropped = rgb.crop((left, top, right, bottom))
+    out = io.BytesIO()
+    cropped.save(out, format="PNG")
+    return out.getvalue()
 
 
 def _audit(
@@ -310,6 +361,10 @@ def _row_band(source_row: List[fitz.Rect], rows: List[List[fitz.Rect]], row_inde
 
 
 def _strip_rows_for_shape(union: fitz.Rect, section: str, row_shapes: Sequence[int]) -> List[List[fitz.Rect]]:
+    template_rows = _bd_raster_template_rows(section, row_shapes)
+    if template_rows:
+        return template_rows
+
     w = union.width
     h = union.height
     if section == "middle":
@@ -336,6 +391,88 @@ def _strip_rows_for_shape(union: fitz.Rect, section: str, row_shapes: Sequence[i
         y1 = region.y0 + region.height * (row_index + 1) / row_count
         row_region = fitz.Rect(region.x0, y0, region.x1, y1)
         rows.append(_split_rect_grid(row_region, 1, max(1, col_count))[0])
+    return rows
+
+
+def _bd_raster_template_rows(section: str, row_shapes: Sequence[int]) -> List[List[fitz.Rect]]:
+    """Known B/D raster layout tracks.
+
+    The official image PDFs expose B/D as large horizontal raster strips, but
+    the artwork inside those strips still lands on the same page-coordinate
+    tracks as the individually exposed A/C artwork.  These coordinates crop the
+    visible card art slots directly instead of slicing signage/rulers/neighbors.
+    """
+    if not row_shapes:
+        return []
+
+    if section == "middle":
+        x_ranges = [
+            (158.6, 181.2),
+            (185.2, 207.7),
+            (254.2, 278.3),
+            (280.7, 304.9),
+            (307.3, 331.4),
+            (333.8, 358.1),
+            (404.2, 426.7),
+            (430.7, 453.2),
+        ]
+        y_ranges = [
+            (249.5, 283.1),
+            (286.1, 319.6),
+            (322.6, 356.0),
+        ]
+        rows: List[List[fitz.Rect]] = []
+        for row_index, col_count in enumerate(row_shapes):
+            if row_index >= len(y_ranges):
+                break
+            y0, y1 = y_ranges[row_index]
+            rows.append([fitz.Rect(x0, y0, x1, y1) for x0, x1 in x_ranges[:col_count]])
+        return rows
+
+    if section != "bonus":
+        return []
+
+    main_x_ranges = [
+        (154.0, 190.2),
+        (190.2, 217.0),
+        (217.0, 243.5),
+        (243.5, 271.0),
+        (271.0, 299.3),
+        (299.3, 327.5),
+        (327.5, 356.0),
+        (356.0, 383.2),
+        (383.2, 409.0),
+        (409.0, 437.0),
+    ]
+    top_x_ranges = [
+        (216.0, 247.0),
+        (247.0, 273.5),
+        (273.5, 300.0),
+        (300.0, 327.5),
+        (327.5, 355.5),
+        (355.5, 384.5),
+    ]
+    top_y = (378.5, 417.2)
+    main_y_ranges = [
+        (415.0, 452.8),
+        (452.8, 489.8),
+        (489.8, 526.8),
+        (526.8, 563.8),
+        (563.8, 601.0),
+    ]
+
+    rows = []
+    main_row_index = 0
+    for row_index, col_count in enumerate(row_shapes):
+        if row_index == 0 and col_count <= len(top_x_ranges):
+            y0, y1 = top_y
+            rows.append([fitz.Rect(x0, y0, x1, y1) for x0, x1 in top_x_ranges[:col_count]])
+            continue
+        if main_row_index >= len(main_y_ranges):
+            break
+        y0, y1 = main_y_ranges[main_row_index]
+        main_row_index += 1
+        rows.append([fitz.Rect(x0, y0, x1, y1) for x0, x1 in main_x_ranges[:col_count]])
     return rows
 
 
