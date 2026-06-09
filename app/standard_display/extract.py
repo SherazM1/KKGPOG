@@ -66,6 +66,46 @@ def _token_centers(words: List[dict]) -> Tuple[List[float], List[float]]:
     return xs, ys
 
 
+def _find_wm_gift_card_placeholders(words: List[dict]) -> List[dict]:
+    placeholders: List[dict] = []
+    ordered = sorted(words, key=lambda w: (float(w.get("top", 0.0)), float(w.get("x0", 0.0))))
+    active: List[dict] = []
+
+    def flush_active() -> None:
+        nonlocal active
+        if active:
+            active = []
+
+    for w in ordered:
+        raw = str(w.get("text", "") or "")
+        token = re.sub(r"[^A-Z0-9]", "", raw.upper())
+        if token in {"WM", "GIFT", "GIFTCARD", "GIFTCA", "CARD", "RD"}:
+            active.append(w)
+            joined = re.sub(
+                r"[^A-Z0-9]",
+                "",
+                "".join(str(part.get("text", "") or "") for part in active).upper(),
+            )
+            if joined == "WMGIFTCARD":
+                x0 = min(float(part["x0"]) for part in active)
+                x1 = max(float(part["x1"]) for part in active)
+                top = min(float(part["top"]) for part in active)
+                bottom = max(float(part["bottom"]) for part in active)
+                placeholders.append(
+                    {
+                        "x_center": (x0 + x1) / 2.0,
+                        "y_center": (top + bottom) / 2.0,
+                    }
+                )
+                active = []
+            elif not "WMGIFTCARD".startswith(joined):
+                flush_active()
+            continue
+        flush_active()
+
+    return placeholders
+
+
 def _cluster_axis(values: List[float], page_span: float, *, tol: Optional[float] = None) -> np.ndarray:
     if not values:
         return np.array([], dtype=float)
@@ -158,6 +198,7 @@ def _extract_row_shaped_cells(
     page: pdfplumber.page.Page,
     five: List[dict],
     y_centers: np.ndarray,
+    blocker_centers: Optional[List[dict]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, List[CellData]]:
     y_bounds = boundaries_from_centers(y_centers)
     rows: Dict[int, List[dict]] = {idx: [] for idx in range(len(y_centers))}
@@ -173,6 +214,12 @@ def _extract_row_shaped_cells(
         if not row_words:
             continue
         row_xs = [(w["x0"] + w["x1"]) / 2 for w in row_words]
+        if blocker_centers:
+            row_xs.extend(
+                float(blocker["x_center"])
+                for blocker in blocker_centers
+                if int(np.argmin(np.abs(y_centers - float(blocker["y_center"])))) == row
+            )
         x_centers = _cluster_axis(row_xs, float(page.width), tol=max(8.0, float(page.width) * 0.018))
         x_bounds = boundaries_from_centers(x_centers)
         x_min = float(x_bounds[0]) if x_min is None else min(x_min, float(x_bounds[0]))
@@ -235,7 +282,8 @@ def extract_pages_from_labels(labels_pdf_bytes: bytes, n_cols: Optional[int] = N
             if n_cols and n_cols > 0:
                 x_bounds, y_bounds, cells = _extract_fixed_grid_cells(page, five, x_centers, y_centers)
             else:
-                x_bounds, y_bounds, cells = _extract_row_shaped_cells(page, five, y_centers)
+                blockers = _find_wm_gift_card_placeholders(words)
+                x_bounds, y_bounds, cells = _extract_row_shaped_cells(page, five, y_centers, blockers)
 
             pages.append(
                 PageData(page_index=pidx, x_bounds=x_bounds, y_bounds=y_bounds, cells=cells)

@@ -41,19 +41,31 @@ def render_standard_pog_pdf(
     logo_img = _try_load_logo()
 
     side_count = len(pages)
-    per_side_w = int(310 * scale_factor)
+    base_side_w = int(310 * scale_factor)
+
+    side_widths: List[float] = []
+    for page in pages:
+        row_counts = [
+            sum(1 for cell in page.cells if cell.row == row)
+            for row in sorted({cell.row for cell in page.cells})
+        ]
+        max_row_count = max(row_counts, default=1)
+        if len(page.cells) > 40 or max_row_count >= 8:
+            side_widths.append(base_side_w * max(1.0, max_row_count / 4.0))
+        else:
+            side_widths.append(float(base_side_w))
 
     side_scales: List[float] = []
     side_heights: List[float] = []
     side_y_spans: List[float] = []
-    for page in pages:
+    for page, side_w in zip(pages, side_widths):
         x_min = float(page.x_bounds[0])
         x_max = float(page.x_bounds[-1])
         y_min = float(page.y_bounds[0])
         y_max = float(page.y_bounds[-1])
         y_span = max(1e-6, y_max - y_min)
 
-        scale = per_side_w / max(1e-6, x_max - x_min)
+        scale = side_w / max(1e-6, x_max - x_min)
         side_scales.append(scale)
         side_heights.append(scale * y_span)
         side_y_spans.append(y_span)
@@ -71,7 +83,13 @@ def render_standard_pog_pdf(
         else:
             side_y_scales.append(scale)
 
-    page_w = outer_margin * 2 + side_count * per_side_w + max(0, side_count - 1) * side_gap
+    side_origins: List[float] = []
+    cursor_x = outer_margin
+    for side_w in side_widths:
+        side_origins.append(cursor_x)
+        cursor_x += side_w + side_gap
+
+    page_w = outer_margin * 2 + sum(side_widths) + max(0, side_count - 1) * side_gap
     page_h = outer_margin + top_bar_h + side_label_h + content_h + footer_h + outer_margin
 
     c = canvas.Canvas(buf, pagesize=(page_w, page_h))
@@ -89,7 +107,7 @@ def render_standard_pog_pdf(
 
         for side_idx, page in enumerate(pages):
             side_letter = chr(ord("A") + side_idx)
-            side_origin_x = outer_margin + side_idx * (per_side_w + side_gap)
+            side_origin_x = side_origins[side_idx]
 
             badge_h = 34.0
             badge_w = 148.0
