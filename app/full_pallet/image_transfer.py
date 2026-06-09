@@ -121,18 +121,7 @@ def _transfer_section(
                 if pix.width < 8 or pix.height < 8:
                     audit_rows.append(_audit(side, section, row_index, col_index, "SKIPPED", "tiny_source_crop"))
                     continue
-                image_stream = _trim_raster_pixmap(pix) if source_profile.kind == "raster_strip" else None
-                if source_profile.kind == "raster_strip" and not image_stream:
-                    audit_rows.append(_audit(side, section, row_index, col_index, "SKIPPED", "low_confidence_raster_crop"))
-                    continue
-                if image_stream:
-                    target_page.insert_image(_target_image_area(target_rect), stream=image_stream, keep_proportion=False)
-                else:
-                    target_page.insert_image(
-                        _target_image_area(target_rect),
-                        pixmap=pix,
-                        keep_proportion=source_profile.kind != "raster_strip",
-                    )
+                target_page.insert_image(_target_image_area(target_rect), pixmap=pix, keep_proportion=True)
                 audit_rows.append(
                     _audit(
                         side,
