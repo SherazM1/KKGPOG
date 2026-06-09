@@ -169,11 +169,11 @@ def _trim_raster_pixmap(pix: fitz.Pixmap) -> Optional[bytes]:
             maxc = max(r, g, b)
             minc = min(r, g, b)
             saturation = maxc - minc
-            if maxc > 248 and minc > 240:
+            if maxc > 252 and minc > 248:
                 continue
-            if saturation < 8 and 170 <= minc <= 238:
+            if saturation < 5 and 170 <= minc <= 242:
                 continue
-            if saturation > 18 or (maxc < 180 and saturation > 8):
+            if saturation > 12 or (maxc < 188 and saturation > 5) or (maxc < 246 and saturation > 5):
                 xs.append(x)
                 ys.append(y)
                 col_counts[x] += 1
@@ -186,18 +186,20 @@ def _trim_raster_pixmap(pix: fitz.Pixmap) -> Optional[bytes]:
     x_clusters = _drop_outer_sliver_clusters(x_clusters, rgb.width)
     y_clusters = _drop_outer_sliver_clusters(y_clusters, rgb.height)
 
-    if x_clusters:
-        x_min = min(start for start, _end in x_clusters)
-        x_max = max(end for _start, end in x_clusters)
+    x_span = _dominant_content_span(x_clusters, col_counts, rgb.width)
+    y_span = _dominant_content_span(y_clusters, row_counts, rgb.height)
+    if x_span:
+        x_min, x_max = x_span
     else:
         x_min = min(xs)
         x_max = max(xs) + 1
-    if y_clusters:
-        y_min = min(start for start, _end in y_clusters)
-        y_max = max(end for _start, end in y_clusters)
+    if y_span:
+        y_min, y_max = y_span
     else:
         y_min = min(ys)
         y_max = max(ys) + 1
+
+    x_min, x_max, y_min, y_max = _expand_to_card_like_bounds(x_min, x_max, y_min, y_max, rgb.width, rgb.height)
 
     left = max(0, x_min - 2)
     top = max(0, y_min - 2)
@@ -212,6 +214,83 @@ def _trim_raster_pixmap(pix: fitz.Pixmap) -> Optional[bytes]:
     out = io.BytesIO()
     cropped.save(out, format="PNG")
     return out.getvalue()
+
+
+def _dominant_content_span(
+    clusters: Sequence[Tuple[int, int]],
+    counts: Sequence[int],
+    length: int,
+) -> Optional[Tuple[int, int]]:
+    if not clusters:
+        return None
+
+    center = length / 2.0
+    candidates: List[Tuple[float, int, int]] = []
+    for start, end in clusters:
+        width = end - start
+        mass = sum(counts[start:end])
+        cluster_center = (start + end) / 2.0
+        center_penalty = abs(cluster_center - center) / max(1.0, length)
+        edge_penalty = 0.35 if start <= length * 0.12 or end >= length * 0.88 else 0.0
+        score = mass + width * 6.0 - mass * center_penalty - mass * edge_penalty
+        candidates.append((score, start, end))
+
+    _score, best_start, best_end = max(candidates, key=lambda item: item[0])
+    merged_start = best_start
+    merged_end = best_end
+    for start, end in sorted(clusters):
+        if end <= merged_start:
+            gap = merged_start - end
+            if gap <= max(3, int(length * 0.07)) and sum(counts[start:end]) >= max(2, int(sum(counts[best_start:best_end]) * 0.08)):
+                merged_start = start
+            continue
+        if start >= merged_end:
+            gap = start - merged_end
+            if gap <= max(3, int(length * 0.07)) and sum(counts[start:end]) >= max(2, int(sum(counts[best_start:best_end]) * 0.08)):
+                merged_end = end
+            continue
+    return merged_start, merged_end
+
+
+def _expand_to_card_like_bounds(
+    x_min: int,
+    x_max: int,
+    y_min: int,
+    y_max: int,
+    width: int,
+    height: int,
+) -> Tuple[int, int, int, int]:
+    content_w = max(1, x_max - x_min)
+    content_h = max(1, y_max - y_min)
+    cx = (x_min + x_max) / 2.0
+    cy = (y_min + y_max) / 2.0
+
+    target_w = min(width * 0.86, max(content_w * 1.35, content_h * 0.56))
+    target_h = min(height * 0.94, max(content_h * 1.22, target_w / 0.62))
+
+    if target_w / max(1.0, target_h) > 0.72:
+        target_h = min(height * 0.92, target_w / 0.62)
+    elif target_w / max(1.0, target_h) < 0.38:
+        target_w = min(width * 0.82, target_h * 0.50)
+
+    left = int(round(cx - target_w / 2.0))
+    right = int(round(cx + target_w / 2.0))
+    top = int(round(cy - target_h / 2.0))
+    bottom = int(round(cy + target_h / 2.0))
+
+    if left < 0:
+        right -= left
+        left = 0
+    if right > width:
+        left -= right - width
+        right = width
+    if top < 0:
+        bottom -= top
+        top = 0
+    if bottom > height:
+        top -= bottom - height
+        bottom = height
+    return max(0, left), min(width, right), max(0, top), min(height, bottom)
 
 
 def _content_clusters(counts: Sequence[int], threshold: int) -> List[Tuple[int, int]]:
