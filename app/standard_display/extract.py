@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import pdfplumber
@@ -12,8 +12,36 @@ from app.shared.constants import LAST5_RE
 from app.shared.models import CellData, PageData
 
 
+def _without_wm_gift_card_placeholder(lines: Iterable[str]) -> List[str]:
+    cleaned: List[str] = []
+    buffer: List[str] = []
+
+    def flush_buffer() -> None:
+        nonlocal buffer
+        if buffer:
+            cleaned.extend(buffer)
+            buffer = []
+
+    for line in lines:
+        token = re.sub(r"[^A-Z0-9]", "", line.upper())
+        if token in {"WM", "GIFT", "GIFTCARD", "GIFTCA", "CARD", "RD"}:
+            buffer.append(line)
+            joined = re.sub(r"[^A-Z0-9]", "", "".join(buffer).upper())
+            if joined == "WMGIFTCARD":
+                buffer = []
+            elif not "WMGIFTCARD".startswith(joined):
+                flush_buffer()
+            continue
+        flush_buffer()
+        cleaned.append(line)
+
+    flush_buffer()
+    return cleaned
+
+
 def parse_label_cell_text(text: str) -> Tuple[str, str, Optional[int]]:
-    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    raw_lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    lines = _without_wm_gift_card_placeholder(raw_lines)
     joined = " ".join(lines)
 
     m = LAST5_RE.search(joined)

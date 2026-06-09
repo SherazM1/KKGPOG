@@ -45,17 +45,32 @@ def render_standard_pog_pdf(
 
     side_scales: List[float] = []
     side_heights: List[float] = []
+    side_y_spans: List[float] = []
     for page in pages:
         x_min = float(page.x_bounds[0])
         x_max = float(page.x_bounds[-1])
         y_min = float(page.y_bounds[0])
         y_max = float(page.y_bounds[-1])
+        y_span = max(1e-6, y_max - y_min)
 
         scale = per_side_w / max(1e-6, x_max - x_min)
         side_scales.append(scale)
-        side_heights.append(scale * max(1e-6, y_max - y_min))
+        side_heights.append(scale * y_span)
+        side_y_spans.append(y_span)
 
     content_h = max(side_heights) if side_heights else 600.0
+    side_y_scales: List[float] = []
+    for page, scale, y_span, side_h in zip(pages, side_scales, side_y_spans, side_heights):
+        row_counts = [
+            sum(1 for cell in page.cells if cell.row == row)
+            for row in sorted({cell.row for cell in page.cells})
+        ]
+        dense_side = len(page.cells) > 40 or max(row_counts, default=0) >= 8
+        if dense_side and side_h < content_h:
+            side_y_scales.append(content_h / y_span)
+        else:
+            side_y_scales.append(scale)
+
     page_w = outer_margin * 2 + side_count * per_side_w + max(0, side_count - 1) * side_gap
     page_h = outer_margin + top_bar_h + side_label_h + content_h + footer_h + outer_margin
 
@@ -104,7 +119,8 @@ def render_standard_pog_pdf(
 
             x_min = float(page.x_bounds[0])
             y_min = float(page.y_bounds[0])
-            scale = side_scales[side_idx]
+            x_scale = side_scales[side_idx]
+            y_scale = side_y_scales[side_idx]
 
             for cell in page.cells:
                 match = _resolve(cell.last5, cell.name, matrix_idx) if cell.last5 else None
@@ -112,10 +128,10 @@ def render_standard_pog_pdf(
                 qty = cell.qty if cell.qty is not None else (match.cpp_qty if match else None)
 
                 x0, top, x1, bottom = cell.bbox
-                out_x0 = side_origin_x + (x0 - x_min) * scale + cell_inset
-                out_x1 = side_origin_x + (x1 - x_min) * scale - cell_inset
-                out_top = cells_top - (top - y_min) * scale - cell_inset
-                out_bottom = cells_top - (bottom - y_min) * scale + cell_inset
+                out_x0 = side_origin_x + (x0 - x_min) * x_scale + cell_inset
+                out_x1 = side_origin_x + (x1 - x_min) * x_scale - cell_inset
+                out_top = cells_top - (top - y_min) * y_scale - cell_inset
+                out_bottom = cells_top - (bottom - y_min) * y_scale + cell_inset
 
                 out_w = out_x1 - out_x0
                 out_h = out_top - out_bottom
