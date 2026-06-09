@@ -122,6 +122,9 @@ def _transfer_section(
                     audit_rows.append(_audit(side, section, row_index, col_index, "SKIPPED", "tiny_source_crop"))
                     continue
                 image_stream = _trim_raster_pixmap(pix) if source_profile.kind == "raster_strip" else None
+                if source_profile.kind == "raster_strip" and not image_stream:
+                    audit_rows.append(_audit(side, section, row_index, col_index, "SKIPPED", "low_confidence_raster_crop"))
+                    continue
                 if image_stream:
                     target_page.insert_image(_target_image_area(target_rect), stream=image_stream, keep_proportion=False)
                 else:
@@ -158,6 +161,10 @@ def _trim_raster_pixmap(pix: fitz.Pixmap) -> Optional[bytes]:
     px = rgb.load()
     xs: List[int] = []
     ys: List[int] = []
+    central_xs: List[int] = []
+    central_ys: List[int] = []
+    central_left = int(rgb.width * 0.18)
+    central_right = int(rgb.width * 0.82)
     for y in range(rgb.height):
         for x in range(rgb.width):
             r, g, b = px[x, y]
@@ -168,11 +175,18 @@ def _trim_raster_pixmap(pix: fitz.Pixmap) -> Optional[bytes]:
                 continue
             if saturation < 8 and 170 <= minc <= 238:
                 continue
-            if maxc < 245 or saturation > 18:
+            if saturation > 18 or (maxc < 180 and saturation > 8):
                 xs.append(x)
                 ys.append(y)
+                if central_left <= x <= central_right:
+                    central_xs.append(x)
+                    central_ys.append(y)
     if not xs or not ys:
         return None
+
+    if len(central_xs) >= max(80, int(len(xs) * 0.35)):
+        xs = central_xs
+        ys = central_ys
 
     left = max(0, min(xs) - 4)
     top = max(0, min(ys) - 4)
@@ -182,6 +196,8 @@ def _trim_raster_pixmap(pix: fitz.Pixmap) -> Optional[bytes]:
         return None
 
     cropped = rgb.crop((left, top, right, bottom))
+    if cropped.width / max(1, cropped.height) < 0.28:
+        return None
     out = io.BytesIO()
     cropped.save(out, format="PNG")
     return out.getvalue()
@@ -433,32 +449,32 @@ def _bd_raster_template_rows(section: str, row_shapes: Sequence[int]) -> List[Li
         return []
 
     main_x_ranges = [
-        (154.0, 190.2),
-        (190.2, 217.0),
-        (217.0, 243.5),
-        (243.5, 271.0),
-        (271.0, 299.3),
-        (299.3, 327.5),
-        (327.5, 356.0),
-        (356.0, 383.2),
-        (383.2, 409.0),
-        (409.0, 437.0),
+        (178.2, 202.8),
+        (204.0, 228.5),
+        (231.2, 255.8),
+        (258.0, 281.0),
+        (284.0, 308.8),
+        (311.0, 335.2),
+        (337.8, 361.0),
+        (364.2, 387.8),
+        (390.0, 414.8),
+        (417.2, 440.8),
     ]
     top_x_ranges = [
-        (216.0, 247.0),
-        (247.0, 273.5),
-        (273.5, 300.0),
-        (300.0, 327.5),
-        (327.5, 355.5),
-        (355.5, 384.5),
+        (231.2, 255.8),
+        (258.0, 281.8),
+        (284.0, 308.8),
+        (311.0, 335.2),
+        (337.8, 361.5),
+        (364.2, 387.8),
     ]
-    top_y = (378.5, 417.2)
+    top_y = (381.0, 416.4)
     main_y_ranges = [
-        (415.0, 452.8),
-        (452.8, 489.8),
-        (489.8, 526.8),
-        (526.8, 563.8),
-        (563.8, 601.0),
+        (418.0, 452.0),
+        (454.5, 488.8),
+        (491.0, 524.8),
+        (527.2, 561.0),
+        (564.0, 598.0),
     ]
 
     rows = []
