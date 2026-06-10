@@ -2082,6 +2082,7 @@ def render_full_pallet_pdf(
         n_cols = int(plan["n_cols"])
         bonus_render_rows: List[List[Optional[CellData]]] = []
         if is_bonus_section:
+            section_cols = [int(col) for col in sec_cols]
             for row_group in render_row_groups:
                 row_ids = {int(row_id) for row_id in row_group}
                 row_cells = [cell for cell in p.cells if cell.row in row_ids]
@@ -2091,7 +2092,15 @@ def render_full_pallet_pdf(
                 row_cells.sort(key=lambda cell: cell.col)
                 row_cols = [int(cell.col) for cell in row_cells]
                 if row_cols:
-                    expected_cols = list(range(min(row_cols), max(row_cols) + 1))
+                    contiguous_cols = list(range(min(row_cols), max(row_cols) + 1))
+                    expected_cols = contiguous_cols
+                    if (
+                        len(row_cells) >= 8
+                        and len(section_cols) <= 10
+                        and set(row_cols).issubset(set(section_cols))
+                        and len(section_cols) > len(row_cells)
+                    ):
+                        expected_cols = section_cols
                     if len(row_cells) >= 8 and len(expected_cols) <= 10 and len(expected_cols) > len(row_cells):
                         by_col = {int(cell.col): cell for cell in row_cells}
                         bonus_render_rows.append([by_col.get(col) for col in expected_cols])
