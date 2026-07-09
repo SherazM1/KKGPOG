@@ -45,14 +45,14 @@ _STRIP_COMPOSITION_WIDTH_RATIO = 0.94
 _STRIP_MARGIN_MIN = 0.07 * inch
 _STRIP_MARGIN_MAX = 0.19 * inch
 _MIN_TICKET_WIDTH = 0.70 * inch
-_SAMS_BRAND_SIZE = 7.5
-_SAMS_DESC_SIZE = 6.0
-_SAMS_PRICE_SIZE = 44.0
-_SAMS_ITEM_SIZE = 5.0
-_SAMS_FOOTER_SIZE = 5.0
-_SAMS_STACK_BRAND_GAP = 0.92
-_SAMS_STACK_DESC_GAP = 0.72
-_SAMS_STACK_TO_PRICE_OFFSET = 2.0
+_SAMS_BRAND_SIZE = 14.0
+_SAMS_DESC_SIZE = 14.0
+_SAMS_PRICE_SIZE = 90.0
+_SAMS_ITEM_SIZE = 8.0
+_SAMS_FOOTER_SIZE = 8.0
+_SAMS_STACK_BRAND_GAP = 1.4
+_SAMS_STACK_DESC_GAP = 1.4
+_SAMS_STACK_TO_PRICE_OFFSET = 6.0
 _SAMS_PRICE_SIGN_RISE_RATIO = 0.365
 _SAMS_PRICE_CENTS_RISE_RATIO = 0.405
 _SAMS_PRICE_SIGN_GAP_RATIO = 0.022
@@ -88,25 +88,25 @@ _BUILT_IN_LAYOUT_PROFILES = {
                 "text_top_pt": 4.2,
                 "desc_1_margin_top_pt": 0.6,
                 "desc_2_margin_top_pt": 0.4,
-                "price_top_pt": 18.0,
+                "price_top_pt": 62.0,
                 "price_left_pt": 1.2,
-                "price_box_height_pt": 44.0,
-                "item_top_pt": 51.0,
+                "price_box_height_pt": 95.0,
+                "item_top_pt": 141.0,
                 "item_right_pad_pt": 4.0,
                 "item_width_min_pt": 34.0,
                 "item_width_ratio": 0.58,
             },
             "price": {
-                "dollar_sign_size_pt": 15.5,
-                "dollar_sign_translate_y_pt": 13.5,
+                "dollar_sign_size_pt": 30.0,
+                "dollar_sign_translate_y_pt": 5.0,
                 "dollar_sign_margin_right_pt": 1.0,
-                "dollars_size_pt": 44.0,
+                "dollars_size_pt": 90.0,
                 "dollars_line_height": 0.82,
-                "dollars_letter_spacing_pt": -0.9,
-                "cents_size_pt": 18.5,
-                "cents_translate_y_pt": 2.8,
-                "cents_margin_left_pt": 0.3,
-                "cents_letter_spacing_pt": -0.4,
+                "dollars_letter_spacing_pt": 0.0,
+                "cents_size_pt": 36.0,
+                "cents_translate_y_pt": -11.0,
+                "cents_margin_left_pt": 0.6,
+                "cents_letter_spacing_pt": 0.0,
             },
         },
         "39x3.4375": {
@@ -122,25 +122,25 @@ _BUILT_IN_LAYOUT_PROFILES = {
                 "text_top_pt": 4.2,
                 "desc_1_margin_top_pt": 0.6,
                 "desc_2_margin_top_pt": 0.4,
-                "price_top_pt": 18.0,
+                "price_top_pt": 62.0,
                 "price_left_pt": 1.2,
-                "price_box_height_pt": 44.0,
-                "item_top_pt": 51.0,
+                "price_box_height_pt": 95.0,
+                "item_top_pt": 141.0,
                 "item_right_pad_pt": 4.0,
                 "item_width_min_pt": 34.0,
                 "item_width_ratio": 0.58,
             },
             "price": {
-                "dollar_sign_size_pt": 15.5,
-                "dollar_sign_translate_y_pt": 13.5,
+                "dollar_sign_size_pt": 30.0,
+                "dollar_sign_translate_y_pt": 5.0,
                 "dollar_sign_margin_right_pt": 1.0,
-                "dollars_size_pt": 44.0,
+                "dollars_size_pt": 90.0,
                 "dollars_line_height": 0.82,
-                "dollars_letter_spacing_pt": -0.9,
-                "cents_size_pt": 18.5,
-                "cents_translate_y_pt": 2.8,
-                "cents_margin_left_pt": 0.3,
-                "cents_letter_spacing_pt": -0.4,
+                "dollars_letter_spacing_pt": 0.0,
+                "cents_size_pt": 36.0,
+                "cents_translate_y_pt": -11.0,
+                "cents_margin_left_pt": 0.6,
+                "cents_letter_spacing_pt": 0.0,
             },
         },
     },
@@ -880,16 +880,16 @@ def _generate_strip_html(row_data: SamsPriceStripRow, strip_w: float, strip_h: f
     footer_left_in = _profile_number(layout_profile, "footer", "left_in", 0.08)
     footer_bottom_in = _profile_number(layout_profile, "footer", "bottom_in", 0.055)
 
-    dollar_sign_size_pt = _profile_number(layout_profile, "price", "dollar_sign_size_pt", 15.5)
-    dollar_sign_translate_y_pt = _profile_number(layout_profile, "price", "dollar_sign_translate_y_pt", 13.5)
+    dollar_sign_size_pt = _profile_number(layout_profile, "price", "dollar_sign_size_pt", 30.0)
+    dollar_sign_translate_y_pt = _profile_number(layout_profile, "price", "dollar_sign_translate_y_pt", 5.0)
     dollar_sign_margin_right_pt = _profile_number(layout_profile, "price", "dollar_sign_margin_right_pt", 1.0)
-    dollars_size_pt = _profile_number(layout_profile, "price", "dollars_size_pt", 44.0)
+    dollars_size_pt = _profile_number(layout_profile, "price", "dollars_size_pt", 90.0)
     dollars_line_height = _profile_number(layout_profile, "price", "dollars_line_height", 0.82)
-    dollars_letter_spacing_pt = _profile_number(layout_profile, "price", "dollars_letter_spacing_pt", -0.9)
-    cents_size_pt = _profile_number(layout_profile, "price", "cents_size_pt", 18.5)
-    cents_translate_y_pt = _profile_number(layout_profile, "price", "cents_translate_y_pt", 2.8)
-    cents_margin_left_pt = _profile_number(layout_profile, "price", "cents_margin_left_pt", 0.3)
-    cents_letter_spacing_pt = _profile_number(layout_profile, "price", "cents_letter_spacing_pt", -0.4)
+    dollars_letter_spacing_pt = _profile_number(layout_profile, "price", "dollars_letter_spacing_pt", 0.0)
+    cents_size_pt = _profile_number(layout_profile, "price", "cents_size_pt", 36.0)
+    cents_translate_y_pt = _profile_number(layout_profile, "price", "cents_translate_y_pt", -11.0)
+    cents_margin_left_pt = _profile_number(layout_profile, "price", "cents_margin_left_pt", 0.6)
+    cents_letter_spacing_pt = _profile_number(layout_profile, "price", "cents_letter_spacing_pt", 0.0)
 
     ticket_htmls = []
     for idx, segment in enumerate(row_data.segments):
@@ -990,17 +990,17 @@ html, body {{
 
 .brand-field {{
     font-weight: 600;
-    font-size: 7.5pt;
+    font-size: {_SAMS_BRAND_SIZE}pt;
 }}
 
 .item-field {{
     font-weight: 400;
-    font-size: 5pt;
+    font-size: {_SAMS_ITEM_SIZE}pt;
 }}
 
 .desc-field {{
     font-weight: 400;
-    font-size: 6pt;
+    font-size: {_SAMS_DESC_SIZE}pt;
 }}
 
 .price {{
@@ -1128,10 +1128,10 @@ def _generate_ticket_html(
 
     composition_top = _profile_number(layout_profile, "ticket", "composition_top_pt", 30.0)
     text_top = _profile_number(layout_profile, "ticket", "text_top_pt", 4.2)
-    old_price_top = _profile_number(layout_profile, "ticket", "price_top_pt", 18.0)
+    old_price_top = _profile_number(layout_profile, "ticket", "price_top_pt", 62.0)
     price_left_pt = _profile_number(layout_profile, "ticket", "price_left_pt", _RETAIL_MARGIN_PAD)
-    old_price_box_h = _profile_number(layout_profile, "ticket", "price_box_height_pt", 44.0)
-    old_item_top = _profile_number(layout_profile, "ticket", "item_top_pt", 51.0)
+    old_price_box_h = _profile_number(layout_profile, "ticket", "price_box_height_pt", 95.0)
+    old_item_top = _profile_number(layout_profile, "ticket", "item_top_pt", 141.0)
     item_right_pad = _profile_number(layout_profile, "ticket", "item_right_pad_pt", 4.0)
     item_width_min = _profile_number(layout_profile, "ticket", "item_width_min_pt", 34.0)
     item_width_ratio = _profile_number(layout_profile, "ticket", "item_width_ratio", 0.58)

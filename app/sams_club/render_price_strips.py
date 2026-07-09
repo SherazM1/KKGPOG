@@ -35,14 +35,14 @@ _STRIP_MARGIN_MAX = 0.19 * inch
 _STRIP_COMPOSITION_WIDTH_RATIO = 0.94
 _SAMS_FONT_REGULAR = "Sams-Gibson-Regular"
 _SAMS_FONT_SEMIBOLD = "Sams-Gibson-SemiBold"
-_SAMS_BRAND_SIZE = 7.5
-_SAMS_DESC_SIZE = 6.0
-_SAMS_PRICE_SIZE = 47.0
-_SAMS_ITEM_SIZE = 5.0
-_SAMS_FOOTER_SIZE = 5.0
-_SAMS_STACK_BRAND_GAP = 0.92
-_SAMS_STACK_DESC_GAP = 0.72
-_SAMS_STACK_TO_PRICE_OFFSET = 1.05
+_SAMS_BRAND_SIZE = 14.0
+_SAMS_DESC_SIZE = 14.0
+_SAMS_PRICE_SIZE = 90.0
+_SAMS_ITEM_SIZE = 8.0
+_SAMS_FOOTER_SIZE = 8.0
+_SAMS_STACK_BRAND_GAP = 1.4
+_SAMS_STACK_DESC_GAP = 1.4
+_SAMS_STACK_TO_PRICE_OFFSET = 6.0
 _SAMS_PRICE_SIGN_RISE_RATIO = 0.400
 _SAMS_PRICE_CENTS_RISE_RATIO = 0.440
 _SAMS_PRICE_SIGN_GAP_RATIO = 0.030
@@ -373,7 +373,7 @@ def compute_ticket_positions_across_strip(strip_w: float, ticket_count: int) -> 
 
 
 def draw_ticket_item_number(c: canvas.Canvas, item_number: str, right_x: float, baseline_y: float, max_w: float) -> None:
-    font = get_sams_strip_font("semibold")
+    font = get_sams_strip_font("regular")
     text = _truncate(item_number or "-", font, _SAMS_ITEM_SIZE, max(20.0, max_w))
     c.setFillColorRGB(*_TEXT_ITEM)
     c.setFont(font, _SAMS_ITEM_SIZE)
@@ -390,7 +390,7 @@ def draw_ticket_text_stack(
     stack_anchor_top: float,
 ) -> None:
     brand_font = get_sams_strip_font("semibold")
-    desc_font = get_sams_strip_font("semibold")
+    desc_font = get_sams_strip_font("regular")
     pad_x = min(max(_DEFAULT_INNER_PAD_X, w * 0.052), max(_DEFAULT_INNER_PAD_X, w * 0.095))
     stack_top_limit = y + h - _DEFAULT_INNER_PAD_TOP
     stack_top = min(stack_top_limit, stack_anchor_top)
