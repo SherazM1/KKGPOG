@@ -996,6 +996,9 @@ html, body {{
 .item-field {{
     font-weight: 400;
     font-size: {_SAMS_ITEM_SIZE}pt;
+    overflow: visible;
+    text-overflow: clip;
+    text-align: center;
 }}
 
 .desc-field {{
@@ -1165,6 +1168,7 @@ def _generate_ticket_html(
         "width_ratio",
         brand_width_ratio,
     )
+    item_center_under_price = bool(_profile_field_value(layout_profile, "item_number", "center_under_price", False))
     item_size = _profile_field_number(layout_profile, "item_number", "font_size_pt", _SAMS_ITEM_SIZE)
     item_weight = _profile_field_value(layout_profile, "item_number", "font_weight", 400)
 
@@ -1180,32 +1184,36 @@ def _generate_ticket_html(
     desc_2_size = _profile_field_number(layout_profile, "desc_2", "font_size_pt", _SAMS_DESC_SIZE)
     desc_2_weight = _profile_field_value(layout_profile, "desc_2", "font_weight", 400)
 
-    old_item_w = min(max(item_width_min, old_price_box_w * item_width_ratio), w - pad_x)
-    old_item_x = w - item_right_pad - old_item_w
-    if _profile_field_value(layout_profile, "item_number", "left_pt", None) is None:
-        item_left = old_item_x
-
-    brand_w = min(max(8.0, w * brand_width_ratio), max(8.0, w - brand_left))
-    item_w = min(max(8.0, w * item_width_ratio_from_field), max(8.0, w - item_left))
-    desc_1_w = min(max(8.0, w * desc_1_width_ratio), max(8.0, w - desc_1_left))
-    desc_2_w = min(max(8.0, w * desc_2_width_ratio), max(8.0, w - desc_2_left))
-
     def _font_weight_name(value) -> str:
         try:
             return "semibold" if int(value) >= 600 else "regular"
         except (TypeError, ValueError):
             return "semibold" if str(value).lower() in {"600", "bold", "semibold"} else "regular"
 
+    old_item_w = min(max(item_width_min, old_price_box_w * item_width_ratio), w - pad_x)
+    old_item_x = w - item_right_pad - old_item_w
+    if _profile_field_value(layout_profile, "item_number", "left_pt", None) is None:
+        item_left = old_item_x
+
+    brand_w = min(max(8.0, w * brand_width_ratio), max(8.0, w - brand_left))
+    item_text = (segment.item_number or "-").strip() or "-"
+    item_required_w = _estimate_text_width(item_text, item_size, _font_weight_name(item_weight)) + 6.0
+    item_w = min(
+        max(item_required_w, item_width_min, w * item_width_ratio_from_field),
+        max(8.0, w - (2 * pad_x)),
+    )
+    if item_center_under_price:
+        price_center_x = price_x + (price_box_w / 2.0)
+        item_left = price_center_x - (item_w / 2.0)
+    item_left = max(pad_x, min(item_left, w - pad_x - item_w))
+    desc_1_w = min(max(8.0, w * desc_1_width_ratio), max(8.0, w - desc_1_left))
+    desc_2_w = min(max(8.0, w * desc_2_width_ratio), max(8.0, w - desc_2_left))
+
     # Truncate texts
     brand = _truncate_svg_text(segment.brand or "-", brand_size, brand_w, _font_weight_name(brand_weight))
     desc_1 = _truncate_svg_text(segment.desc_1 or "-", desc_1_size, desc_1_w, _font_weight_name(desc_1_weight))
     desc_2 = _truncate_svg_text(segment.desc_2 or "-", desc_2_size, desc_2_w, _font_weight_name(desc_2_weight))
-    item_number = _truncate_svg_text(
-        segment.item_number or "-",
-        item_size,
-        item_w,
-        _font_weight_name(item_weight),
-    )
+    item_number = item_text
 
     ticket_html = f"""
 <div class="ticket" style="left: {x}pt; top: {y}pt; width: {w}pt; height: {h}pt;">

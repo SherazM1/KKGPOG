@@ -10,7 +10,7 @@
       "slot_width_pt": 252.0,
       "footer": {
         "left_in": 1.134,
-        "bottom_in": 0.402
+        "bottom_in": 0.220
       },
       "ticket": {
         "composition_top_pt": 70.0,
@@ -51,11 +51,12 @@
           "font_weight": 600
         },
         "item_number": {
-          "left_pt": 151.0,
+          "left_pt": 95.0,
           "top_pt": 211.0,
-          "width_ratio": 0.12,
+          "width_ratio": 0.42,
           "font_size_pt": 8.0,
-          "font_weight": 400
+          "font_weight": 400,
+          "center_under_price": true
         },
         "desc_1": {
           "left_pt": 72.0,
@@ -82,7 +83,7 @@
       "slot_width_pt": 270.0,
       "footer": {
         "left_in": 1.134,
-        "bottom_in": 0.402
+        "bottom_in": 0.220
       },
       "ticket": {
         "composition_top_pt": 70.0,
@@ -123,11 +124,12 @@
           "font_weight": 600
         },
         "item_number": {
-          "left_pt": 168.0,
+          "left_pt": 102.0,
           "top_pt": 211.0,
-          "width_ratio": 0.12,
+          "width_ratio": 0.42,
           "font_size_pt": 8.0,
-          "font_weight": 400
+          "font_weight": 400,
+          "center_under_price": true
         },
         "desc_1": {
           "left_pt": 77.0,
