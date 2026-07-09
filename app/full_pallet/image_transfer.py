@@ -82,6 +82,7 @@ class _SourceProfile:
     middle_rows: List[List[fitz.Rect]]
     bonus_rows: List[List[fitz.Rect]]
     strip_union: Optional[fitz.Rect]
+    page_index: int
 
 
 def _transfer_section(
@@ -289,10 +290,10 @@ def _source_profile(page: fitz.Page, page_index: int) -> _SourceProfile:
     if len(small) >= 40:
         middle = _group_rows([r for r in small if 235.0 <= r.y0 <= 365.0], tolerance=12.0)
         bonus = _group_rows([r for r in small if 365.0 <= r.y0 <= 615.0], tolerance=12.0)
-        return _SourceProfile(kind="individual_art", middle_rows=middle, bonus_rows=bonus, strip_union=None)
+        return _SourceProfile(kind="individual_art", middle_rows=middle, bonus_rows=bonus, strip_union=None, page_index=page_index)
 
     union = _union_rect(large)
-    return _SourceProfile(kind="raster_strip", middle_rows=[], bonus_rows=[], strip_union=union)
+    return _SourceProfile(kind="raster_strip", middle_rows=[], bonus_rows=[], strip_union=union, page_index=page_index)
 
 
 def _source_rows_for_shape(profile: _SourceProfile, section: str, row_shapes: Sequence[int]) -> List[List[fitz.Rect]]:
@@ -304,7 +305,7 @@ def _source_rows_for_shape(profile: _SourceProfile, section: str, row_shapes: Se
 
     if profile.strip_union is None:
         return []
-    return _strip_rows_for_shape(profile.strip_union, section, row_shapes)
+    return _strip_rows_for_shape(profile.strip_union, section, row_shapes, profile.page_index)
 
 
 def _fit_rows_to_shape(rows: List[List[fitz.Rect]], row_shapes: Sequence[int], centered: bool) -> List[List[fitz.Rect]]:
@@ -369,8 +370,8 @@ def _row_band(source_row: List[fitz.Rect], rows: List[List[fitz.Rect]], row_inde
     return cy - height / 2.0, cy + height / 2.0
 
 
-def _strip_rows_for_shape(union: fitz.Rect, section: str, row_shapes: Sequence[int]) -> List[List[fitz.Rect]]:
-    template_rows = _bd_raster_template_rows(section, row_shapes)
+def _strip_rows_for_shape(union: fitz.Rect, section: str, row_shapes: Sequence[int], page_index: int) -> List[List[fitz.Rect]]:
+    template_rows = _bd_raster_template_rows(section, row_shapes, page_index)
     if template_rows:
         return template_rows
 
@@ -403,7 +404,7 @@ def _strip_rows_for_shape(union: fitz.Rect, section: str, row_shapes: Sequence[i
     return rows
 
 
-def _bd_raster_template_rows(section: str, row_shapes: Sequence[int]) -> List[List[fitz.Rect]]:
+def _bd_raster_template_rows(section: str, row_shapes: Sequence[int], page_index: Optional[int] = None) -> List[List[fitz.Rect]]:
     """Known B/D raster layout tracks.
 
     The official image PDFs expose B/D as large horizontal raster strips, but
@@ -441,6 +442,7 @@ def _bd_raster_template_rows(section: str, row_shapes: Sequence[int]) -> List[Li
     if section != "bonus":
         return []
 
+    is_side_d = page_index == 3
     main_x_ranges = [
         (178.2, 202.8),
         (204.0, 228.5),
@@ -461,6 +463,11 @@ def _bd_raster_template_rows(section: str, row_shapes: Sequence[int]) -> List[Li
         (337.8, 361.5),
         (364.2, 387.8),
     ]
+    if is_side_d:
+        main_x_shift = -10.4
+        top_x_shift = -10.4
+        main_x_ranges = [(x0 + main_x_shift, x1 + main_x_shift) for x0, x1 in main_x_ranges]
+        top_x_ranges = [(x0 + top_x_shift, x1 + top_x_shift) for x0, x1 in top_x_ranges]
     top_y = (381.0, 416.4)
     main_y_ranges = [
         (418.0, 452.0),
