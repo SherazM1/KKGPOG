@@ -10,7 +10,7 @@
       "slot_width_pt": 252.0,
       "footer": {
         "left_in": 1.134,
-        "bottom_in": 0.220
+        "bottom_in": 0.190
       },
       "ticket": {
         "composition_top_pt": 70.0,
@@ -45,7 +45,7 @@
         },
         "brand": {
           "left_pt": 72.0,
-          "top_pt": 76.8,
+          "top_pt": 73.8,
           "width_ratio": 0.70,
           "font_size_pt": 14.0,
           "font_weight": 600
@@ -62,14 +62,14 @@
         },
         "desc_1": {
           "left_pt": 72.0,
-          "top_pt": 92.2,
+          "top_pt": 89.2,
           "width_ratio": 0.70,
           "font_size_pt": 14.0,
           "font_weight": 400
         },
         "desc_2": {
           "left_pt": 72.0,
-          "top_pt": 107.6,
+          "top_pt": 104.6,
           "width_ratio": 0.70,
           "font_size_pt": 14.0,
           "font_weight": 400
@@ -85,7 +85,7 @@
       "slot_width_pt": 270.0,
       "footer": {
         "left_in": 1.134,
-        "bottom_in": 0.220
+        "bottom_in": 0.190
       },
       "ticket": {
         "composition_top_pt": 70.0,
@@ -120,7 +120,7 @@
         },
         "brand": {
           "left_pt": 77.0,
-          "top_pt": 76.8,
+          "top_pt": 73.8,
           "width_ratio": 0.68,
           "font_size_pt": 14.0,
           "font_weight": 600
@@ -137,14 +137,14 @@
         },
         "desc_1": {
           "left_pt": 77.0,
-          "top_pt": 92.2,
+          "top_pt": 89.2,
           "width_ratio": 0.68,
           "font_size_pt": 14.0,
           "font_weight": 400
         },
         "desc_2": {
           "left_pt": 77.0,
-          "top_pt": 107.6,
+          "top_pt": 104.6,
           "width_ratio": 0.68,
           "font_size_pt": 14.0,
           "font_weight": 400

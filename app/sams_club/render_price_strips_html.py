@@ -1278,33 +1278,26 @@ def _generate_ticket_html(
     brand = (segment.brand or "-").strip() or "-"
     desc_1 = (segment.desc_1 or "-").strip() or "-"
     desc_2 = (segment.desc_2 or "-").strip() or "-"
-    brand_left, brand_w = _fit_line_box_left_and_width(
-        brand_left,
-        brand_w,
-        brand,
-        brand_size,
-        _font_weight_name(brand_weight),
-        w,
-        1.0,
+    desc_block_left = min(brand_left, desc_1_left, desc_2_left)
+    desc_block_w = max(brand_w, desc_1_w, desc_2_w)
+    desc_block_safe_right = max(8.0, item_left - 8.0)
+    desc_block_w = max(
+        desc_block_w,
+        _estimate_text_width(brand, brand_size, _font_weight_name(brand_weight)) + 2.0,
+        _estimate_text_width(desc_1, desc_1_size, _font_weight_name(desc_1_weight)) + 2.0,
+        _estimate_text_width(desc_2, desc_2_size, _font_weight_name(desc_2_weight)) + 2.0,
     )
-    desc_1_left, desc_1_w = _fit_line_box_left_and_width(
-        desc_1_left,
-        desc_1_w,
-        desc_1,
-        desc_1_size,
-        _font_weight_name(desc_1_weight),
-        w,
-        1.0,
-    )
-    desc_2_left, desc_2_w = _fit_line_box_left_and_width(
-        desc_2_left,
-        desc_2_w,
-        desc_2,
+    desc_block_left, desc_block_w = _fit_line_box_left_and_width(
+        desc_block_left,
+        desc_block_w,
+        "",
         desc_2_size,
         _font_weight_name(desc_2_weight),
-        max(8.0, item_left - 8.0 + 1.0),
+        desc_block_safe_right + 1.0,
         1.0,
     )
+    brand_left = desc_1_left = desc_2_left = desc_block_left
+    brand_w = desc_1_w = desc_2_w = desc_block_w
     item_number = item_text
 
     ticket_html = f"""
