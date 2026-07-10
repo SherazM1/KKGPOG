@@ -504,6 +504,44 @@ def _truncate_svg_text(text: str, font_size: float, max_width: float, weight: st
     return f"{out}{suffix}" if out else suffix
 
 
+def _fit_line_box_left_and_width(
+    left: float,
+    width: float,
+    text: str,
+    font_size: float,
+    weight: str,
+    panel_width: float,
+    pad_x: float,
+) -> tuple[float, float]:
+    required_w = _estimate_text_width(text, font_size, weight) + 2.0
+    safe_left = pad_x
+    safe_right = max(safe_left + 8.0, panel_width - pad_x)
+    safe_w = max(8.0, safe_right - safe_left)
+    target_w = min(max(width, required_w), safe_w)
+    target_left = min(left, safe_right - target_w)
+    target_left = max(safe_left, target_left)
+    return target_left, target_w
+
+
+def _estimate_price_object_width(
+    dollars: str,
+    cents: str,
+    dollar_sign_size: float,
+    dollars_size: float,
+    cents_size: float,
+    dollar_sign_margin: float,
+    cents_margin: float,
+) -> float:
+    price_width_factor = 0.63
+    return (
+        len("$") * dollar_sign_size * price_width_factor
+        + dollar_sign_margin
+        + len(dollars) * dollars_size * price_width_factor
+        + cents_margin
+        + len(cents) * cents_size * price_width_factor
+    )
+
+
 def _svg_y(page_h: float, reportlab_baseline_y: float) -> float:
     """
     Convert ReportLab-style bottom-origin baseline y into SVG top-origin baseline y.
@@ -936,7 +974,7 @@ html, body {{
 
 .ticket {{
     position: absolute;
-    overflow: hidden;
+    overflow: visible;
     font-family: "Gibson", Arial, sans-serif;
     color: black;
 }}
@@ -991,6 +1029,9 @@ html, body {{
 .brand-field {{
     font-weight: 600;
     font-size: {_SAMS_BRAND_SIZE}pt;
+    overflow: visible;
+    text-overflow: clip;
+    transform-origin: left top;
 }}
 
 .item-field {{
@@ -1004,6 +1045,9 @@ html, body {{
 .desc-field {{
     font-weight: 400;
     font-size: {_SAMS_DESC_SIZE}pt;
+    overflow: visible;
+    text-overflow: clip;
+    transform-origin: left top;
 }}
 
 .price {{
@@ -1153,6 +1197,23 @@ def _generate_ticket_html(
     price_y = _profile_field_number(layout_profile, "price", "top_pt", old_price_y)
     price_box_h = _profile_field_number(layout_profile, "price", "box_height_pt", old_price_box_h)
     price_box_w = max(20.0, w - price_x - pad_x)
+    price_sign_size = _profile_number(layout_profile, "price", "dollar_sign_size_pt", 30.0)
+    price_dollars_size = _profile_number(layout_profile, "price", "dollars_size_pt", 90.0)
+    price_cents_size = _profile_number(layout_profile, "price", "cents_size_pt", 36.0)
+    price_sign_margin = _profile_number(layout_profile, "price", "dollar_sign_margin_right_pt", 0.6)
+    price_cents_margin = _profile_number(layout_profile, "price", "cents_margin_left_pt", 0.6)
+    price_object_w = _estimate_price_object_width(
+        dollars,
+        cents,
+        price_sign_size,
+        price_dollars_size,
+        price_cents_size,
+        price_sign_margin,
+        price_cents_margin,
+    )
+    max_price_x = max(pad_x, w - pad_x - price_object_w)
+    price_x = max(pad_x, min(price_x, max_price_x))
+    price_box_w = max(20.0, w - price_x - pad_x)
 
     brand_left = _profile_field_number(layout_profile, "brand", "left_pt", old_text_x)
     brand_top = _profile_field_number(layout_profile, "brand", "top_pt", old_text_y)
@@ -1214,10 +1275,36 @@ def _generate_ticket_html(
     desc_1_w = min(max(8.0, w * desc_1_width_ratio), max(8.0, w - desc_1_left))
     desc_2_w = min(max(8.0, w * desc_2_width_ratio), max(8.0, w - desc_2_left))
 
-    # Truncate texts
-    brand = _truncate_svg_text(segment.brand or "-", brand_size, brand_w, _font_weight_name(brand_weight))
-    desc_1 = _truncate_svg_text(segment.desc_1 or "-", desc_1_size, desc_1_w, _font_weight_name(desc_1_weight))
-    desc_2 = _truncate_svg_text(segment.desc_2 or "-", desc_2_size, desc_2_w, _font_weight_name(desc_2_weight))
+    brand = (segment.brand or "-").strip() or "-"
+    desc_1 = (segment.desc_1 or "-").strip() or "-"
+    desc_2 = (segment.desc_2 or "-").strip() or "-"
+    brand_left, brand_w = _fit_line_box_left_and_width(
+        brand_left,
+        brand_w,
+        brand,
+        brand_size,
+        _font_weight_name(brand_weight),
+        w,
+        1.0,
+    )
+    desc_1_left, desc_1_w = _fit_line_box_left_and_width(
+        desc_1_left,
+        desc_1_w,
+        desc_1,
+        desc_1_size,
+        _font_weight_name(desc_1_weight),
+        w,
+        1.0,
+    )
+    desc_2_left, desc_2_w = _fit_line_box_left_and_width(
+        desc_2_left,
+        desc_2_w,
+        desc_2,
+        desc_2_size,
+        _font_weight_name(desc_2_weight),
+        max(8.0, item_left - 8.0 + 1.0),
+        1.0,
+    )
     item_number = item_text
 
     ticket_html = f"""
