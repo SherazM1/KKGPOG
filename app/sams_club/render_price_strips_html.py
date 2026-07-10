@@ -998,7 +998,7 @@ html, body {{
     font-size: {_SAMS_ITEM_SIZE}pt;
     overflow: visible;
     text-overflow: clip;
-    text-align: center;
+    text-align: left;
 }}
 
 .desc-field {{
@@ -1168,7 +1168,9 @@ def _generate_ticket_html(
         "width_ratio",
         brand_width_ratio,
     )
-    item_center_under_price = bool(_profile_field_value(layout_profile, "item_number", "center_under_price", False))
+    item_anchor = str(_profile_field_value(layout_profile, "item_number", "anchor", "")).strip().lower()
+    item_anchor_offset = _profile_field_number(layout_profile, "item_number", "anchor_offset_pt", 0.0)
+    item_min_width = _profile_field_number(layout_profile, "item_number", "min_width_pt", item_width_min)
     item_size = _profile_field_number(layout_profile, "item_number", "font_size_pt", _SAMS_ITEM_SIZE)
     item_weight = _profile_field_value(layout_profile, "item_number", "font_weight", 400)
 
@@ -1198,13 +1200,16 @@ def _generate_ticket_html(
     brand_w = min(max(8.0, w * brand_width_ratio), max(8.0, w - brand_left))
     item_text = (segment.item_number or "-").strip() or "-"
     item_required_w = _estimate_text_width(item_text, item_size, _font_weight_name(item_weight)) + 6.0
-    item_w = min(
-        max(item_required_w, item_width_min, w * item_width_ratio_from_field),
-        max(8.0, w - (2 * pad_x)),
-    )
-    if item_center_under_price:
-        price_center_x = price_x + (price_box_w / 2.0)
-        item_left = price_center_x - (item_w / 2.0)
+    item_w_target = max(item_required_w, item_min_width)
+    if item_anchor != "cents_left":
+        item_w_target = max(item_w_target, w * item_width_ratio_from_field)
+    item_w = min(item_w_target, max(8.0, w - (2 * pad_x)))
+    if item_anchor == "cents_left":
+        dollar_sign_w = _estimate_text_width("$", _profile_number(layout_profile, "price", "dollar_sign_size_pt", 30.0), "semibold")
+        dollars_w = _estimate_text_width(dollars, _profile_number(layout_profile, "price", "dollars_size_pt", 90.0), "semibold")
+        dollar_sign_margin = _profile_number(layout_profile, "price", "dollar_sign_margin_right_pt", 0.6)
+        cents_margin = _profile_number(layout_profile, "price", "cents_margin_left_pt", 0.6)
+        item_left = price_x + dollar_sign_w + dollar_sign_margin + dollars_w + cents_margin + item_anchor_offset
     item_left = max(pad_x, min(item_left, w - pad_x - item_w))
     desc_1_w = min(max(8.0, w * desc_1_width_ratio), max(8.0, w - desc_1_left))
     desc_2_w = min(max(8.0, w * desc_2_width_ratio), max(8.0, w - desc_2_left))

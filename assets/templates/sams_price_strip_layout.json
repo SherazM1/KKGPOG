@@ -40,34 +40,36 @@
       "fields": {
         "price": {
           "left_pt": 61.5,
-          "top_pt": 132.0,
+          "top_pt": 124.0,
           "box_height_pt": 95.0
         },
         "brand": {
           "left_pt": 72.0,
-          "top_pt": 84.8,
+          "top_pt": 76.8,
           "width_ratio": 0.70,
           "font_size_pt": 14.0,
           "font_weight": 600
         },
         "item_number": {
           "left_pt": 95.0,
-          "top_pt": 211.0,
+          "top_pt": 203.0,
           "width_ratio": 0.42,
           "font_size_pt": 8.0,
+          "min_width_pt": 48.0,
           "font_weight": 400,
-          "center_under_price": true
+          "anchor": "cents_left",
+          "anchor_offset_pt": 57.0
         },
         "desc_1": {
           "left_pt": 72.0,
-          "top_pt": 100.2,
+          "top_pt": 92.2,
           "width_ratio": 0.70,
           "font_size_pt": 14.0,
           "font_weight": 400
         },
         "desc_2": {
           "left_pt": 72.0,
-          "top_pt": 115.6,
+          "top_pt": 107.6,
           "width_ratio": 0.70,
           "font_size_pt": 14.0,
           "font_weight": 400
@@ -113,34 +115,36 @@
       "fields": {
         "price": {
           "left_pt": 66.5,
-          "top_pt": 132.0,
+          "top_pt": 124.0,
           "box_height_pt": 95.0
         },
         "brand": {
           "left_pt": 77.0,
-          "top_pt": 84.8,
+          "top_pt": 76.8,
           "width_ratio": 0.68,
           "font_size_pt": 14.0,
           "font_weight": 600
         },
         "item_number": {
           "left_pt": 102.0,
-          "top_pt": 211.0,
+          "top_pt": 203.0,
           "width_ratio": 0.42,
           "font_size_pt": 8.0,
+          "min_width_pt": 63.0,
           "font_weight": 400,
-          "center_under_price": true
+          "anchor": "cents_left",
+          "anchor_offset_pt": 41.0
         },
         "desc_1": {
           "left_pt": 77.0,
-          "top_pt": 100.2,
+          "top_pt": 92.2,
           "width_ratio": 0.68,
           "font_size_pt": 14.0,
           "font_weight": 400
         },
         "desc_2": {
           "left_pt": 77.0,
-          "top_pt": 115.6,
+          "top_pt": 107.6,
           "width_ratio": 0.68,
           "font_size_pt": 14.0,
           "font_weight": 400
