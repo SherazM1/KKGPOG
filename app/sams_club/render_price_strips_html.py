@@ -930,11 +930,15 @@ def _generate_strip_html(row_data: SamsPriceStripRow, strip_w: float, strip_h: f
     cents_letter_spacing_pt = _profile_number(layout_profile, "price", "cents_letter_spacing_pt", 0.0)
 
     ticket_htmls = []
+    footer_left_pt = footer_left_in * inch
     for idx, segment in enumerate(row_data.segments):
         if idx >= len(positions):
             break
         x, ticket_w = positions[idx]
-        ticket_htmls.append(_generate_ticket_html(segment, x, ticket_y, ticket_w, ticket_h, layout_profile))
+        ticket_html, desc_block_left = _generate_ticket_html(segment, x, ticket_y, ticket_w, ticket_h, layout_profile)
+        ticket_htmls.append(ticket_html)
+        if idx == 0:
+            footer_left_pt = x + desc_block_left
 
     footer_text = _resolve_strip_footer_text(row_data)
 
@@ -1103,7 +1107,7 @@ html, body {{
 
 .footer {{
     position: absolute;
-    left: {footer_left_in}in;
+    left: {footer_left_pt}pt;
     bottom: {footer_bottom_in}in;
     font-family: "Gibson", Arial, sans-serif;
     font-weight: 400;
@@ -1167,7 +1171,7 @@ def _generate_ticket_html(
     w: float,
     h: float,
     layout_profile: dict,
-) -> str:
+) -> tuple[str, float]:
     """
     Generate HTML divs for one ticket block with fixed layout positions.
     """
@@ -1326,7 +1330,7 @@ def _generate_ticket_html(
 </div>
 """
 
-    return ticket_html.strip()
+    return ticket_html.strip(), desc_block_left
 
 
 def _font_file_to_data_uri(font_path: Path) -> str:
