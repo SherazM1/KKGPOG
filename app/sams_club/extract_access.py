@@ -39,7 +39,7 @@ TABULAR_ALIASES: dict[str, tuple[str, ...]] = {
     "brand": ("brand",),
     "desc_1": ("desc 1", "desc1", "sign desc 1"),
     "desc_2": ("desc 2", "desc2", "sign desc 2"),
-    "upc": ("upc", "12 digit upc"),
+    "upc": ("upc", "upc 11", "upc11", "upc_11", "12 digit upc"),
     "cpp": ("cpp",),
     "file_path": ("file path", "filepath", "image path"),
     "description": ("description", "product desc"),
@@ -82,6 +82,26 @@ def _canonical_header(value: str) -> str:
     cleaned = re.sub(r"[_\-]+", " ", cleaned)
     cleaned = _collapse_spaces(cleaned)
     return cleaned.replace(" ", "")
+
+
+def _normalize_upc_value(value: Any) -> str:
+    if value is None:
+        return ""
+
+    if pd.isna(value):
+        return ""
+
+    text = str(value).strip()
+    if not text:
+        return ""
+
+    if text.lower() in {"nan", "none", "null"}:
+        return ""
+
+    if text.endswith(".0"):
+        text = text[:-2]
+
+    return re.sub(r"[^0-9]", "", text)
 
 
 def _detect_extension(source_file: Any) -> str:
@@ -196,6 +216,17 @@ def _normalize_from_mapping(row: Mapping[str, Any], mapping: Mapping[str, str]) 
     return normalized
 
 
+def _normalize_tabular_from_mapping(row: Mapping[str, Any], mapping: Mapping[str, str]) -> dict[str, Any]:
+    normalized = _normalize_from_mapping(row, mapping)
+    upc_col = mapping.get("upc")
+    raw_upc = row.get(upc_col) if upc_col else None
+    normalized["_raw_upc"] = (
+        "" if raw_upc is None or pd.isna(raw_upc) else str(raw_upc).strip()
+    )
+    normalized["upc"] = _normalize_upc_value(raw_upc)
+    return normalized
+
+
 def _extract_from_access(source_file: Any) -> SamsSourceExtractionResult:
     result = SamsSourceExtractionResult(source_type="access")
     try:
@@ -242,14 +273,14 @@ def _read_dataframe_from_source(source_file: Any, extension: str) -> pd.DataFram
     if isinstance(source_file, (str, os.PathLike)):
         path = str(source_file)
         if extension == ".xlsx":
-            return pd.read_excel(path)
-        return pd.read_csv(path)
+            return pd.read_excel(path, dtype=str)
+        return pd.read_csv(path, dtype=str)
 
     payload, _ = _coerce_uploaded_bytes(source_file)
     buffer = io.BytesIO(payload)
     if extension == ".xlsx":
-        return pd.read_excel(buffer)
-    return pd.read_csv(buffer)
+        return pd.read_excel(buffer, dtype=str)
+    return pd.read_csv(buffer, dtype=str)
 
 
 def _extract_from_tabular(source_file: Any, extension: str) -> SamsSourceExtractionResult:
@@ -275,7 +306,7 @@ def _extract_from_tabular(source_file: Any, extension: str) -> SamsSourceExtract
 
     records: list[dict[str, Any]] = []
     for row_dict in df.to_dict(orient="records"):
-        normalized = _normalize_from_mapping(row_dict, mapping)
+        normalized = _normalize_tabular_from_mapping(row_dict, mapping)
         if any(v is not None and str(v).strip() != "" for v in normalized.values()):
             records.append(normalized)
     result.records = records

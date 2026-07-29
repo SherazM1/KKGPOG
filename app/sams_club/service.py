@@ -92,6 +92,7 @@ def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
         "desc_1": _as_text(record.get("desc_1")),
         "desc_2": _as_text(record.get("desc_2")),
         "upc": _as_text(record.get("upc")),
+        "raw_upc": _as_text(record.get("_raw_upc", record.get("upc"))),
         "cpp": _as_text(record.get("cpp")),
         "file_path": _as_text(record.get("file_path")),
         "description": _as_text(record.get("description")),
@@ -361,6 +362,7 @@ def build_sams_planogram_structure(
     resolved_by_zip_item_number = 0
     unresolved = 0
     unresolved_examples: list[dict[str, Any]] = []
+    image_resolution_samples: list[dict[str, Any]] = []
 
     for record in selected_records:
         slot_warnings = _append_record_warnings(record, warnings)
@@ -403,6 +405,17 @@ def build_sams_planogram_structure(
                         "file_path": record["file_path"],
                     }
                 )
+
+        if len(image_resolution_samples) < 5:
+            image_resolution_samples.append(
+                {
+                    "item_number": record["item_number"],
+                    "raw_upc": record["raw_upc"],
+                    "normalized_upc": record["upc"],
+                    "resolved_image_path": resolution.resolved_path,
+                    "resolution_method": resolution.source,
+                }
+            )
 
         slot = SamsSlot(
             pog=record["pog"],
@@ -495,10 +508,20 @@ def build_sams_planogram_structure(
         if local_image_index is not None
         else ""
     )
+    excel_records_read = (
+        len(raw_records)
+        if extraction.source_type in {"xlsx", "csv"}
+        else 0
+    )
+    records_with_upc = sum(1 for record in selected_records if record["upc"])
+    records_without_upc = len(selected_records) - records_with_upc
 
     debug = {
         "source_type": extraction.source_type,
         "column_mapping": extraction.column_mapping,
+        "excel_records_read": excel_records_read,
+        "records_with_upc": records_with_upc,
+        "records_without_upc": records_without_upc,
         "detected_pogs": detected_pogs,
         "sides_found": sides_found,
         "side_counts": side_counts,
@@ -529,6 +552,7 @@ def build_sams_planogram_structure(
             ),
             "unresolved": unresolved,
             "unresolved_examples": unresolved_examples,
+            "debug_sample": image_resolution_samples,
         },
         "warnings": warnings.copy(),
         "errors": extraction.errors.copy(),
