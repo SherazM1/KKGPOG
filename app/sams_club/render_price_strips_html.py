@@ -446,11 +446,19 @@ def _resolve_ticket_positions_from_profile(
         return compute_ticket_positions_across_strip(strip_w, ticket_count)
 
     try:
-        start_center = float(centers[0])
-        end_center = float(centers[-1])
+        left_boundary = float(centers[0])
+        right_boundary = float(centers[-1])
     except (TypeError, ValueError):
         warnings.append(
             f"No valid JSON slot centers for {ticket_count} tickets; using computed ticket positions."
+        )
+        return compute_ticket_positions_across_strip(strip_w, ticket_count)
+
+    start_center = left_boundary + (slot_width / 2.0)
+    end_center = right_boundary - (slot_width / 2.0)
+    if end_center < start_center:
+        warnings.append(
+            f"JSON slot center range is too narrow for {ticket_count} tickets; using computed ticket positions."
         )
         return compute_ticket_positions_across_strip(strip_w, ticket_count)
 
@@ -465,7 +473,9 @@ def _resolve_ticket_positions_from_profile(
 
     positions: list[tuple[float, float]] = []
     for center_x in ticket_centers:
+        center_x = max(start_center, min(center_x, end_center))
         x = center_x - (slot_width / 2.0)
+        x = max(left_boundary, min(x, right_boundary - slot_width))
         positions.append((x, slot_width))
 
     warnings.append(
