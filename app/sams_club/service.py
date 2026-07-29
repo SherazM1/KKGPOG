@@ -515,6 +515,13 @@ def build_sams_planogram_structure(
     )
     records_with_upc = sum(1 for record in selected_records if record["upc"])
     records_without_upc = len(selected_records) - records_with_upc
+    records_with_item_number = sum(
+        1 for record in selected_records if record["item_number"]
+    )
+    local_image_root_exists = (
+        bool(local_image_index and local_image_index.root_dir)
+        and not local_image_index.warnings
+    )
 
     debug = {
         "source_type": extraction.source_type,
@@ -522,6 +529,7 @@ def build_sams_planogram_structure(
         "excel_records_read": excel_records_read,
         "records_with_upc": records_with_upc,
         "records_without_upc": records_without_upc,
+        "records_with_item_number": records_with_item_number,
         "detected_pogs": detected_pogs,
         "sides_found": sides_found,
         "side_counts": side_counts,
@@ -529,6 +537,8 @@ def build_sams_planogram_structure(
         "populated_columns_per_row": row_column_debug,
         "image_resolution": {
             "local_image_root": local_root,
+            "local_image_root_exists": local_image_root_exists,
+            "indexed_image_count": local_indexed_images,
             "local_indexed_images": local_indexed_images,
             "local_duplicate_keys": local_duplicate_keys,
             "image_zip_uploaded": image_zip_index.uploaded,
@@ -539,6 +549,7 @@ def build_sams_planogram_structure(
                 image_zip_index.duplicate_key_count
             ),
             "total_slots": selected_slot_count,
+            "resolved_by_explicit_path": resolved_by_original_path,
             "resolved_by_original_path": resolved_by_original_path,
             "resolved_by_local_basename": resolved_by_local_basename,
             "resolved_by_local_upc": resolved_by_local_upc,

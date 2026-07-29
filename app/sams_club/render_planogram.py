@@ -319,7 +319,7 @@ def _description_for_slot(slot: SamsSlot) -> str:
 def _load_slot_image(path_text: str, cache: dict[str, Image.Image | None]) -> tuple[Image.Image | None, str | None]:
     file_path = (path_text or "").strip()
     if not file_path:
-        return None, "missing file_path"
+        return None, None
 
     if file_path in cache:
         cached = cache[file_path]
@@ -574,7 +574,13 @@ def _render_side_page(
             if image is None:
                 missing_image_slots += 1
                 detail = f"side={slot.side} row={slot.row} column={slot.column}"
-                if image_warning:
+                if not image_path:
+                    warnings.append(
+                        f"Image unavailable ({detail}): no local or ZIP match for "
+                        f"UPC={(slot.upc or '').strip() or '-'}, "
+                        f"Item Number={(slot.item_number or '').strip() or '-'}."
+                    )
+                elif image_warning:
                     warnings.append(f"Image unavailable ({detail}): {image_warning}.")
                 else:
                     warnings.append(f"Image unavailable ({detail}).")

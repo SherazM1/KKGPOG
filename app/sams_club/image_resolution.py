@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import os
+import re
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
@@ -11,7 +13,7 @@ from typing import Any, Iterable
 
 from PIL import Image
 
-SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 SOURCE_ORIGINAL_PATH = "original_path"
 SOURCE_LOCAL_BASENAME = "local_basename"
@@ -83,7 +85,10 @@ def _safe_extract_zip(payload: bytes, destination: Path) -> None:
 
 
 def _digits_only(value: str) -> str:
-    return "".join(character for character in str(value or "") if character.isdigit())
+    text = str(value or "").strip()
+    if text.endswith(".0"):
+        text = text[:-2]
+    return "".join(character for character in text if character.isdigit())
 
 
 def _identifier_keys(value: str) -> list[str]:
@@ -112,6 +117,10 @@ def _identifier_keys(value: str) -> list[str]:
 def _filename_keys(file_path: Path) -> list[str]:
     keys = [file_path.name.lower(), file_path.stem.lower()]
     keys.extend(_identifier_keys(file_path.stem))
+
+    for match in re.finditer(r"(\d{12,14})(?!\d)", file_path.stem):
+        keys.extend(_identifier_keys(match.group(1)))
+
     return _unique_lowercase(keys)
 
 
@@ -164,7 +173,10 @@ def _index_image_files(
 def build_sams_local_image_index(
     image_root: str | Path,
 ) -> SamsImageIndex:
-    root = Path(image_root).expanduser()
+    root_text = str(image_root or "").strip().strip("\"'")
+    root_text = os.path.expandvars(root_text)
+    root_text = root_text.replace("\\", os.sep).replace("/", os.sep)
+    root = Path(root_text).expanduser()
 
     result = SamsImageIndex(
         source_name="local_folder",
