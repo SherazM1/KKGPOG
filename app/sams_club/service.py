@@ -19,6 +19,7 @@ from app.sams_club.image_resolution import (
     build_sams_local_image_index,
     _identifier_keys,
     _lookup_by_identifier,
+    _lookup_by_identifier_with_key,
     resolve_sams_image_path,
 )
 from app.sams_club.models import SamsPlanogram, SamsRow, SamsSidePage, SamsSlot
@@ -428,6 +429,27 @@ def build_sams_planogram_structure(
                 )
 
         if len(image_resolution_samples) < 5:
+            generated_upc_keys = _identifier_keys(record["upc"])
+            matched_index_key = ""
+            if resolution.source in {SOURCE_LOCAL_UPC, SOURCE_ZIP_UPC}:
+                _, matched_index_key = _lookup_by_identifier_with_key(
+                    record["upc"],
+                    (
+                        local_image_index
+                        if resolution.source == SOURCE_LOCAL_UPC
+                        else image_zip_index
+                    ),
+                )
+            elif resolution.source in {SOURCE_LOCAL_ITEM_NUMBER, SOURCE_ZIP_ITEM_NUMBER}:
+                _, matched_index_key = _lookup_by_identifier_with_key(
+                    record["item_number"],
+                    (
+                        local_image_index
+                        if resolution.source == SOURCE_LOCAL_ITEM_NUMBER
+                        else image_zip_index
+                    ),
+                )
+
             image_resolution_samples.append(
                 {
                     "item_number": record["item_number"],
@@ -435,6 +457,8 @@ def build_sams_planogram_structure(
                     "normalized_upc": record["upc"],
                     "supplied_file_path": supplied_file_path,
                     "supplied_file_path_exists": supplied_file_path_exists,
+                    "generated_upc_keys": generated_upc_keys,
+                    "matched_index_key": matched_index_key,
                     "resolved_path": resolution.resolved_path,
                     "resolved_image_path": resolution.resolved_path,
                     "resolution_method": resolution.source,

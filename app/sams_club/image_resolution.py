@@ -91,25 +91,55 @@ def _digits_only(value: str) -> str:
     return "".join(character for character in text if character.isdigit())
 
 
+def _calculate_upca_check_digit(upc_body: str) -> str:
+    digits = _digits_only(upc_body)
+    if len(digits) != 11:
+        return ""
+
+    odd_sum = sum(int(digits[index]) for index in range(0, 11, 2))
+    even_sum = sum(int(digits[index]) for index in range(1, 10, 2))
+    total = (odd_sum * 3) + even_sum
+    return str((10 - (total % 10)) % 10)
+
+
 def _identifier_keys(value: str) -> list[str]:
     digits = _digits_only(value)
     if not digits:
         return []
 
-    candidates = [digits]
+    candidates: list[str] = []
 
-    stripped = digits.lstrip("0")
-    if stripped:
-        candidates.append(stripped)
+    def add_identifier_variants(identifier: str) -> None:
+        if not identifier:
+            return
+
+        candidates.append(identifier)
+
+        stripped_identifier = identifier.lstrip("0")
+        if stripped_identifier:
+            candidates.append(stripped_identifier)
+
+        if len(identifier) == 11:
+            check_digit = _calculate_upca_check_digit(identifier)
+            if check_digit:
+                upc12 = f"{identifier}{check_digit}"
+                candidates.append(upc12)
+                stripped_upc12 = upc12.lstrip("0")
+                if stripped_upc12:
+                    candidates.append(stripped_upc12)
+
+        if len(identifier) == 12:
+            candidates.append(identifier[:11])
+            stripped_body = identifier[:11].lstrip("0")
+            if stripped_body:
+                candidates.append(stripped_body)
+
+    add_identifier_variants(digits)
 
     for length in (14, 13, 12, 11):
         if len(digits) >= length:
             suffix = digits[-length:]
-            candidates.append(suffix)
-
-            suffix_stripped = suffix.lstrip("0")
-            if suffix_stripped:
-                candidates.append(suffix_stripped)
+            add_identifier_variants(suffix)
 
     return _unique_lowercase(candidates)
 
@@ -294,15 +324,23 @@ def _lookup_by_identifier(
     identifier: str,
     image_index: SamsImageIndex | None,
 ) -> str:
+    resolved, _ = _lookup_by_identifier_with_key(identifier, image_index)
+    return resolved
+
+
+def _lookup_by_identifier_with_key(
+    identifier: str,
+    image_index: SamsImageIndex | None,
+) -> tuple[str, str]:
     if image_index is None or not image_index.index:
-        return ""
+        return "", ""
 
     for key in _identifier_keys(identifier):
         resolved = image_index.index.get(key)
         if resolved:
-            return resolved
+            return resolved, key
 
-    return ""
+    return "", ""
 
 
 def _resolve_from_index(

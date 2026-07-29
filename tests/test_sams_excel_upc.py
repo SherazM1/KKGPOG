@@ -14,6 +14,7 @@ from app.sams_club.image_resolution import (
     SOURCE_LOCAL_UPC,
     SOURCE_UNRESOLVED,
     SamsImageIndex,
+    _calculate_upca_check_digit,
     _identifier_keys,
     _lookup_by_identifier,
     build_sams_local_image_index,
@@ -93,6 +94,22 @@ class SamsExcelUpcTests(unittest.TestCase):
     def test_text_upc_preserves_leading_zero(self) -> None:
         self.assertEqual(_normalize_upc_value("087458605402"), "087458605402")
 
+    def test_upc11_generates_correct_upc12_check_digit(self) -> None:
+        self.assertEqual(_calculate_upca_check_digit("19674217114"), "3")
+        self.assertEqual(_calculate_upca_check_digit("19674217113"), "6")
+        self.assertEqual(_calculate_upca_check_digit("19674208510"), "5")
+        self.assertIn("196742171143", _identifier_keys("19674217114"))
+
+    def test_upc12_generates_upc11_body(self) -> None:
+        keys = _identifier_keys("196742171143")
+
+        self.assertIn("196742171143", keys)
+        self.assertIn("19674217114", keys)
+
+    def test_invalid_upc_identifier_does_not_raise(self) -> None:
+        self.assertEqual(_calculate_upca_check_digit("not-a-upc"), "")
+        self.assertEqual(_identifier_keys("not-a-upc"), [])
+
     def test_missing_file_path_resolves_local_image_by_upc(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -169,6 +186,30 @@ class SamsExcelUpcTests(unittest.TestCase):
 
         self.assertEqual(matched_path, str(image_path))
 
+    def test_upc11_matches_upc12_filename(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_dir = Path(temp_dir) / "images"
+            image_dir.mkdir()
+            image_path = image_dir / "196742171143.jpg"
+            self._write_image(image_path)
+
+            image_index = build_sams_local_image_index(image_dir)
+            matched_path = _lookup_by_identifier("19674217114", image_index)
+
+        self.assertEqual(matched_path, str(image_path))
+
+    def test_upc11_matches_14_digit_gtin_filename_with_upca_check_digit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_dir = Path(temp_dir) / "images"
+            image_dir.mkdir()
+            image_path = image_dir / "00196742171143.JPG"
+            self._write_image(image_path)
+
+            image_index = build_sams_local_image_index(image_dir)
+            matched_path = _lookup_by_identifier("19674217114", image_index)
+
+        self.assertEqual(matched_path, str(image_path))
+
     def test_nonexistent_generated_file_path_is_ignored_for_upc_lookup(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -198,6 +239,8 @@ class SamsExcelUpcTests(unittest.TestCase):
         self.assertTrue(slot.resolved_image_path.endswith("100 0019674217114.JPG"))
         self.assertEqual(sample["supplied_file_path"], generated_path)
         self.assertFalse(sample["supplied_file_path_exists"])
+        self.assertIn("196742171143", sample["generated_upc_keys"])
+        self.assertIn(sample["matched_index_key"], sample["generated_upc_keys"])
         self.assertEqual(sample["resolved_path"], slot.resolved_image_path)
         self.assertEqual(sample["resolution_method"], SOURCE_LOCAL_UPC)
 
