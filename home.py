@@ -163,6 +163,11 @@ def main() -> None:
                 ),
                 key="sams_image_zip_file",
             )
+            sams_local_image_root = st.text_input(
+                "Local Sam's Image Folder",
+                value=r"Z:\Kendal King\Images",
+                help="Optional local image folder. Images will be indexed recursively.",
+            )
             if sams_main_source_file:
                 detected_pogs, detect_warnings = detect_sams_pogs(sams_main_source_file)
                 if detect_warnings:
@@ -262,6 +267,7 @@ def main() -> None:
                     sams_excel_file,
                     image_zip_file=sams_image_zip_file,
                     selected_pog=sams_selected_pog,
+                    local_image_root=sams_local_image_root,
                 )
             st.session_state["sams_build_result"] = result
             st.session_state["sams_pdf_result"] = None
