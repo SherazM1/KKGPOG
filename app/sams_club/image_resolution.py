@@ -102,7 +102,7 @@ def _identifier_keys(value: str) -> list[str]:
     if stripped:
         candidates.append(stripped)
 
-    for length in (14, 13, 12):
+    for length in (14, 13, 12, 11):
         if len(digits) >= length:
             suffix = digits[-length:]
             candidates.append(suffix)
@@ -118,8 +118,8 @@ def _filename_keys(file_path: Path) -> list[str]:
     keys = [file_path.name.lower(), file_path.stem.lower()]
     keys.extend(_identifier_keys(file_path.stem))
 
-    for match in re.finditer(r"(\d{12,14})(?!\d)", file_path.stem):
-        keys.extend(_identifier_keys(match.group(1)))
+    for match in re.finditer(r"\d+", file_path.stem):
+        keys.extend(_identifier_keys(match.group(0)))
 
     return _unique_lowercase(keys)
 
@@ -200,6 +200,12 @@ def build_sams_local_image_index(
     except OSError as exc:
         result.warnings.append(
             f"Sam's image folder could not be indexed: {exc}"
+        )
+
+    if result.indexed_images == 0:
+        result.warnings.append(
+            f"No images were indexed from {root}. Verify that the application process can access the mapped drive. "
+            "If this is a Windows mapped drive such as Z:, use the real UNC path instead."
         )
 
     return result

@@ -3,12 +3,22 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 from PIL import Image
 
 from app.sams_club.extract_access import _build_mapping, _normalize_upc_value, extract_master_pog_source
-from app.sams_club.image_resolution import SOURCE_LOCAL_ITEM_NUMBER, SOURCE_LOCAL_UPC, SOURCE_UNRESOLVED
+from app.sams_club.image_resolution import (
+    SOURCE_LOCAL_ITEM_NUMBER,
+    SOURCE_LOCAL_UPC,
+    SOURCE_UNRESOLVED,
+    SamsImageIndex,
+    _identifier_keys,
+    _lookup_by_identifier,
+    build_sams_local_image_index,
+)
+from app.sams_club.models import SamsPlanogram, SamsRow, SamsSidePage, SamsSlot
 from app.sams_club.render_planogram import render_sams_planogram_pdf
 from app.sams_club.service import build_sams_planogram_structure
 
@@ -131,6 +141,34 @@ class SamsExcelUpcTests(unittest.TestCase):
         self.assertTrue(result.debug["image_resolution"]["local_image_root_exists"])
         self.assertEqual(result.debug["image_resolution"]["indexed_image_count"], 1)
 
+    def test_known_identifier_image_is_indexed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_dir = Path(temp_dir) / "images"
+            image_dir.mkdir()
+            image_path = image_dir / "190199709997.jpg"
+            self._write_image(image_path)
+
+            image_index = build_sams_local_image_index(image_dir)
+            generated_keys = _identifier_keys("190199709997")
+            matched_path = _lookup_by_identifier("190199709997", image_index)
+            matched_path_exists = Path(matched_path).is_file()
+
+        self.assertIn("190199709997", generated_keys)
+        self.assertEqual(matched_path, str(image_path))
+        self.assertTrue(matched_path_exists)
+
+    def test_11_digit_upc_matches_longer_filename_identifier(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_dir = Path(temp_dir) / "images"
+            image_dir.mkdir()
+            image_path = image_dir / "100 0019674217114.JPG"
+            self._write_image(image_path)
+
+            image_index = build_sams_local_image_index(image_dir)
+            matched_path = _lookup_by_identifier("19674217114", image_index)
+
+        self.assertEqual(matched_path, str(image_path))
+
     def test_nonexistent_generated_file_path_is_ignored_for_upc_lookup(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -212,6 +250,89 @@ class SamsExcelUpcTests(unittest.TestCase):
             warning_text,
         )
         self.assertNotIn("missing file_path", warning_text)
+
+    def test_ui_local_image_root_reaches_service_index_builder(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workbook = root / "source.xlsx"
+            supplied_root = root / "images"
+            supplied_root.mkdir()
+            self._write_workbook(workbook, "UPC", "190199709997")
+            captured_roots: list[object] = []
+
+            def fake_build_sams_local_image_index(image_root: object) -> SamsImageIndex:
+                captured_roots.append(image_root)
+                return SamsImageIndex(root_dir=str(supplied_root))
+
+            with patch(
+                "app.sams_club.service.build_sams_local_image_index",
+                fake_build_sams_local_image_index,
+            ):
+                build_sams_planogram_structure(
+                    workbook,
+                    selected_pog="POG1",
+                    local_image_root=str(supplied_root),
+                )
+
+        self.assertEqual(captured_roots, [str(supplied_root)])
+
+    def test_zero_indexed_images_produces_useful_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workbook = root / "source.xlsx"
+            empty_image_dir = root / "images"
+            empty_image_dir.mkdir()
+            self._write_workbook(workbook, "UPC", "190199709997")
+
+            result = build_sams_planogram_structure(
+                workbook,
+                selected_pog="POG1",
+                local_image_root=str(empty_image_dir),
+            )
+
+        self.assertEqual(result.debug["image_resolution"]["indexed_image_count"], 0)
+        self.assertTrue(
+            any("No images were indexed from" in warning for warning in result.warnings)
+        )
+
+    def test_renderer_uses_resolved_image_path_before_file_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "resolved.png"
+            self._write_image(image_path)
+            slot = SamsSlot(
+                pog="POG1",
+                side=1,
+                row=1,
+                column=1,
+                item_number="12345",
+                upc="190199709997",
+                file_path=str(Path(temp_dir) / "missing.png"),
+                resolved_image_path=str(image_path),
+            )
+            planogram = SamsPlanogram(
+                pog="POG1",
+                side_pages=[
+                    SamsSidePage(
+                        pog="POG1",
+                        side=1,
+                        column_limit=1,
+                        rows=[
+                            SamsRow(
+                                side=1,
+                                row_number=1,
+                                column_limit=1,
+                                populated_column_count=1,
+                                slots=[slot],
+                            )
+                        ],
+                    )
+                ],
+            )
+
+            result = render_sams_planogram_pdf(planogram)
+
+        self.assertEqual(result.missing_image_slots, 0)
+        self.assertEqual(result.warnings, [])
 
 
 if __name__ == "__main__":

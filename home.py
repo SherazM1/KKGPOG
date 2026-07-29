@@ -280,6 +280,35 @@ def main() -> None:
             for warning in result.warnings:
                 st.warning(warning)
 
+            image_debug = result.debug.get("image_resolution", {})
+            local_image_diagnostics = {
+                "supplied_local_image_root": sams_local_image_root,
+                "normalized_local_image_root": image_debug.get("local_image_root", ""),
+                "local_image_root_exists": image_debug.get("local_image_root_exists", False),
+                "indexed_image_count": image_debug.get("indexed_image_count", 0),
+                "lookup_key_count": image_debug.get("lookup_key_count", 0),
+                "local_index_warnings": image_debug.get("local_index_warnings", []),
+                "records_with_upc": result.debug.get("records_with_upc", 0),
+                "records_with_item_number": result.debug.get("records_with_item_number", 0),
+                "resolved_by_local_upc": image_debug.get("resolved_by_local_upc", 0),
+                "resolved_by_local_item_number": image_debug.get("resolved_by_local_item_number", 0),
+                "unresolved": image_debug.get("unresolved", 0),
+                "first_five_unresolved_examples": image_debug.get("unresolved_examples", [])[:5],
+                "first_five_resolution_samples": image_debug.get("debug_sample", [])[:5],
+                "startup_probe_190199709997": image_debug.get("startup_probe", {}),
+            }
+            if (
+                image_debug.get("local_image_root_exists")
+                and image_debug.get("indexed_image_count", 0) == 0
+            ):
+                st.error(
+                    f"No images were indexed from {image_debug.get('local_image_root') or sams_local_image_root}. "
+                    "Verify that the application process can access the mapped Z: drive. "
+                    "If Z: is unavailable inside Python, enter the real UNC path for the image folder."
+                )
+            st.markdown("#### Local Image Folder Diagnostics")
+            st.json(local_image_diagnostics)
+
             detected_title_seed = (result.selected_pog or result.planogram.pog or "").strip()
             current_title_value = (st.session_state.get("sams_pdf_title") or "").strip()
             previous_title_seed = (st.session_state.get("sams_pdf_title_seed") or "").strip()

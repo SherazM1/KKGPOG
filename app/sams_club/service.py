@@ -17,6 +17,8 @@ from app.sams_club.image_resolution import (
     SOURCE_ZIP_UPC,
     build_sams_image_zip_index,
     build_sams_local_image_index,
+    _identifier_keys,
+    _lookup_by_identifier,
     resolve_sams_image_path,
 )
 from app.sams_club.models import SamsPlanogram, SamsRow, SamsSidePage, SamsSlot
@@ -525,6 +527,11 @@ def build_sams_planogram_structure(
         if local_image_index is not None
         else 0
     )
+    local_lookup_key_count = (
+        len(local_image_index.index)
+        if local_image_index is not None
+        else 0
+    )
     local_root = (
         local_image_index.root_dir
         if local_image_index is not None
@@ -542,8 +549,31 @@ def build_sams_planogram_structure(
     )
     local_image_root_exists = (
         bool(local_image_index and local_image_index.root_dir)
-        and not local_image_index.warnings
+        and Path(local_image_index.root_dir).is_dir()
     )
+    startup_probe_identifier = "190199709997"
+    startup_probe_keys = _identifier_keys(startup_probe_identifier)
+    startup_probe_path = _lookup_by_identifier(
+        startup_probe_identifier,
+        local_image_index,
+    )
+    startup_probe = {
+        "identifier": startup_probe_identifier,
+        "generated_identifier_keys": startup_probe_keys,
+        "matching_indexed_path": startup_probe_path,
+        "matched_path_exists": bool(
+            startup_probe_path and Path(startup_probe_path).is_file()
+        ),
+    }
+    if (
+        local_image_index is not None
+        and local_image_root_exists
+        and local_indexed_images == 0
+    ):
+        warnings.append(
+            f"No images were indexed from {local_root}. Verify that the application process can access the mapped Z: drive. "
+            "If Z: is unavailable inside Python, enter the real UNC path for the image folder."
+        )
 
     debug = {
         "source_type": extraction.source_type,
@@ -561,6 +591,13 @@ def build_sams_planogram_structure(
             "local_image_root": local_root,
             "local_image_root_exists": local_image_root_exists,
             "indexed_image_count": local_indexed_images,
+            "lookup_key_count": local_lookup_key_count,
+            "local_index_warnings": (
+                local_image_index.warnings.copy()
+                if local_image_index is not None
+                else []
+            ),
+            "startup_probe": startup_probe,
             "local_indexed_images": local_indexed_images,
             "local_duplicate_keys": local_duplicate_keys,
             "image_zip_uploaded": image_zip_index.uploaded,
