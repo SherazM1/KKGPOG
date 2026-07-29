@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 from app.sams_club.extract_access import extract_master_pog_source
@@ -363,16 +364,34 @@ def build_sams_planogram_structure(
     unresolved = 0
     unresolved_examples: list[dict[str, Any]] = []
     image_resolution_samples: list[dict[str, Any]] = []
+    is_tabular_source = extraction.source_type in {"xlsx", "csv"}
 
     for record in selected_records:
         slot_warnings = _append_record_warnings(record, warnings)
+        supplied_file_path = record["file_path"]
+        supplied_file_path_exists = False
+        if supplied_file_path:
+            try:
+                supplied_file_path_exists = Path(supplied_file_path).is_file()
+            except OSError:
+                supplied_file_path_exists = False
+        resolver_file_path = (
+            supplied_file_path
+            if supplied_file_path_exists or not is_tabular_source
+            else ""
+        )
 
         resolution = resolve_sams_image_path(
-            file_path=record["file_path"],
+            file_path=resolver_file_path,
             upc=record["upc"],
             item_number=record["item_number"],
             zip_index=image_zip_index,
             local_index=local_image_index,
+        )
+        slot_file_path = (
+            supplied_file_path
+            if supplied_file_path_exists or not is_tabular_source
+            else ""
         )
 
         selected_slot_count += 1
@@ -402,7 +421,7 @@ def build_sams_planogram_structure(
                         "column": record["column"],
                         "upc": record["upc"],
                         "item_number": record["item_number"],
-                        "file_path": record["file_path"],
+                        "file_path": slot_file_path,
                     }
                 )
 
@@ -412,6 +431,9 @@ def build_sams_planogram_structure(
                     "item_number": record["item_number"],
                     "raw_upc": record["raw_upc"],
                     "normalized_upc": record["upc"],
+                    "supplied_file_path": supplied_file_path,
+                    "supplied_file_path_exists": supplied_file_path_exists,
+                    "resolved_path": resolution.resolved_path,
                     "resolved_image_path": resolution.resolved_path,
                     "resolution_method": resolution.source,
                 }
@@ -429,7 +451,7 @@ def build_sams_planogram_structure(
             desc_2=record["desc_2"],
             upc=record["upc"],
             cpp=record["cpp"],
-            file_path=record["file_path"],
+            file_path=slot_file_path,
             resolved_image_path=resolution.resolved_path,
             image_resolution_source=resolution.source,
             description=record["description"],

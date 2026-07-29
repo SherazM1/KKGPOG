@@ -14,22 +14,28 @@ from app.sams_club.service import build_sams_planogram_structure
 
 
 class SamsExcelUpcTests(unittest.TestCase):
-    def _write_workbook(self, path: Path, upc_header: str, upc_value: object, item_number: str = "12345") -> None:
-        pd.DataFrame(
-            [
-                {
-                    "POG": "POG1",
-                    "Side": 1,
-                    "Row": 1,
-                    "Column": 1,
-                    "Item Number": item_number,
-                    upc_header: upc_value,
-                    "Retail": "9.99",
-                    "CPP": "1",
-                    "Description": "Test product",
-                }
-            ]
-        ).to_excel(path, index=False)
+    def _write_workbook(
+        self,
+        path: Path,
+        upc_header: str,
+        upc_value: object,
+        item_number: str = "12345",
+        file_path: str | None = None,
+    ) -> None:
+        row = {
+            "POG": "POG1",
+            "Side": 1,
+            "Row": 1,
+            "Column": 1,
+            "Item Number": item_number,
+            upc_header: upc_value,
+            "Retail": "9.99",
+            "CPP": "1",
+            "Description": "Test product",
+        }
+        if file_path is not None:
+            row["file_path"] = file_path
+        pd.DataFrame([row]).to_excel(path, index=False)
 
     def _write_image(self, path: Path) -> None:
         Image.new("RGB", (10, 10), "white").save(path)
@@ -124,6 +130,38 @@ class SamsExcelUpcTests(unittest.TestCase):
         self.assertTrue(slot.resolved_image_path.endswith("100 0087458605402.JPG"))
         self.assertTrue(result.debug["image_resolution"]["local_image_root_exists"])
         self.assertEqual(result.debug["image_resolution"]["indexed_image_count"], 1)
+
+    def test_nonexistent_generated_file_path_is_ignored_for_upc_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workbook = root / "source.xlsx"
+            image_dir = root / "images"
+            nested_dir = image_dir / "Gift Cards"
+            nested_dir.mkdir(parents=True)
+            generated_path = str(image_dir / "19674217114.jpg")
+            self._write_workbook(
+                workbook,
+                "UPC",
+                "19674217114",
+                file_path=generated_path,
+            )
+            self._write_image(nested_dir / "100 0019674217114.JPG")
+
+            result = build_sams_planogram_structure(
+                workbook,
+                selected_pog="POG1",
+                local_image_root=str(image_dir),
+            )
+
+        slot = result.planogram.side_pages[0].rows[0].slots[0]
+        sample = result.debug["image_resolution"]["debug_sample"][0]
+        self.assertEqual(slot.file_path, "")
+        self.assertEqual(slot.image_resolution_source, SOURCE_LOCAL_UPC)
+        self.assertTrue(slot.resolved_image_path.endswith("100 0019674217114.JPG"))
+        self.assertEqual(sample["supplied_file_path"], generated_path)
+        self.assertFalse(sample["supplied_file_path_exists"])
+        self.assertEqual(sample["resolved_path"], slot.resolved_image_path)
+        self.assertEqual(sample["resolution_method"], SOURCE_LOCAL_UPC)
 
     def test_fallback_resolution_by_item_number_after_upc_miss(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
