@@ -12,16 +12,22 @@ from app.sams_club.extract_access import _build_mapping, _normalize_upc_value, e
 from app.sams_club.image_resolution import (
     SOURCE_LOCAL_ITEM_NUMBER,
     SOURCE_LOCAL_UPC,
+    SOURCE_MANUAL_UPC,
     SOURCE_UNRESOLVED,
     SamsImageIndex,
+    SamsManualImageMappingIndex,
     _calculate_upca_check_digit,
     _identifier_keys,
     _lookup_by_identifier,
     build_sams_local_image_index,
+    load_sams_manual_image_mappings,
+    resolve_sams_image_path,
 )
 from app.sams_club.models import SamsPlanogram, SamsRow, SamsSidePage, SamsSlot
 from app.sams_club.render_planogram import render_sams_planogram_pdf
 from app.sams_club.service import build_sams_planogram_structure
+from scripts.catalog_sams_images import catalog_image
+from scripts.match_sams_unresolved import build_candidate_matches
 
 
 class SamsExcelUpcTests(unittest.TestCase):
@@ -50,6 +56,9 @@ class SamsExcelUpcTests(unittest.TestCase):
 
     def _write_image(self, path: Path) -> None:
         Image.new("RGB", (10, 10), "white").save(path)
+
+    def _write_corrupt_file(self, path: Path) -> None:
+        path.write_bytes(b"not an image")
 
     def test_upc_header_named_upc_is_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -174,6 +183,42 @@ class SamsExcelUpcTests(unittest.TestCase):
         self.assertEqual(matched_path, str(image_path))
         self.assertTrue(matched_path_exists)
 
+    def test_catalog_handles_uppercase_extensions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "PlayStation 50.JPG"
+            self._write_image(image_path)
+            cached = {
+                "file_path": str(image_path),
+                "filename": image_path.name,
+                "filename_upc": "50",
+                "file_size": str(image_path.stat().st_size),
+                "modified_time": str(image_path.stat().st_mtime),
+                "width": "10",
+                "height": "10",
+                "detected_text": "PlayStation $50",
+                "normalized_text": "playstation $50",
+                "detected_brand": "playstation",
+                "detected_denomination": "$50",
+                "detected_pack_quantity": "",
+                "catalog_status": "ok",
+                "catalog_error": "",
+            }
+
+            row = catalog_image(image_path, cached)
+
+        self.assertEqual(row["catalog_status"], "ok")
+        self.assertEqual(row["filename"], "PlayStation 50.JPG")
+
+    def test_catalog_handles_corrupt_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "broken.JPG"
+            self._write_corrupt_file(image_path)
+
+            row = catalog_image(image_path)
+
+        self.assertEqual(row["catalog_status"], "error")
+        self.assertTrue(row["catalog_error"])
+
     def test_11_digit_upc_matches_longer_filename_identifier(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             image_dir = Path(temp_dir) / "images"
@@ -266,6 +311,150 @@ class SamsExcelUpcTests(unittest.TestCase):
         self.assertEqual(result.debug["records_without_upc"], 0)
         self.assertEqual(result.debug["records_with_item_number"], 1)
         self.assertEqual(result.debug["image_resolution"]["resolved_by_local_item_number"], 1)
+
+    def test_playstation_50_ranks_above_other_brands(self) -> None:
+        unresolved_rows = [
+            {
+                "status": "unresolved",
+                "UPC": "11111111111",
+                "Item Number": "123",
+                "Brand": "PSN",
+                "Description": "PlayStation Store $50 Gift Card",
+            }
+        ]
+        catalog_rows = [
+            {
+                "file_path": "steam.jpg",
+                "filename": "steam.jpg",
+                "filename_upc": "",
+                "detected_text": "Steam $50",
+                "normalized_text": "steam $50",
+                "detected_brand": "steam",
+                "detected_denomination": "$50",
+                "detected_pack_quantity": "",
+            },
+            {
+                "file_path": "ps.jpg",
+                "filename": "ps.jpg",
+                "filename_upc": "",
+                "detected_text": "PlayStation $50",
+                "normalized_text": "playstation $50",
+                "detected_brand": "playstation",
+                "detected_denomination": "$50",
+                "detected_pack_quantity": "",
+            },
+        ]
+
+        rows = build_candidate_matches(unresolved_rows, catalog_rows)
+
+        self.assertEqual(rows[0]["candidate_file_path"], "ps.jpg")
+        self.assertGreater(rows[0]["total_score"], rows[1]["total_score"])
+
+    def test_conflicting_denominations_are_penalized(self) -> None:
+        unresolved_rows = [
+            {
+                "status": "unresolved",
+                "UPC": "11111111111",
+                "Item Number": "123",
+                "Brand": "PlayStation",
+                "Description": "PlayStation Store $50 Gift Card",
+            }
+        ]
+        catalog_rows = [
+            {
+                "file_path": "ps25.jpg",
+                "filename": "ps25.jpg",
+                "filename_upc": "",
+                "detected_text": "PlayStation $25",
+                "normalized_text": "playstation $25",
+                "detected_brand": "playstation",
+                "detected_denomination": "$25",
+                "detected_pack_quantity": "",
+            }
+        ]
+
+        rows = build_candidate_matches(unresolved_rows, catalog_rows)
+
+        self.assertLess(rows[0]["denomination_score"], 0)
+
+    def test_repeated_unresolved_positions_are_deduplicated_by_matcher(self) -> None:
+        unresolved_rows = [
+            {"status": "unresolved", "UPC": "111", "Item Number": "222", "Description": "PlayStation $50"},
+            {"status": "unresolved", "UPC": "111", "Item Number": "222", "Description": "PlayStation $50"},
+        ]
+        catalog_rows = [
+            {
+                "file_path": "ps.jpg",
+                "filename": "ps.jpg",
+                "filename_upc": "",
+                "detected_text": "PlayStation $50",
+                "normalized_text": "playstation $50",
+                "detected_brand": "playstation",
+                "detected_denomination": "$50",
+                "detected_pack_quantity": "",
+            }
+        ]
+
+        rows = build_candidate_matches(unresolved_rows[:1], catalog_rows)
+
+        self.assertEqual(len(rows), 1)
+
+    def test_approved_mapping_resolves_all_repeated_positions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workbook = root / "source.xlsx"
+            image_path = root / "approved.png"
+            self._write_image(image_path)
+            pd.DataFrame(
+                [
+                    {"POG": "POG1", "Side": 1, "Row": 1, "Column": 1, "Item Number": "12345", "UPC": "19674217114"},
+                    {"POG": "POG1", "Side": 1, "Row": 1, "Column": 2, "Item Number": "12345", "UPC": "19674217114"},
+                ]
+            ).to_excel(workbook, index=False)
+            manual_index = SamsManualImageMappingIndex(
+                by_upc={"19674217114": str(image_path)},
+                approved_count=1,
+            )
+
+            with patch(
+                "app.sams_club.service.load_sams_manual_image_mappings",
+                lambda: manual_index,
+            ):
+                result = build_sams_planogram_structure(
+                    workbook,
+                    selected_pog="POG1",
+                    local_image_root="",
+                )
+
+        slots = result.planogram.side_pages[0].rows[0].slots
+        self.assertEqual([slot.image_resolution_source for slot in slots], [SOURCE_MANUAL_UPC, SOURCE_MANUAL_UPC])
+        self.assertEqual([slot.resolved_image_path for slot in slots], [str(image_path), str(image_path)])
+
+    def test_invalid_manual_mapping_falls_through_normally(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            mapping_path = Path(temp_dir) / "manual.csv"
+            image_dir = Path(temp_dir) / "images"
+            image_dir.mkdir()
+            local_image = image_dir / "190199709997.png"
+            self._write_image(local_image)
+            mapping_path.write_text(
+                "UPC,Item Number,file_path,approved,source,notes\n"
+                f"190199709997,,{Path(temp_dir) / 'missing.png'},true,test,\n",
+                encoding="utf-8",
+            )
+            manual_index = load_sams_manual_image_mappings(mapping_path)
+            local_index = build_sams_local_image_index(image_dir)
+
+            resolution = resolve_sams_image_path(
+                file_path="",
+                upc="190199709997",
+                item_number="",
+                local_index=local_index,
+                manual_index=manual_index,
+            )
+
+        self.assertEqual(resolution.source, SOURCE_LOCAL_UPC)
+        self.assertEqual(resolution.resolved_path, str(local_image))
 
     def test_missing_local_root_records_unresolved_without_file_path_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

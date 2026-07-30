@@ -7,6 +7,7 @@ import os
 import re
 import tempfile
 import zipfile
+import csv
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -19,6 +20,8 @@ SOURCE_ORIGINAL_PATH = "original_path"
 SOURCE_LOCAL_BASENAME = "local_basename"
 SOURCE_LOCAL_UPC = "local_upc"
 SOURCE_LOCAL_ITEM_NUMBER = "local_item_number"
+SOURCE_MANUAL_UPC = "manual_upc"
+SOURCE_MANUAL_ITEM_NUMBER = "manual_item_number"
 SOURCE_ZIP_BASENAME = "zip_basename"
 SOURCE_ZIP_UPC = "zip_upc"
 SOURCE_ZIP_ITEM_NUMBER = "zip_item_number"
@@ -46,6 +49,17 @@ class SamsImageZipIndex(SamsImageIndex):
 class SamsResolvedImage:
     resolved_path: str = ""
     source: str = SOURCE_UNRESOLVED
+
+
+@dataclass
+class SamsManualImageMappingIndex:
+    mapping_path: str = ""
+    by_upc: dict[str, str] = field(default_factory=dict)
+    by_item_number: dict[str, str] = field(default_factory=dict)
+    approved_count: int = 0
+    loaded_count: int = 0
+    skipped_count: int = 0
+    warnings: list[str] = field(default_factory=list)
 
 
 def _coerce_uploaded_bytes(source_file: Any) -> tuple[bytes, str]:
@@ -284,6 +298,63 @@ def _can_open_image(path_text: str) -> bool:
     if not path_text:
         return False
 
+
+def load_sams_manual_image_mappings(
+    mapping_path: str | Path = "unresolved/manual_image_mappings.csv",
+) -> SamsManualImageMappingIndex:
+    path = Path(mapping_path)
+    result = SamsManualImageMappingIndex(mapping_path=str(path))
+
+    if not path.exists():
+        return result
+
+    try:
+        with path.open("r", newline="", encoding="utf-8-sig") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                result.loaded_count += 1
+                approved = str(row.get("approved", "")).strip().lower()
+                if approved not in {"true", "1", "yes", "y"}:
+                    continue
+
+                file_path = str(row.get("file_path", "")).strip()
+                if not file_path or not _can_open_image(file_path):
+                    result.skipped_count += 1
+                    continue
+
+                result.approved_count += 1
+
+                upc = str(row.get("UPC", row.get("upc", ""))).strip()
+                for key in _identifier_keys(upc):
+                    result.by_upc.setdefault(key, file_path)
+
+                item_number = str(
+                    row.get("Item Number", row.get("item_number", ""))
+                ).strip()
+                for key in _identifier_keys(item_number):
+                    result.by_item_number.setdefault(key, file_path)
+    except Exception as exc:
+        result.warnings.append(
+            f"Sam's manual image mappings could not be loaded from {path}: {exc}"
+        )
+
+    return result
+
+
+def _lookup_manual_mapping(
+    identifier: str,
+    mapping: dict[str, str],
+) -> str:
+    if not mapping:
+        return ""
+
+    for key in _identifier_keys(identifier):
+        resolved = mapping.get(key)
+        if resolved:
+            return resolved
+
+    return ""
+
     try:
         path = Path(path_text)
 
@@ -388,6 +459,7 @@ def resolve_sams_image_path(
     item_number: str = "",
     zip_index: SamsImageZipIndex | None = None,
     local_index: SamsImageIndex | None = None,
+    manual_index: SamsManualImageMappingIndex | None = None,
 ) -> SamsResolvedImage:
     original = str(file_path or "").strip()
 
@@ -396,6 +468,24 @@ def resolve_sams_image_path(
             resolved_path=original,
             source=SOURCE_ORIGINAL_PATH,
         )
+
+    if manual_index is not None:
+        manual_upc = _lookup_manual_mapping(upc, manual_index.by_upc)
+        if manual_upc:
+            return SamsResolvedImage(
+                resolved_path=manual_upc,
+                source=SOURCE_MANUAL_UPC,
+            )
+
+        manual_item_number = _lookup_manual_mapping(
+            item_number,
+            manual_index.by_item_number,
+        )
+        if manual_item_number:
+            return SamsResolvedImage(
+                resolved_path=manual_item_number,
+                source=SOURCE_MANUAL_ITEM_NUMBER,
+            )
 
     local_result = _resolve_from_index(
         original_path=original,

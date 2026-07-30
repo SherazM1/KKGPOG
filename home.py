@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 import difflib
 import re
+from pathlib import Path
 from typing import Optional
 
 from app.sams_club.extract_price_strips import build_sams_price_strip_rows
@@ -308,6 +309,78 @@ def main() -> None:
                 )
             st.markdown("#### Local Image Folder Diagnostics")
             st.json(local_image_diagnostics)
+
+            candidate_path = Path("unresolved/candidate_matches.csv")
+            manual_mapping_path = Path("unresolved/manual_image_mappings.csv")
+            if candidate_path.exists():
+                candidate_df = pd.read_csv(candidate_path).fillna("")
+                if not candidate_df.empty:
+                    st.markdown("#### Unresolved Image Candidate Review")
+                    grouped_candidates = list(
+                        candidate_df.groupby(["unresolved_upc", "item_number"], dropna=False)
+                    )
+                    for group_index, ((upc_value, item_value), group_df) in enumerate(grouped_candidates[:10]):
+                        label = f"UPC {upc_value or '-'} | Item {item_value or '-'}"
+                        with st.expander(label):
+                            for row_index, candidate in group_df.sort_values("candidate_rank").head(5).iterrows():
+                                st.write(
+                                    {
+                                        "candidate_rank": candidate.get("candidate_rank", ""),
+                                        "candidate_file_path": candidate.get("candidate_file_path", ""),
+                                        "detected_text": candidate.get("detected_text", ""),
+                                        "detected_denomination": candidate.get("detected_denomination", ""),
+                                        "total_score": candidate.get("total_score", ""),
+                                        "confidence": candidate.get("confidence", ""),
+                                        "review_status": candidate.get("review_status", ""),
+                                    }
+                                )
+                                approve_key = f"sams_candidate_approve_{group_index}_{row_index}"
+                                reject_key = f"sams_candidate_reject_{group_index}_{row_index}"
+                                approve_col, reject_col = st.columns(2)
+                                if approve_col.button("Approve", key=approve_key):
+                                    manual_mapping_path.parent.mkdir(parents=True, exist_ok=True)
+                                    existing_manual = (
+                                        pd.read_csv(manual_mapping_path).fillna("")
+                                        if manual_mapping_path.exists()
+                                        else pd.DataFrame(
+                                            columns=["UPC", "Item Number", "file_path", "approved", "source", "notes"]
+                                        )
+                                    )
+                                    new_mapping = pd.DataFrame(
+                                        [
+                                            {
+                                                "UPC": candidate.get("unresolved_upc", ""),
+                                                "Item Number": candidate.get("item_number", ""),
+                                                "file_path": candidate.get("candidate_file_path", ""),
+                                                "approved": "true",
+                                                "source": "streamlit_ocr_review",
+                                                "notes": candidate.get("review_notes", ""),
+                                            }
+                                        ]
+                                    )
+                                    pd.concat([existing_manual, new_mapping], ignore_index=True).drop_duplicates(
+                                        subset=["UPC", "Item Number", "file_path"],
+                                        keep="last",
+                                    ).to_csv(manual_mapping_path, index=False)
+                                    candidate_df.loc[row_index, "review_status"] = "approved"
+                                    candidate_df.to_csv(candidate_path, index=False)
+                                    st.success("Saved approved image mapping.")
+                                if reject_col.button("Reject", key=reject_key):
+                                    candidate_df.loc[row_index, "review_status"] = "rejected"
+                                    candidate_df.to_csv(candidate_path, index=False)
+                                    st.info("Candidate rejected.")
+
+                    if st.button("Rebuild Planogram", key="rebuild_sams_after_mapping"):
+                        with st.spinner("Rebuilding Sam's Club structure with approved mappings..."):
+                            st.session_state["sams_build_result"] = build_sams_planogram_structure(
+                                sams_main_source_file,
+                                sams_excel_file,
+                                image_zip_file=sams_image_zip_file,
+                                selected_pog=sams_selected_pog,
+                                local_image_root=sams_local_image_root,
+                            )
+                            st.session_state["sams_pdf_result"] = None
+                        st.rerun()
 
             detected_title_seed = (result.selected_pog or result.planogram.pog or "").strip()
             current_title_value = (st.session_state.get("sams_pdf_title") or "").strip()

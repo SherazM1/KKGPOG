@@ -11,6 +11,8 @@ from app.sams_club.image_resolution import (
     SOURCE_LOCAL_BASENAME,
     SOURCE_LOCAL_ITEM_NUMBER,
     SOURCE_LOCAL_UPC,
+    SOURCE_MANUAL_ITEM_NUMBER,
+    SOURCE_MANUAL_UPC,
     SOURCE_ORIGINAL_PATH,
     SOURCE_ZIP_BASENAME,
     SOURCE_ZIP_ITEM_NUMBER,
@@ -20,6 +22,7 @@ from app.sams_club.image_resolution import (
     _identifier_keys,
     _lookup_by_identifier,
     _lookup_by_identifier_with_key,
+    load_sams_manual_image_mappings,
     resolve_sams_image_path,
 )
 from app.sams_club.models import SamsPlanogram, SamsRow, SamsSidePage, SamsSlot
@@ -220,6 +223,9 @@ def build_sams_planogram_structure(
     if local_image_index is not None:
         warnings.extend(local_image_index.warnings)
 
+    manual_image_index = load_sams_manual_image_mappings()
+    warnings.extend(manual_image_index.warnings)
+
     extraction = extract_master_pog_source(main_source_file)
     warnings.extend(extraction.warnings)
     warnings.extend(extraction.errors)
@@ -361,6 +367,8 @@ def build_sams_planogram_structure(
     resolved_by_local_basename = 0
     resolved_by_local_upc = 0
     resolved_by_local_item_number = 0
+    resolved_by_manual_upc = 0
+    resolved_by_manual_item_number = 0
     resolved_by_zip_basename = 0
     resolved_by_zip_upc = 0
     resolved_by_zip_item_number = 0
@@ -390,6 +398,7 @@ def build_sams_planogram_structure(
             item_number=record["item_number"],
             zip_index=image_zip_index,
             local_index=local_image_index,
+            manual_index=manual_image_index,
         )
         slot_file_path = (
             supplied_file_path
@@ -407,6 +416,10 @@ def build_sams_planogram_structure(
             resolved_by_local_upc += 1
         elif resolution.source == SOURCE_LOCAL_ITEM_NUMBER:
             resolved_by_local_item_number += 1
+        elif resolution.source == SOURCE_MANUAL_UPC:
+            resolved_by_manual_upc += 1
+        elif resolution.source == SOURCE_MANUAL_ITEM_NUMBER:
+            resolved_by_manual_item_number += 1
         elif resolution.source == SOURCE_ZIP_BASENAME:
             resolved_by_zip_basename += 1
         elif resolution.source == SOURCE_ZIP_UPC:
@@ -431,23 +444,43 @@ def build_sams_planogram_structure(
         if len(image_resolution_samples) < 5:
             generated_upc_keys = _identifier_keys(record["upc"])
             matched_index_key = ""
-            if resolution.source in {SOURCE_LOCAL_UPC, SOURCE_ZIP_UPC}:
+            if resolution.source == SOURCE_LOCAL_UPC:
                 _, matched_index_key = _lookup_by_identifier_with_key(
                     record["upc"],
-                    (
-                        local_image_index
-                        if resolution.source == SOURCE_LOCAL_UPC
-                        else image_zip_index
-                    ),
+                    local_image_index,
                 )
-            elif resolution.source in {SOURCE_LOCAL_ITEM_NUMBER, SOURCE_ZIP_ITEM_NUMBER}:
+            elif resolution.source == SOURCE_ZIP_UPC:
+                _, matched_index_key = _lookup_by_identifier_with_key(
+                    record["upc"],
+                    image_zip_index,
+                )
+            elif resolution.source == SOURCE_MANUAL_UPC:
+                matched_index_key = next(
+                    (
+                        key
+                        for key in generated_upc_keys
+                        if key in manual_image_index.by_upc
+                    ),
+                    "",
+                )
+            elif resolution.source == SOURCE_LOCAL_ITEM_NUMBER:
                 _, matched_index_key = _lookup_by_identifier_with_key(
                     record["item_number"],
+                    local_image_index,
+                )
+            elif resolution.source == SOURCE_ZIP_ITEM_NUMBER:
+                _, matched_index_key = _lookup_by_identifier_with_key(
+                    record["item_number"],
+                    image_zip_index,
+                )
+            elif resolution.source == SOURCE_MANUAL_ITEM_NUMBER:
+                matched_index_key = next(
                     (
-                        local_image_index
-                        if resolution.source == SOURCE_LOCAL_ITEM_NUMBER
-                        else image_zip_index
+                        key
+                        for key in _identifier_keys(record["item_number"])
+                        if key in manual_image_index.by_item_number
                     ),
+                    "",
                 )
 
             image_resolution_samples.append(
@@ -635,6 +668,14 @@ def build_sams_planogram_structure(
             "resolved_by_explicit_path": resolved_by_original_path,
             "resolved_by_original_path": resolved_by_original_path,
             "resolved_by_local_basename": resolved_by_local_basename,
+            "manual_mapping_path": manual_image_index.mapping_path,
+            "manual_mapping_loaded_count": manual_image_index.loaded_count,
+            "manual_mapping_approved_count": manual_image_index.approved_count,
+            "manual_mapping_skipped_count": manual_image_index.skipped_count,
+            "resolved_by_manual_upc": resolved_by_manual_upc,
+            "resolved_by_manual_item_number": (
+                resolved_by_manual_item_number
+            ),
             "resolved_by_local_upc": resolved_by_local_upc,
             "resolved_by_local_item_number": (
                 resolved_by_local_item_number
