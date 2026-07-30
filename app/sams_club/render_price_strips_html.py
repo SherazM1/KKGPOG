@@ -1237,6 +1237,16 @@ def _generate_strip_html(
     cents_translate_y_pt = _profile_number(layout_profile, "price", "cents_translate_y_pt", -11.0)
     cents_margin_left_pt = _profile_number(layout_profile, "price", "cents_margin_left_pt", 0.6)
     cents_letter_spacing_pt = _profile_number(layout_profile, "price", "cents_letter_spacing_pt", 0.0)
+    footer_font_size_pt = _SAMS_FOOTER_SIZE
+    brand_font_size_pt = _SAMS_BRAND_SIZE
+    desc_font_size_pt = _SAMS_DESC_SIZE
+    if holiday_mode:
+        dollar_sign_size_pt = SAMS_HOLIDAY_TEMPLATE.price_dollar_sign_font_size_pt
+        dollars_size_pt = SAMS_HOLIDAY_TEMPLATE.price_dollars_font_size_pt
+        cents_size_pt = SAMS_HOLIDAY_TEMPLATE.price_cents_font_size_pt
+        footer_font_size_pt = SAMS_HOLIDAY_TEMPLATE.footer_font_size_pt
+        brand_font_size_pt = SAMS_HOLIDAY_TEMPLATE.description_font_size_pt
+        desc_font_size_pt = SAMS_HOLIDAY_TEMPLATE.description_font_size_pt
 
     ticket_htmls = []
     footer_left_pt = footer_left_in * inch
@@ -1329,7 +1339,7 @@ html, body {{
     width: 100%;
     font-family: "Gibson", Arial, sans-serif;
     font-weight: 600;
-    font-size: {_SAMS_BRAND_SIZE}pt;
+    font-size: {brand_font_size_pt}pt;
     line-height: 1.0;
     white-space: nowrap;
     overflow: hidden;
@@ -1343,7 +1353,7 @@ html, body {{
     width: 100%;
     font-family: "Gibson", Arial, sans-serif;
     font-weight: 400;
-    font-size: {_SAMS_DESC_SIZE}pt;
+    font-size: {desc_font_size_pt}pt;
     line-height: 1.0;
     white-space: nowrap;
     overflow: hidden;
@@ -1365,7 +1375,7 @@ html, body {{
 
 .brand-field {{
     font-weight: 600;
-    font-size: {_SAMS_BRAND_SIZE}pt;
+    font-size: {brand_font_size_pt}pt;
     overflow: visible;
     text-overflow: clip;
     transform-origin: left top;
@@ -1381,7 +1391,7 @@ html, body {{
 
 .desc-field {{
     font-weight: 400;
-    font-size: {_SAMS_DESC_SIZE}pt;
+    font-size: {desc_font_size_pt}pt;
     overflow: visible;
     text-overflow: clip;
     transform-origin: left top;
@@ -1444,7 +1454,7 @@ html, body {{
     bottom: {footer_bottom_in}in;
     font-family: "Gibson", Arial, sans-serif;
     font-weight: 400;
-    font-size: {_SAMS_FOOTER_SIZE}pt;
+    font-size: {footer_font_size_pt}pt;
     line-height: 1;
     color: #303030;
     white-space: nowrap;
@@ -1540,6 +1550,10 @@ def _generate_ticket_html(
     price_sign_size = _profile_number(layout_profile, "price", "dollar_sign_size_pt", 30.0)
     price_dollars_size = _profile_number(layout_profile, "price", "dollars_size_pt", 90.0)
     price_cents_size = _profile_number(layout_profile, "price", "cents_size_pt", 36.0)
+    if center_main_amount:
+        price_sign_size = SAMS_HOLIDAY_TEMPLATE.price_dollar_sign_font_size_pt
+        price_dollars_size = SAMS_HOLIDAY_TEMPLATE.price_dollars_font_size_pt
+        price_cents_size = SAMS_HOLIDAY_TEMPLATE.price_cents_font_size_pt
     price_sign_margin = _profile_number(layout_profile, "price", "dollar_sign_margin_right_pt", 0.6)
     price_cents_margin = _profile_number(layout_profile, "price", "cents_margin_left_pt", 0.6)
     dollar_sign_w = _estimate_text_width("$", price_sign_size, "semibold")
@@ -1600,6 +1614,9 @@ def _generate_ticket_html(
         brand_top = SAMS_HOLIDAY_TEMPLATE.brand_top_pt
         desc_1_top = SAMS_HOLIDAY_TEMPLATE.description_top_pt
         desc_2_top = SAMS_HOLIDAY_TEMPLATE.pack_range_top_pt
+        brand_size = SAMS_HOLIDAY_TEMPLATE.description_font_size_pt
+        desc_1_size = SAMS_HOLIDAY_TEMPLATE.description_font_size_pt
+        desc_2_size = SAMS_HOLIDAY_TEMPLATE.description_font_size_pt
 
     def _font_weight_name(value) -> str:
         try:
@@ -1631,9 +1648,9 @@ def _generate_ticket_html(
     desc_2_w = min(max(8.0, w * desc_2_width_ratio), max(8.0, w - desc_2_left))
 
     if center_main_amount:
-        brand = (segment.brand or "").strip()
-        desc_1 = (segment.desc_1 or "").strip()
-        desc_2 = (segment.desc_2 or "").strip()
+        brand = (segment.brand or "").strip().upper()
+        desc_1 = (segment.desc_1 or "").strip().upper()
+        desc_2 = (segment.desc_2 or "").strip().upper()
     else:
         brand = (segment.brand or "-").strip() or "-"
         desc_1 = (segment.desc_1 or "-").strip() or "-"
