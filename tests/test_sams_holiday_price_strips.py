@@ -18,8 +18,10 @@ from app.sams_club.holiday_price_strips import (
 from app.sams_club.price_strip_models import SamsPriceStripRow, SamsPriceStripSegment
 from app.sams_club.render_price_strips_html import (
     _build_full_html,
-    _calculate_centered_dollars_left,
+    _calculate_centered_price_group_left,
     _estimate_text_width,
+    _estimate_price_object_width,
+    _normalize_price_parts,
     compute_strip_canvas,
 )
 
@@ -162,12 +164,83 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         finally:
             workbook_path.unlink(missing_ok=True)
 
-    def test_main_amount_midpoint_equals_slot_center(self) -> None:
+    def test_full_price_group_midpoint_equals_slot_center(self) -> None:
         center_x = holiday_slot_centers_pt(holiday_geometry_for_side(1))[0]
-        left_x = _calculate_centered_dollars_left(center_x, "25", 90.0)
-        width = _estimate_text_width("25", 90.0, "semibold")
+        width = _estimate_price_object_width("25", "00", 30.0, 90.0, 36.0, 0.6, 0.6)
+        left_x = _calculate_centered_price_group_left(center_x, width)
 
         self.assert_points_close(left_x + (width / 2.0), center_x)
+
+    def test_holiday_price_group_centering_and_adaptive_description_x(self) -> None:
+        prices = ["1.23", "5.98", "47.88", "51.25", "153.78"]
+        description_lefts: list[float] = []
+        center_x = holiday_slot_centers_pt(holiday_geometry_for_side(1))[0]
+
+        for price in prices:
+            row = SamsPriceStripRow(
+                pog="POG",
+                side=1,
+                row=1,
+                segments=[
+                    SamsPriceStripSegment(
+                        pog="POG",
+                        side=1,
+                        row=1,
+                        column=1,
+                        brand="BRAND",
+                        desc_1="DESCRIPTION",
+                        desc_2="$20-$500",
+                        retail=price,
+                    )
+                ],
+            )
+            warnings: list[str] = []
+            html = _build_full_html([expand_holiday_row_to_slots(row)], warnings, SAMS_HOLIDAY_TEMPLATE_NAME, False)[0]
+            ticket_left = float(re.search(r'<div class="ticket" style="left: ([0-9.]+)pt;', html).group(1))
+            price_left = float(re.search(r'<div class="price" style="left: ([0-9.]+)pt;', html).group(1))
+            desc_left = float(re.search(r'class="field brand-field" style="left: ([0-9.]+)pt;', html).group(1))
+            desc_width = float(re.search(r'class="field brand-field" style="left: [0-9.]+pt; top: [0-9.]+pt; width: ([0-9.]+)pt;', html).group(1))
+            dollars, cents = _normalize_price_parts(price)
+            group_width = _estimate_price_object_width(dollars, cents, 30.0, 90.0, 36.0, 0.6, 0.6)
+            group_left = ticket_left + price_left
+
+            self.assert_points_close(group_left + (group_width / 2.0), center_x)
+            self.assertAlmostEqual(ticket_left + desc_left, group_left, delta=6.0)
+            self.assertGreaterEqual(ticket_left + desc_left, ticket_left + 6.0)
+            self.assertLessEqual(ticket_left + desc_left + desc_width, ticket_left + (2178.0 / 6.0) - 6.0)
+            description_lefts.append(ticket_left + desc_left)
+
+        self.assertGreater(description_lefts[0], description_lefts[-1])
+
+    def test_holiday_long_three_line_description_stays_inside_slot(self) -> None:
+        row = SamsPriceStripRow(
+            pog="POG",
+            side=1,
+            row=1,
+            segments=[
+                SamsPriceStripSegment(
+                    pog="POG",
+                    side=1,
+                    row=1,
+                    column=1,
+                    brand="VERY LONG BRAND NAME THAT SHOULD NOT OVERLAP",
+                    desc_1="VERY LONG DESCRIPTION LINE THAT SHOULD BE SHORTENED INSIDE THE SLOT",
+                    desc_2="$20-$500 RANGE PACK LINE THAT SHOULD STAY INSIDE",
+                    retail="153.78",
+                )
+            ],
+        )
+        warnings: list[str] = []
+        html = _build_full_html([expand_holiday_row_to_slots(row)], warnings, SAMS_HOLIDAY_TEMPLATE_NAME, False)[0]
+
+        ticket_left = float(re.search(r'<div class="ticket" style="left: ([0-9.]+)pt;', html).group(1))
+        brand_match = re.search(r'class="field brand-field" style="left: ([0-9.]+)pt; top: [0-9.]+pt; width: ([0-9.]+)pt;', html)
+        desc_left = float(brand_match.group(1))
+        desc_width = float(brand_match.group(2))
+
+        self.assertGreaterEqual(ticket_left + desc_left, ticket_left + 6.0)
+        self.assertLessEqual(ticket_left + desc_left + desc_width, ticket_left + (2178.0 / 6.0) - 6.0)
+        self.assertIn("...", html)
 
     def test_production_mode_does_not_draw_calibration_guides(self) -> None:
         warnings: list[str] = []

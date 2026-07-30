@@ -38,6 +38,8 @@ class SamsHolidayTemplate:
     brand_top_pt: float
     description_top_pt: float
     pack_range_top_pt: float
+    description_left_adjustment_pt: float
+    description_safe_margin_pt: float
     center_price_amount: bool = True
 
 
@@ -63,6 +65,8 @@ SAMS_HOLIDAY_TEMPLATE = SamsHolidayTemplate(
     brand_top_pt=59.5,
     description_top_pt=74.9,
     pack_range_top_pt=90.3,
+    description_left_adjustment_pt=0.0,
+    description_safe_margin_pt=6.0,
 )
 
 

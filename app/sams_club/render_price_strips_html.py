@@ -525,6 +525,26 @@ def _calculate_centered_dollars_left(
     return slot_center_x - (dollars_width / 2.0)
 
 
+def _calculate_centered_price_group_left(
+    slot_center_x: float,
+    price_group_width: float,
+) -> float:
+    return slot_center_x - (price_group_width / 2.0)
+
+
+def _calculate_holiday_description_box(
+    slot_x: float,
+    slot_width: float,
+    price_group_left_x: float,
+) -> tuple[float, float]:
+    safe_left = slot_x + SAMS_HOLIDAY_TEMPLATE.description_safe_margin_pt
+    safe_right = slot_x + slot_width - SAMS_HOLIDAY_TEMPLATE.description_safe_margin_pt
+    desired_left = price_group_left_x + SAMS_HOLIDAY_TEMPLATE.description_left_adjustment_pt
+    description_left = max(safe_left, min(desired_left, safe_right - 8.0))
+    description_width = max(8.0, safe_right - description_left)
+    return description_left, description_width
+
+
 def _resolve_strip_footer_text(row_data: SamsPriceStripRow) -> str:
     raw = row_data.footer_text.strip()
     if raw and raw.lower() not in {"nan", "none", "null"}:
@@ -1400,12 +1420,11 @@ def _generate_ticket_html(
     max_price_x = max(pad_x, w - pad_x - price_object_w)
     price_x = max(pad_x, min(price_x, max_price_x))
     if center_main_amount and slot_center_x is not None:
-        dollars_left_abs = _calculate_centered_dollars_left(
+        price_group_left_abs = _calculate_centered_price_group_left(
             slot_center_x,
-            dollars,
-            price_dollars_size,
+            price_object_w,
         )
-        centered_price_x = dollars_left_abs - x - dollar_sign_w - price_sign_margin
+        centered_price_x = price_group_left_abs - x
         price_x = max(pad_x, min(centered_price_x, max_price_x))
     price_box_w = max(20.0, w - price_x - pad_x)
 
@@ -1482,6 +1501,14 @@ def _generate_ticket_html(
         desc_2 = (segment.desc_2 or "-").strip() or "-"
     desc_block_left = min(brand_left, desc_1_left, desc_2_left)
     desc_block_w = max(brand_w, desc_1_w, desc_2_w)
+    if center_main_amount and slot_center_x is not None:
+        price_group_left_abs = x + price_x
+        desc_block_left_abs, desc_block_w = _calculate_holiday_description_box(
+            x,
+            w,
+            price_group_left_abs,
+        )
+        desc_block_left = desc_block_left_abs - x
     desc_block_safe_right = max(8.0, item_left - 8.0)
     desc_block_w = max(
         desc_block_w,
@@ -1489,15 +1516,27 @@ def _generate_ticket_html(
         _estimate_text_width(desc_1, desc_1_size, _font_weight_name(desc_1_weight)) + 2.0,
         _estimate_text_width(desc_2, desc_2_size, _font_weight_name(desc_2_weight)) + 2.0,
     )
-    desc_block_left, desc_block_w = _fit_line_box_left_and_width(
-        desc_block_left,
-        desc_block_w,
-        "",
-        desc_2_size,
-        _font_weight_name(desc_2_weight),
-        desc_block_safe_right + 1.0,
-        1.0,
-    )
+    if center_main_amount and slot_center_x is not None:
+        desc_block_left_abs, max_desc_w = _calculate_holiday_description_box(
+            x,
+            w,
+            x + price_x,
+        )
+        desc_block_left = desc_block_left_abs - x
+        desc_block_w = min(desc_block_w, max_desc_w)
+        brand = _truncate_svg_text(brand, brand_size, desc_block_w, _font_weight_name(brand_weight))
+        desc_1 = _truncate_svg_text(desc_1, desc_1_size, desc_block_w, _font_weight_name(desc_1_weight))
+        desc_2 = _truncate_svg_text(desc_2, desc_2_size, desc_block_w, _font_weight_name(desc_2_weight))
+    else:
+        desc_block_left, desc_block_w = _fit_line_box_left_and_width(
+            desc_block_left,
+            desc_block_w,
+            "",
+            desc_2_size,
+            _font_weight_name(desc_2_weight),
+            desc_block_safe_right + 1.0,
+            1.0,
+        )
     brand_left = desc_1_left = desc_2_left = desc_block_left
     brand_w = desc_1_w = desc_2_w = desc_block_w
     item_number = item_text
