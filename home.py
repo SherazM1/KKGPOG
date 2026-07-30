@@ -169,6 +169,18 @@ def main() -> None:
                 value=r"Z:\Kendal King\Images",
                 help="Optional local image folder. Images will be indexed recursively.",
             )
+            sams_price_strip_template = st.selectbox(
+                "Sam's Price Strip Template",
+                ["Standard", "Sam's Holiday"],
+                index=0,
+                key="sams_price_strip_template",
+            )
+            sams_price_strip_calibration = st.checkbox(
+                "Sam's Holiday calibration guides",
+                value=False,
+                key="sams_price_strip_calibration",
+                help="Draws strip boundary, slot boundaries, centerlines, and slot labels on Holiday price strips.",
+            )
             if sams_main_source_file:
                 detected_pogs, detect_warnings = detect_sams_pogs(sams_main_source_file)
                 if detect_warnings:
@@ -470,7 +482,10 @@ def main() -> None:
         else:
             if generate_sams_price_strips:
                 with st.spinner("Building Sam's price strip groups..."):
-                    strip_build = build_sams_price_strip_rows(sams_excel_file)
+                    strip_build = build_sams_price_strip_rows(
+                        sams_excel_file,
+                        template_name=sams_price_strip_template,
+                    )
                 st.session_state["sams_price_strip_build_result"] = strip_build
                 if strip_build.errors:
                     st.session_state["sams_price_strip_pdf_result"] = None
@@ -480,6 +495,8 @@ def main() -> None:
                         st.session_state["sams_price_strip_pdf_result"] = render_sams_price_strips_pdf(
                             strip_build.strip_rows,
                             generated_by="Kendal King",
+                            template_name=sams_price_strip_template,
+                            calibration=sams_price_strip_calibration,
                         )
 
             strip_build = st.session_state.get("sams_price_strip_build_result")
@@ -493,6 +510,7 @@ def main() -> None:
                         f"from {strip_build.extracted_record_count} workbook record(s)."
                     )
                     st.write("Detected strip groups:", strip_build.debug.get("detected_strip_groups", []))
+                    st.write("Template:", strip_build.debug.get("template_name", ""))
                     st.write("(POG, Side, Row) group count:", strip_build.debug.get("strip_group_count", 0))
                     st.write("Segment count per strip row:", strip_build.debug.get("segments_per_strip_row", {}))
                     st.write("Included segment count:", strip_build.included_segment_count)

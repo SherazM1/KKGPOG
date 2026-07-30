@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 
 from app.sams_club.price_strip_models import SamsPriceStripBuildResult, SamsPriceStripRow, SamsPriceStripSegment
+from app.sams_club.holiday_price_strips import is_sams_holiday_template, map_holiday_rows_to_strips
 
 _PRICE_STRIP_SHEET = "Price Strip Data"
 _CONTENT_WARNING_FIELDS: tuple[tuple[str, str], ...] = (
@@ -121,7 +122,10 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
-def build_sams_price_strip_rows(source_file: Any) -> SamsPriceStripBuildResult:
+def build_sams_price_strip_rows(
+    source_file: Any,
+    template_name: str | None = None,
+) -> SamsPriceStripBuildResult:
     warnings: list[str] = []
     errors: list[str] = []
 
@@ -197,6 +201,7 @@ def build_sams_price_strip_rows(source_file: Any) -> SamsPriceStripBuildResult:
             retail=values["retail"],
             length=values["length"],
             data_on_bottom_left=values["data_on_bottom_left"],
+            is_empty=False,
             warnings=segment_warnings,
         )
         grouped_segments[(pog, side, row_value)].append(segment)
@@ -231,9 +236,19 @@ def build_sams_price_strip_rows(source_file: Any) -> SamsPriceStripBuildResult:
         )
         segments_per_group[f"{pog} | Side {side} | Row {row_value}"] = len(segments)
 
+    active_template = template_name or ""
+    if is_sams_holiday_template(active_template):
+        strip_rows, holiday_warnings = map_holiday_rows_to_strips(strip_rows)
+        warnings.extend(holiday_warnings)
+        segments_per_group = {
+            f"{row.pog} | Side {row.side} | Row {row.row}": len(row.segments)
+            for row in strip_rows
+        }
+
     debug = {
         "sheet_name": _PRICE_STRIP_SHEET,
         "column_mapping": mapping,
+        "template_name": active_template,
         "detected_strip_groups": [{"pog": row.pog, "side": row.side, "row": row.row} for row in strip_rows],
         "strip_group_count": len(strip_rows),
         "segments_per_strip_row": segments_per_group,

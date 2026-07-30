@@ -204,7 +204,7 @@ class SamsExcelUpcTests(unittest.TestCase):
                 "catalog_error": "",
             }
 
-            row = catalog_image(image_path, cached)
+            row, _used_cache = catalog_image(image_path, cached)
 
         self.assertEqual(row["catalog_status"], "ok")
         self.assertEqual(row["filename"], "PlayStation 50.JPG")
@@ -214,7 +214,7 @@ class SamsExcelUpcTests(unittest.TestCase):
             image_path = Path(temp_dir) / "broken.JPG"
             self._write_corrupt_file(image_path)
 
-            row = catalog_image(image_path)
+            row, _used_cache = catalog_image(image_path)
 
         self.assertEqual(row["catalog_status"], "error")
         self.assertTrue(row["catalog_error"])

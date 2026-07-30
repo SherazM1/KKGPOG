@@ -17,6 +17,7 @@ class SamsPriceStripSegment:
     retail: str = ""
     length: str = ""
     data_on_bottom_left: str = ""
+    is_empty: bool = False
     warnings: list[str] = field(default_factory=list)
 
 

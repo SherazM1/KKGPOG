@@ -680,8 +680,10 @@ def _render_strip_page(
 def render_sams_price_strips_pdf(
     strip_rows: list[SamsPriceStripRow],
     generated_by: str = "Kendal King",
+    template_name: str | None = None,
+    calibration: bool = False,
 ) -> SamsPriceStripPdfResult:
-    _ = generated_by
+    _ = generated_by, template_name, calibration
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=(_PAGE_WIDTH, _PAGE_HEIGHT))
     warnings: list[str] = []

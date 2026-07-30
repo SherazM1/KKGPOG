@@ -26,6 +26,16 @@ import fitz
 from reportlab.lib.units import inch
 
 from app.sams_club.price_strip_models import SamsPriceStripPdfResult, SamsPriceStripRow, SamsPriceStripSegment
+from app.sams_club.holiday_price_strips import (
+    SAMS_HOLIDAY_TEMPLATE,
+    SamsHolidaySideGeometry,
+    holiday_geometry_for_side,
+    holiday_slot_center_pt,
+    holiday_slot_centers_pt,
+    holiday_slot_width_pt,
+    is_sams_holiday_template,
+    validate_holiday_rows,
+)
 
 if TYPE_CHECKING:
     from playwright.async_api import Browser
@@ -342,7 +352,16 @@ def _normalize_price_parts(raw_retail: str) -> tuple[str, str]:
         return normalized or "-", "00"
 
 
-def compute_strip_canvas(row_data: SamsPriceStripRow, warnings: list[str]) -> tuple[float, float, float]:
+def compute_strip_canvas(
+    row_data: SamsPriceStripRow,
+    warnings: list[str],
+    template_name: str | None = None,
+) -> tuple[float, float, float]:
+    if is_sams_holiday_template(template_name):
+        geometry = holiday_geometry_for_side(row_data.side)
+        footer_h = min(_DEFAULT_FOOTER_HEIGHT, max(6.0, geometry.height_pt * 0.085))
+        return geometry.width_pt, geometry.height_pt, footer_h
+
     strip_w, strip_h = _resolve_group_length(row_data, warnings)
     footer_h = min(_DEFAULT_FOOTER_HEIGHT, max(6.0, strip_h * 0.085))
     return strip_w, strip_h, footer_h
@@ -486,11 +505,85 @@ def _resolve_ticket_positions_from_profile(
     return positions
 
 
+def _resolve_holiday_ticket_positions(
+    row_data: SamsPriceStripRow,
+) -> list[tuple[float, float]]:
+    geometry = holiday_geometry_for_side(row_data.side)
+    slot_width = holiday_slot_width_pt(geometry)
+    return [
+        ((column - 1) * slot_width, slot_width)
+        for column in range(1, geometry.slot_count + 1)
+    ]
+
+
+def _calculate_centered_dollars_left(
+    slot_center_x: float,
+    dollars_text: str,
+    dollars_size_pt: float,
+) -> float:
+    dollars_width = _estimate_text_width(dollars_text, dollars_size_pt, "semibold")
+    return slot_center_x - (dollars_width / 2.0)
+
+
 def _resolve_strip_footer_text(row_data: SamsPriceStripRow) -> str:
     raw = row_data.footer_text.strip()
     if raw and raw.lower() not in {"nan", "none", "null"}:
         return raw
     return f"Side: {row_data.side}, Row: {row_data.row} - POG: {row_data.pog}"
+
+
+def _generate_holiday_calibration_guides(
+    row_data: SamsPriceStripRow,
+    geometry: SamsHolidaySideGeometry,
+    strip_w: float,
+    strip_h: float,
+    ticket_y: float,
+    ticket_h: float,
+) -> str:
+    slot_width = holiday_slot_width_pt(geometry)
+    guide_parts = [
+        (
+            '<div class="holiday-calibration boundary" '
+            f'style="position:absolute; left:0pt; top:0pt; width:{strip_w}pt; height:{strip_h}pt; '
+            'border:0.8pt solid #e11d48; pointer-events:none;"></div>'
+        ),
+        (
+            '<div class="holiday-calibration label" '
+            'style="position:absolute; left:6pt; top:6pt; font:600 8pt Arial; color:#e11d48;">'
+            f"{html.escape(SAMS_HOLIDAY_TEMPLATE.name)} {geometry.designation} Side {row_data.side} "
+            f"{strip_w:g}pt x {strip_h:g}pt</div>"
+        ),
+    ]
+    for slot_index in range(geometry.slot_count + 1):
+        x = slot_index * slot_width
+        guide_parts.append(
+            '<div class="holiday-calibration slot-boundary" '
+            f'style="position:absolute; left:{x}pt; top:0pt; width:0; height:{strip_h}pt; '
+            'border-left:0.5pt solid rgba(14,165,233,0.75); pointer-events:none;"></div>'
+        )
+    for slot_index, center_x in enumerate(holiday_slot_centers_pt(geometry), start=1):
+        guide_parts.append(
+            '<div class="holiday-calibration centerline" '
+            f'style="position:absolute; left:{center_x}pt; top:0pt; width:0; height:{strip_h}pt; '
+            'border-left:0.7pt dashed rgba(220,38,38,0.9); pointer-events:none;"></div>'
+        )
+        guide_parts.append(
+            '<div class="holiday-calibration crosshair-h" '
+            f'style="position:absolute; left:{center_x - 5}pt; top:{ticket_y + (ticket_h * 0.50)}pt; '
+            'width:10pt; height:0; border-top:0.7pt solid #16a34a; pointer-events:none;"></div>'
+        )
+        guide_parts.append(
+            '<div class="holiday-calibration crosshair-v" '
+            f'style="position:absolute; left:{center_x}pt; top:{ticket_y + (ticket_h * 0.50) - 5}pt; '
+            'width:0; height:10pt; border-left:0.7pt solid #16a34a; pointer-events:none;"></div>'
+        )
+        guide_parts.append(
+            '<div class="holiday-calibration slot-number" '
+            f'style="position:absolute; left:{center_x + 3}pt; top:{strip_h - 14}pt; '
+            'font:600 7pt Arial; color:#0369a1;">'
+            f"{slot_index}</div>"
+        )
+    return "\n".join(guide_parts)
 
 
 def _estimate_text_width(text: str, font_size: float, weight: str = "regular") -> float:
@@ -687,6 +780,7 @@ def _ensure_playwright_chromium_installed() -> str | None:
             check=True,
             capture_output=True,
             text=True,
+            timeout=45,
         )
         return "Playwright Chromium install/check completed successfully."
     except Exception as exc:
@@ -726,6 +820,8 @@ def _merge_pdf_bytes(pdf_pages: list[bytes]) -> bytes:
 def render_sams_price_strips_pdf(
     strip_rows: list[SamsPriceStripRow],
     generated_by: str = "Kendal King",
+    template_name: str | None = None,
+    calibration: bool = False,
 ) -> SamsPriceStripPdfResult:
     """
     Render Sam's Club price strips to PDF using Playwright/Chromium with Gibson OTF fonts.
@@ -745,6 +841,9 @@ def render_sams_price_strips_pdf(
     )
 
     warnings.append(f"HTML renderer received {len(strip_rows)} strip rows.")
+    if is_sams_holiday_template(template_name):
+        warnings.append(f"Using Sam's price strip template: {SAMS_HOLIDAY_TEMPLATE.name}")
+        warnings.extend(validate_holiday_rows(strip_rows))
 
     if not PLAYWRIGHT_AVAILABLE:
         warnings.append(
@@ -778,9 +877,9 @@ def render_sams_price_strips_pdf(
         )
 
     try:
-        htmls = _build_full_html(strip_rows, warnings)
+        htmls = _build_full_html(strip_rows, warnings, template_name, calibration)
         pdf_bytes, rendered_pages, rendered_segments = asyncio.run(
-            _render_strips_async(htmls, strip_rows, warnings)
+            _render_strips_async(htmls, strip_rows, warnings, template_name)
         )
     except Exception as exc:
         warnings.append(f"HTML/Playwright renderer failed: {exc}")
@@ -796,12 +895,25 @@ def render_sams_price_strips_pdf(
     )
 
 
-def _build_full_html(strip_rows: list[SamsPriceStripRow], warnings: list[str]) -> list[str]:
+def _build_full_html(
+    strip_rows: list[SamsPriceStripRow],
+    warnings: list[str],
+    template_name: str | None = None,
+    calibration: bool = False,
+) -> list[str]:
     """Build all HTML strings synchronously before Playwright processing."""
     htmls = []
     for row_data in strip_rows:
-        strip_w, strip_h, footer_h = compute_strip_canvas(row_data, warnings)
-        html_content = _generate_strip_html(row_data, strip_w, strip_h, footer_h, warnings)
+        strip_w, strip_h, footer_h = compute_strip_canvas(row_data, warnings, template_name)
+        html_content = _generate_strip_html(
+            row_data,
+            strip_w,
+            strip_h,
+            footer_h,
+            warnings,
+            template_name=template_name,
+            calibration=calibration,
+        )
         htmls.append(html_content)
     warnings.append(f"HTML renderer built {len(htmls)} row HTML documents.")
     return htmls
@@ -811,6 +923,7 @@ async def _render_strips_async(
     htmls: list[str],
     strip_rows: list[SamsPriceStripRow],
     warnings: list[str],
+    template_name: str | None = None,
 ) -> tuple[bytes, int, int]:
     """Render strips asynchronously using Playwright and merge into one PDF."""
     rendered_segments = 0
@@ -821,10 +934,10 @@ async def _render_strips_async(
         try:
             for idx, row_data in enumerate(strip_rows):
                 html_content = htmls[idx]
-                strip_w, strip_h, _footer_h = compute_strip_canvas(row_data, warnings)
+                strip_w, strip_h, _footer_h = compute_strip_canvas(row_data, warnings, template_name)
                 page_pdf = await _render_page_to_pdf(browser, html_content, strip_w, strip_h)
                 page_pdfs.append(page_pdf)
-                rendered_segments += len(row_data.segments)
+                rendered_segments += sum(1 for segment in row_data.segments if not segment.is_empty)
         finally:
             await browser.close()
 
@@ -885,7 +998,15 @@ async def _render_page_to_pdf(
         await page.close()
 
 
-def _generate_strip_html(row_data: SamsPriceStripRow, strip_w: float, strip_h: float, footer_h: float, warnings: list[str]) -> str:
+def _generate_strip_html(
+    row_data: SamsPriceStripRow,
+    strip_w: float,
+    strip_h: float,
+    footer_h: float,
+    warnings: list[str],
+    template_name: str | None = None,
+    calibration: bool = False,
+) -> str:
     """
     Generate HTML containing div-based price strip with Gibson fonts.
     """
@@ -919,6 +1040,11 @@ def _generate_strip_html(row_data: SamsPriceStripRow, strip_w: float, strip_h: f
 }}
 """
 
+    holiday_mode = is_sams_holiday_template(template_name)
+    holiday_geometry: SamsHolidaySideGeometry | None = None
+    if holiday_mode:
+        holiday_geometry = holiday_geometry_for_side(row_data.side)
+
     layout_profile = _resolve_layout_profile(strip_w, strip_h, warnings)
     page_w = strip_w + (_BLEED_PT * 2)
     page_h = strip_h + (_BLEED_PT * 2)
@@ -928,12 +1054,16 @@ def _generate_strip_html(row_data: SamsPriceStripRow, strip_w: float, strip_h: f
     trim_top = _BLEED_PT
     trim_right = _BLEED_PT + strip_w
     trim_bottom = _BLEED_PT + strip_h
-    positions = _resolve_ticket_positions_from_profile(
-        strip_w,
-        len(row_data.segments),
-        layout_profile,
-        row_data,
-        warnings,
+    positions = (
+        _resolve_holiday_ticket_positions(row_data)
+        if holiday_mode
+        else _resolve_ticket_positions_from_profile(
+            strip_w,
+            len(row_data.segments),
+            layout_profile,
+            row_data,
+            warnings,
+        )
     )
     ticket_y = footer_h
     ticket_h = strip_h - footer_h
@@ -957,13 +1087,37 @@ def _generate_strip_html(row_data: SamsPriceStripRow, strip_w: float, strip_h: f
     for idx, segment in enumerate(row_data.segments):
         if idx >= len(positions):
             break
+        if segment.is_empty:
+            continue
         x, ticket_w = positions[idx]
-        ticket_html, desc_block_left = _generate_ticket_html(segment, x, ticket_y, ticket_w, ticket_h, layout_profile)
+        slot_center_x = x + (ticket_w / 2.0)
+        ticket_html, desc_block_left = _generate_ticket_html(
+            segment,
+            x,
+            ticket_y,
+            ticket_w,
+            ticket_h,
+            layout_profile,
+            slot_center_x=slot_center_x if holiday_mode else None,
+            center_main_amount=holiday_mode,
+        )
         ticket_htmls.append(ticket_html)
-        if idx == 0:
+        if len(ticket_htmls) == 1:
             footer_left_pt = x + desc_block_left
 
     footer_text = _resolve_strip_footer_text(row_data)
+    calibration_html = (
+        _generate_holiday_calibration_guides(
+            row_data,
+            holiday_geometry,
+            strip_w,
+            strip_h,
+            ticket_y,
+            ticket_h,
+        )
+        if calibration and holiday_geometry is not None
+        else ""
+    )
 
     html_parts = [
         "<!DOCTYPE html>",
@@ -1177,6 +1331,7 @@ html, body {{
             f'top: {trim_bottom + crop_mark_gap}pt; height: {crop_mark_len}pt;"></div>'
         ),
         '<div class="trim-artwork">',
+        calibration_html,
         "\n".join(ticket_htmls),
         f'<div class="footer">{html.escape(footer_text)}</div>',
         "</div>",
@@ -1194,6 +1349,8 @@ def _generate_ticket_html(
     w: float,
     h: float,
     layout_profile: dict,
+    slot_center_x: float | None = None,
+    center_main_amount: bool = False,
 ) -> tuple[str, float]:
     """
     Generate HTML divs for one ticket block with fixed layout positions.
@@ -1229,6 +1386,8 @@ def _generate_ticket_html(
     price_cents_size = _profile_number(layout_profile, "price", "cents_size_pt", 36.0)
     price_sign_margin = _profile_number(layout_profile, "price", "dollar_sign_margin_right_pt", 0.6)
     price_cents_margin = _profile_number(layout_profile, "price", "cents_margin_left_pt", 0.6)
+    dollar_sign_w = _estimate_text_width("$", price_sign_size, "semibold")
+    dollars_w = _estimate_text_width(dollars, price_dollars_size, "semibold")
     price_object_w = _estimate_price_object_width(
         dollars,
         cents,
@@ -1240,6 +1399,14 @@ def _generate_ticket_html(
     )
     max_price_x = max(pad_x, w - pad_x - price_object_w)
     price_x = max(pad_x, min(price_x, max_price_x))
+    if center_main_amount and slot_center_x is not None:
+        dollars_left_abs = _calculate_centered_dollars_left(
+            slot_center_x,
+            dollars,
+            price_dollars_size,
+        )
+        centered_price_x = dollars_left_abs - x - dollar_sign_w - price_sign_margin
+        price_x = max(pad_x, min(centered_price_x, max_price_x))
     price_box_w = max(20.0, w - price_x - pad_x)
 
     brand_left = _profile_field_number(layout_profile, "brand", "left_pt", old_text_x)
@@ -1293,8 +1460,6 @@ def _generate_ticket_html(
         item_w_target = max(item_w_target, w * item_width_ratio_from_field)
     item_w = min(item_w_target, max(8.0, w - (2 * pad_x)))
     if item_anchor == "cents_left":
-        dollar_sign_w = _estimate_text_width("$", _profile_number(layout_profile, "price", "dollar_sign_size_pt", 30.0), "semibold")
-        dollars_w = _estimate_text_width(dollars, _profile_number(layout_profile, "price", "dollars_size_pt", 90.0), "semibold")
         dollar_sign_margin = _profile_number(layout_profile, "price", "dollar_sign_margin_right_pt", 0.6)
         cents_margin = _profile_number(layout_profile, "price", "cents_margin_left_pt", 0.6)
         item_left = price_x + dollar_sign_w + dollar_sign_margin + dollars_w + cents_margin + item_anchor_offset
