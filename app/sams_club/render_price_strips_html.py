@@ -564,6 +564,123 @@ def _is_single_digit_dollar_amount(dollars_text: str) -> bool:
         return False
 
 
+class _HolidayDescriptionFit(NamedTuple):
+    lines: tuple[str, str, str]
+    font_size: float
+    left: float
+    top: float
+    width: float
+
+
+def _split_oversized_word(word: str, font_size: float, max_width: float, weight: str = "regular") -> list[str]:
+    if _estimate_text_width(word, font_size, weight) <= max_width:
+        return [word]
+
+    pieces: list[str] = []
+    current = ""
+    for char in word:
+        candidate = f"{current}{char}"
+        if current and _estimate_text_width(candidate, font_size, weight) > max_width:
+            pieces.append(current)
+            current = char
+        else:
+            current = candidate
+    if current:
+        pieces.append(current)
+    return pieces
+
+
+def _wrap_holiday_description_words(
+    text_parts: list[str],
+    font_size: float,
+    max_width: float,
+    max_lines: int,
+) -> tuple[str, ...] | None:
+    words: list[str] = []
+    for text in text_parts:
+        for word in str(text or "").split():
+            words.extend(_split_oversized_word(word, font_size, max_width))
+
+    if not words:
+        return tuple("" for _ in range(max_lines))
+
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = word if not current else f"{current} {word}"
+        if _estimate_text_width(candidate, font_size, "semibold") <= max_width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        if len(lines) >= max_lines:
+            return None
+        current = word
+    if current:
+        lines.append(current)
+    if len(lines) > max_lines:
+        return None
+    return tuple(lines + [""] * (max_lines - len(lines)))
+
+
+def fit_holiday_description_text(
+    brand: str,
+    desc_1: str,
+    desc_2: str,
+    slot_x: float,
+    slot_width: float,
+    description_left: float,
+    description_top: float,
+    description_width: float,
+    font_size: float,
+    price_group_left_x: float,
+) -> _HolidayDescriptionFit:
+    text_parts = [part.strip() for part in (brand, desc_1, desc_2)]
+    max_lines = SAMS_HOLIDAY_TEMPLATE.description_max_lines
+    min_gap = SAMS_HOLIDAY_TEMPLATE.minimum_description_to_price_gap_pt
+    slot_safe_left = slot_x
+    slot_safe_right = slot_x + slot_width - SAMS_HOLIDAY_TEMPLATE.sku_inset_pt
+
+    normal_lines = tuple(text_parts + [""] * (max_lines - len(text_parts)))[:max_lines]
+    normal_fits = all(
+        _estimate_text_width(line, font_size, "semibold" if index == 0 else "regular") <= description_width
+        for index, line in enumerate(normal_lines)
+    )
+    if normal_fits:
+        return _HolidayDescriptionFit(normal_lines, font_size, description_left, description_top, description_width)
+
+    extra_width = SAMS_HOLIDAY_TEMPLATE.long_description_extra_width_pt
+    left_shift = SAMS_HOLIDAY_TEMPLATE.long_description_left_shift_pt
+    up_shift = SAMS_HOLIDAY_TEMPLATE.long_description_up_shift_pt
+    min_font_size = SAMS_HOLIDAY_TEMPLATE.description_min_font_size_pt
+
+    candidates: list[tuple[float, float, float]] = [
+        (description_left, description_top, description_width),
+        (description_left, description_top, description_width + extra_width),
+        (description_left - left_shift, description_top, description_width + extra_width),
+        (description_left - left_shift, description_top - up_shift, description_width + extra_width),
+    ]
+    font_sizes = [font_size, 13.0, min_font_size]
+
+    for candidate_font_size in font_sizes:
+        for candidate_left, candidate_top, candidate_width in candidates:
+            safe_left = max(slot_safe_left, candidate_left)
+            max_width = max(8.0, min(candidate_width, slot_safe_right - safe_left))
+            if safe_left > price_group_left_x - min_gap:
+                continue
+            if max_width < 8.0:
+                continue
+            wrapped = _wrap_holiday_description_words(text_parts, candidate_font_size, max_width, max_lines)
+            if wrapped is not None:
+                return _HolidayDescriptionFit(wrapped, candidate_font_size, safe_left, candidate_top, max_width)
+
+    full_text = " ".join(part for part in text_parts if part)
+    raise ValueError(
+        "Sam's Holiday description does not fit within the slot without truncation: "
+        f"{full_text!r}"
+    )
+
+
 def _resolve_strip_footer_text(row_data: SamsPriceStripRow) -> str:
     raw = row_data.footer_text.strip()
     if raw and raw.lower() not in {"nan", "none", "null"}:
@@ -1536,11 +1653,25 @@ def _generate_ticket_html(
             w,
             dollars,
         )
-        desc_block_left = desc_block_left_abs - x
-        desc_block_w = min(desc_block_w, max_desc_w)
-        brand = _truncate_svg_text(brand, brand_size, desc_block_w, _font_weight_name(brand_weight))
-        desc_1 = _truncate_svg_text(desc_1, desc_1_size, desc_block_w, _font_weight_name(desc_1_weight))
-        desc_2 = _truncate_svg_text(desc_2, desc_2_size, desc_block_w, _font_weight_name(desc_2_weight))
+        fit = fit_holiday_description_text(
+            brand,
+            desc_1,
+            desc_2,
+            x,
+            w,
+            desc_block_left_abs,
+            brand_top,
+            max_desc_w,
+            desc_1_size,
+            x + price_x,
+        )
+        brand, desc_1, desc_2 = fit.lines
+        desc_block_left = fit.left - x
+        desc_block_w = fit.width
+        brand_top = fit.top
+        desc_1_top = fit.top + (SAMS_HOLIDAY_TEMPLATE.description_top_pt - SAMS_HOLIDAY_TEMPLATE.brand_top_pt)
+        desc_2_top = fit.top + (SAMS_HOLIDAY_TEMPLATE.pack_range_top_pt - SAMS_HOLIDAY_TEMPLATE.brand_top_pt)
+        brand_size = desc_1_size = desc_2_size = fit.font_size
     else:
         desc_block_left, desc_block_w = _fit_line_box_left_and_width(
             desc_block_left,
