@@ -272,7 +272,10 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         self.assertNotIn("...", html)
         self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.description_font_size_pt, 18.0)
         self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.price_dollar_sign_font_size_pt, 38.0)
-        self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.price_dollars_font_size_pt, 106.0)
+        self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.brand_top_pt, 55.5)
+        self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.description_top_pt, 70.9)
+        self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.pack_range_top_pt, 86.3)
+        self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.price_dollars_font_size_pt, 110.0)
         self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.price_cents_font_size_pt, 44.0)
         self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.footer_font_size_pt, 8.0)
         self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.sku_font_size_pt, 9.0)
@@ -633,10 +636,10 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         desc_tops = re.findall(r'class="field desc-field" style="[^"]* top: ([0-9.]+)pt;', html)
 
         self.assertGreaterEqual(len(brand_tops), 3)
-        self.assertEqual(set(brand_tops[:3]), {"59.5"})
+        self.assertEqual(set(brand_tops[:3]), {str(SAMS_HOLIDAY_TEMPLATE.brand_top_pt)})
         self.assertGreaterEqual(len(desc_tops), 6)
-        self.assertEqual(set(desc_tops[0::2][:3]), {"74.9"})
-        self.assertEqual(set(desc_tops[1::2][:3]), {"90.3"})
+        self.assertEqual(set(desc_tops[0::2][:3]), {str(SAMS_HOLIDAY_TEMPLATE.description_top_pt)})
+        self.assertEqual(set(desc_tops[1::2][:3]), {str(SAMS_HOLIDAY_TEMPLATE.pack_range_top_pt)})
 
 
 if __name__ == "__main__":
