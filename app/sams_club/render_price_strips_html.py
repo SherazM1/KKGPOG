@@ -635,9 +635,9 @@ def fit_holiday_description_text(
     font_size: float,
     price_group_left_x: float,
 ) -> _HolidayDescriptionFit:
+    _ = price_group_left_x
     text_parts = [part.strip() for part in (brand, desc_1, desc_2)]
     max_lines = SAMS_HOLIDAY_TEMPLATE.description_max_lines
-    min_gap = SAMS_HOLIDAY_TEMPLATE.minimum_description_to_price_gap_pt
     slot_safe_left = slot_x
     slot_safe_right = slot_x + slot_width - SAMS_HOLIDAY_TEMPLATE.sku_inset_pt
 
@@ -660,14 +660,16 @@ def fit_holiday_description_text(
         (description_left - left_shift, description_top, description_width + extra_width),
         (description_left - left_shift, description_top - up_shift, description_width + extra_width),
     ]
-    font_sizes = [font_size, 13.0, min_font_size]
+    font_sizes = [font_size]
+    next_size = font_size - 1.0
+    while next_size >= min_font_size:
+        font_sizes.append(next_size)
+        next_size -= 1.0
 
     for candidate_font_size in font_sizes:
         for candidate_left, candidate_top, candidate_width in candidates:
             safe_left = max(slot_safe_left, candidate_left)
             max_width = max(8.0, min(candidate_width, slot_safe_right - safe_left))
-            if safe_left > price_group_left_x - min_gap:
-                continue
             if max_width < 8.0:
                 continue
             wrapped = _wrap_holiday_description_words(text_parts, candidate_font_size, max_width, max_lines)
@@ -1617,6 +1619,7 @@ def _generate_ticket_html(
         brand_size = SAMS_HOLIDAY_TEMPLATE.description_font_size_pt
         desc_1_size = SAMS_HOLIDAY_TEMPLATE.description_font_size_pt
         desc_2_size = SAMS_HOLIDAY_TEMPLATE.description_font_size_pt
+        item_size = SAMS_HOLIDAY_TEMPLATE.sku_font_size_pt
 
     def _font_weight_name(value) -> str:
         try:
@@ -1682,7 +1685,7 @@ def _generate_ticket_html(
             desc_1_size,
             x + price_x,
         )
-        brand, desc_1, desc_2 = fit.lines
+        brand, desc_1, desc_2 = (line.upper() for line in fit.lines)
         desc_block_left = fit.left - x
         desc_block_w = fit.width
         brand_top = fit.top

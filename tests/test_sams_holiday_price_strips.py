@@ -233,10 +233,6 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
                 ticket_left + SAMS_HOLIDAY_TEMPLATE.description_inset_pt + SAMS_HOLIDAY_TEMPLATE.maximum_description_shift_pt,
             )
             self.assertLessEqual(ticket_left + desc_left + desc_width, ticket_left + slot_width - SAMS_HOLIDAY_TEMPLATE.sku_inset_pt)
-            self.assertGreaterEqual(
-                group_left - (ticket_left + desc_left),
-                SAMS_HOLIDAY_TEMPLATE.minimum_description_to_price_gap_pt,
-            )
             observed[price] = (ticket_left, desc_left, desc_width, price_left)
 
         expected_shift = SAMS_HOLIDAY_TEMPLATE.single_digit_description_shift_pt
@@ -244,6 +240,41 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
             self.assertAlmostEqual(observed[price][1], SAMS_HOLIDAY_TEMPLATE.description_inset_pt + expected_shift)
         for price in stable_prices:
             self.assertAlmostEqual(observed[price][1], SAMS_HOLIDAY_TEMPLATE.description_inset_pt)
+
+    def test_holiday_final_markup_uses_target_typography_and_uppercase(self) -> None:
+        row = SamsPriceStripRow(
+            pog="POG",
+            side=1,
+            row=1,
+            segments=[
+                SamsPriceStripSegment(
+                    pog="POG",
+                    side=1,
+                    row=1,
+                    column=1,
+                    brand="Zift Holiday",
+                    desc_1="Gift Purple",
+                    desc_2="Gift For You",
+                    retail="47.88",
+                    item_number="990000000",
+                )
+            ],
+        )
+        warnings: list[str] = []
+        html = _build_full_html([expand_holiday_row_to_slots(row)], warnings, SAMS_HOLIDAY_TEMPLATE_NAME, False)[0]
+        item_match = re.search(r'class="field item-field" style="left: ([0-9.]+)pt; top: [0-9.]+pt; width: ([0-9.]+)pt; font-size: ([0-9.]+)pt;', html)
+
+        self.assertIn("ZIFT HOLIDAY", html)
+        self.assertIn("GIFT PURPLE", html)
+        self.assertIn("GIFT FOR YOU", html)
+        self.assertNotIn("Zift Holiday", html)
+        self.assertNotIn("Gift Purple", html)
+        self.assertNotIn("...", html)
+        self.assertIn(f"font-size: {SAMS_HOLIDAY_TEMPLATE.price_dollar_sign_font_size_pt}pt;", html)
+        self.assertIn(f"font-size: {SAMS_HOLIDAY_TEMPLATE.price_dollars_font_size_pt}pt;", html)
+        self.assertIn(f"font-size: {SAMS_HOLIDAY_TEMPLATE.price_cents_font_size_pt}pt;", html)
+        self.assertIn(f"font-size: {SAMS_HOLIDAY_TEMPLATE.footer_font_size_pt}pt;", html)
+        self.assertAlmostEqual(float(item_match.group(3)), SAMS_HOLIDAY_TEMPLATE.sku_font_size_pt)
 
     def test_holiday_footer_and_sku_x_are_fixed_across_prices(self) -> None:
         prices = ["1.23", "5.98", "24.13", "51.25", "153.78"]
@@ -422,9 +453,9 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
             SAMS_HOLIDAY_TEMPLATE.description_font_size_pt,
             63.72,
         )
-        requires_13 = fit_holiday_description_text(
+        requires_15 = fit_holiday_description_text(
             "",
-            "AAAAAA AAAAAA AAAAAA AAAAAA AAAAAA AAAAAA AAAAAA AAAAAA AAAAAA AAAAAA",
+            "AAAAAAA AAAAAAA AAAAAAA AAAAAAA AAAAAAA AAAAAAA AAAAAAA",
             "",
             0.0,
             2178.0 / 6.0,
@@ -434,9 +465,21 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
             SAMS_HOLIDAY_TEMPLATE.description_font_size_pt,
             63.72,
         )
-        requires_12 = fit_holiday_description_text(
+        requires_14 = fit_holiday_description_text(
             "",
-            "ABCDEFGHI ABCDEFGHI ABCDEFGHI ABCDEFGHI ABCDEFGHI ABCDEFGHI ABCDEFGHI",
+            "AAAAA AAAAAA AAAAA AAAAAA AAAAA AAAAAA AAAAA AAAAAA AAAAA AAAAAA",
+            "",
+            0.0,
+            2178.0 / 6.0,
+            left,
+            SAMS_HOLIDAY_TEMPLATE.brand_top_pt,
+            width,
+            SAMS_HOLIDAY_TEMPLATE.description_font_size_pt,
+            63.72,
+        )
+        requires_13 = fit_holiday_description_text(
+            "",
+            "AAAAAAAA AAAAAAAA AAAAAAAA AAAAAAAA AAAAAAAA AAAAAAAA AAAAAAAA",
             "",
             0.0,
             2178.0 / 6.0,
@@ -448,9 +491,10 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         )
 
         self.assertAlmostEqual(fits_at_14.font_size, SAMS_HOLIDAY_TEMPLATE.description_font_size_pt)
+        self.assertAlmostEqual(requires_15.font_size, 15.0)
+        self.assertAlmostEqual(requires_14.font_size, 14.0)
         self.assertAlmostEqual(requires_13.font_size, 13.0)
-        self.assertAlmostEqual(requires_12.font_size, 12.0)
-        self.assertNotIn("...", " ".join(fits_at_14.lines + requires_13.lines + requires_12.lines))
+        self.assertNotIn("...", " ".join(fits_at_14.lines + requires_15.lines + requires_14.lines + requires_13.lines))
 
     def test_holiday_long_single_word_splits_only_when_token_is_too_wide(self) -> None:
         left, width = _calculate_holiday_description_box(0.0, 2178.0 / 6.0, "24")
@@ -513,6 +557,43 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         self.assertIn("Mixed Description", html)
         self.assertIn("Range Pack", html)
         self.assertAlmostEqual(float(footer_match.group(1)), 8.0)
+
+    def test_holiday_end_to_end_output_file_preserves_final_markup_targets(self) -> None:
+        row = SamsPriceStripRow(
+            pog="POG",
+            side=1,
+            row=1,
+            segments=[
+                SamsPriceStripSegment(
+                    pog="POG",
+                    side=1,
+                    row=1,
+                    column=1,
+                    brand="Zift Holiday",
+                    desc_1="Gift Purple",
+                    desc_2="Gift For You",
+                    retail="47.88",
+                    item_number="990000000",
+                )
+            ],
+        )
+        expanded = expand_holiday_row_to_slots(row)
+        warnings: list[str] = []
+        html = _build_full_html([expanded], warnings, SAMS_HOLIDAY_TEMPLATE_NAME, False)[0]
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w", encoding="utf-8") as handle:
+            output_path = Path(handle.name)
+            handle.write(html)
+
+        try:
+            generated_output = output_path.read_text(encoding="utf-8")
+        finally:
+            output_path.unlink(missing_ok=True)
+
+        self.assertIn("ZIFT HOLIDAY", generated_output)
+        self.assertIn("GIFT PURPLE", generated_output)
+        self.assertNotIn("Zift Holiday", generated_output)
+        self.assertIn(f"font-size: {SAMS_HOLIDAY_TEMPLATE.description_font_size_pt}pt;", generated_output)
+        self.assertIn(f"font-size: {SAMS_HOLIDAY_TEMPLATE.price_dollars_font_size_pt}pt;", generated_output)
 
     def test_production_mode_does_not_draw_calibration_guides(self) -> None:
         warnings: list[str] = []

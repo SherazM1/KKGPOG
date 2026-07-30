@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from app.sams_club.extract_price_strips import build_sams_price_strip_rows
+from app.sams_club.holiday_price_strips import is_sams_holiday_template
 from app.sams_club.render_planogram import render_sams_planogram_pdf
 from app.sams_club.service import build_sams_planogram_structure, detect_sams_pogs
 from app.shared.constants import DISPLAY_FULL_PALLET, DISPLAY_SAMS_CLUB, DISPLAY_STANDARD
@@ -105,8 +106,8 @@ def _build_sams_price_strip_rows_compat(source_file: object, template_name: str 
 # Renderer toggle: set to True to use the new HTML/Playwright renderer, False for the old ReportLab renderer
 USE_HTML_PRICE_STRIP_RENDERER = True
 
-def _load_sams_price_strip_renderer():
-    if USE_HTML_PRICE_STRIP_RENDERER:
+def _load_sams_price_strip_renderer(template_name: str | None = None):
+    if USE_HTML_PRICE_STRIP_RENDERER or is_sams_holiday_template(template_name):
         from app.sams_club.render_price_strips_html import render_sams_price_strips_pdf
     else:
         from app.sams_club.render_price_strips import render_sams_price_strips_pdf
@@ -500,7 +501,7 @@ def main() -> None:
                     st.session_state["sams_price_strip_pdf_result"] = None
                 else:
                     with st.spinner("Rendering Sam's price strips PDF..."):
-                        render_sams_price_strips_pdf = _load_sams_price_strip_renderer()
+                        render_sams_price_strips_pdf = _load_sams_price_strip_renderer(sams_price_strip_template)
                         st.session_state["sams_price_strip_pdf_result"] = render_sams_price_strips_pdf(
                             strip_build.strip_rows,
                             generated_by="Kendal King",
