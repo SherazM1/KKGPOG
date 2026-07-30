@@ -9,6 +9,7 @@ import pandas as pd
 
 from app.sams_club.extract_price_strips import build_sams_price_strip_rows
 from app.sams_club.holiday_price_strips import (
+    SAMS_HOLIDAY_TEMPLATE,
     SAMS_HOLIDAY_TEMPLATE_NAME,
     expand_holiday_row_to_slots,
     holiday_geometry_for_side,
@@ -19,6 +20,7 @@ from app.sams_club.price_strip_models import SamsPriceStripRow, SamsPriceStripSe
 from app.sams_club.render_price_strips_html import (
     _build_full_html,
     _calculate_centered_price_group_left,
+    _calculate_holiday_description_box,
     _estimate_text_width,
     _estimate_price_object_width,
     _normalize_price_parts,
@@ -171,12 +173,15 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
 
         self.assert_points_close(left_x + (width / 2.0), center_x)
 
-    def test_holiday_price_group_centering_and_adaptive_description_x(self) -> None:
-        prices = ["1.23", "5.98", "47.88", "51.25", "153.78"]
-        description_lefts: list[float] = []
+    def test_holiday_description_uses_bounded_single_digit_shift(self) -> None:
+        single_digit_prices = ["1.23", "4.98", "5.98"]
+        stable_prices = ["24.13", "51.25", "153.78"]
         center_x = holiday_slot_centers_pt(holiday_geometry_for_side(1))[0]
+        slot_width = 2178.0 / 6.0
 
-        for price in prices:
+        observed: dict[str, tuple[float, float, float, float]] = {}
+
+        for price in single_digit_prices + stable_prices:
             row = SamsPriceStripRow(
                 pog="POG",
                 side=1,
@@ -205,12 +210,56 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
             group_left = ticket_left + price_left
 
             self.assert_points_close(group_left + (group_width / 2.0), center_x)
-            self.assertAlmostEqual(ticket_left + desc_left, group_left, delta=6.0)
-            self.assertGreaterEqual(ticket_left + desc_left, ticket_left + 6.0)
-            self.assertLessEqual(ticket_left + desc_left + desc_width, ticket_left + (2178.0 / 6.0) - 6.0)
-            description_lefts.append(ticket_left + desc_left)
+            self.assertGreaterEqual(ticket_left + desc_left, ticket_left + SAMS_HOLIDAY_TEMPLATE.description_inset_pt)
+            self.assertLessEqual(
+                ticket_left + desc_left,
+                ticket_left + SAMS_HOLIDAY_TEMPLATE.description_inset_pt + SAMS_HOLIDAY_TEMPLATE.maximum_description_shift_pt,
+            )
+            self.assertLessEqual(ticket_left + desc_left + desc_width, ticket_left + slot_width - SAMS_HOLIDAY_TEMPLATE.sku_inset_pt)
+            self.assertGreaterEqual(
+                group_left - (ticket_left + desc_left),
+                SAMS_HOLIDAY_TEMPLATE.minimum_description_to_price_gap_pt,
+            )
+            observed[price] = (ticket_left, desc_left, desc_width, price_left)
 
-        self.assertGreater(description_lefts[0], description_lefts[-1])
+        expected_shift = SAMS_HOLIDAY_TEMPLATE.single_digit_description_shift_pt
+        for price in single_digit_prices:
+            self.assertAlmostEqual(observed[price][1], SAMS_HOLIDAY_TEMPLATE.description_inset_pt + expected_shift)
+        for price in stable_prices:
+            self.assertAlmostEqual(observed[price][1], SAMS_HOLIDAY_TEMPLATE.description_inset_pt)
+
+    def test_holiday_footer_and_sku_x_are_fixed_across_prices(self) -> None:
+        prices = ["1.23", "5.98", "24.13", "51.25", "153.78"]
+        footer_lefts: list[float] = []
+        sku_rights: list[float] = []
+
+        for price in prices:
+            row = SamsPriceStripRow(
+                pog="POG",
+                side=1,
+                row=1,
+                segments=[
+                    SamsPriceStripSegment(
+                        pog="POG",
+                        side=1,
+                        row=1,
+                        column=1,
+                        brand="BRAND",
+                        desc_1="DESCRIPTION",
+                        desc_2="PACK",
+                        retail=price,
+                        item_number="990000000",
+                    )
+                ],
+            )
+            warnings: list[str] = []
+            html = _build_full_html([expand_holiday_row_to_slots(row)], warnings, SAMS_HOLIDAY_TEMPLATE_NAME, False)[0]
+            footer_lefts.append(float(re.search(r'\.footer \{[^}]*left: ([0-9.]+)pt;', html).group(1)))
+            item_match = re.search(r'class="field item-field" style="left: ([0-9.]+)pt; top: [0-9.]+pt; width: ([0-9.]+)pt;', html)
+            sku_rights.append(float(item_match.group(1)) + float(item_match.group(2)))
+
+        self.assertEqual(len(set(footer_lefts)), 1)
+        self.assertEqual(len({round(value, 5) for value in sku_rights}), 1)
 
     def test_holiday_long_three_line_description_stays_inside_slot(self) -> None:
         row = SamsPriceStripRow(

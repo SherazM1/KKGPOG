@@ -535,14 +535,33 @@ def _calculate_centered_price_group_left(
 def _calculate_holiday_description_box(
     slot_x: float,
     slot_width: float,
-    price_group_left_x: float,
+    dollars_text: str,
 ) -> tuple[float, float]:
-    safe_left = slot_x + SAMS_HOLIDAY_TEMPLATE.description_safe_margin_pt
-    safe_right = slot_x + slot_width - SAMS_HOLIDAY_TEMPLATE.description_safe_margin_pt
-    desired_left = price_group_left_x + SAMS_HOLIDAY_TEMPLATE.description_left_adjustment_pt
-    description_left = max(safe_left, min(desired_left, safe_right - 8.0))
-    description_width = max(8.0, safe_right - description_left)
+    base_left = slot_x + SAMS_HOLIDAY_TEMPLATE.description_inset_pt
+    shift = (
+        min(
+            SAMS_HOLIDAY_TEMPLATE.single_digit_description_shift_pt,
+            SAMS_HOLIDAY_TEMPLATE.maximum_description_shift_pt,
+        )
+        if _is_single_digit_dollar_amount(dollars_text)
+        else 0.0
+    )
+    desired_left = base_left + shift
+    max_left = base_left + SAMS_HOLIDAY_TEMPLATE.maximum_description_shift_pt
+    safe_right = slot_x + slot_width - SAMS_HOLIDAY_TEMPLATE.sku_inset_pt
+    description_left = max(base_left, min(desired_left, max_left))
+    description_width = min(
+        SAMS_HOLIDAY_TEMPLATE.description_box_width_pt,
+        max(8.0, safe_right - description_left),
+    )
     return description_left, description_width
+
+
+def _is_single_digit_dollar_amount(dollars_text: str) -> bool:
+    try:
+        return 0 <= int(str(dollars_text).strip()) <= 9
+    except ValueError:
+        return False
 
 
 def _resolve_strip_footer_text(row_data: SamsPriceStripRow) -> str:
@@ -1487,6 +1506,9 @@ def _generate_ticket_html(
         dollar_sign_margin = _profile_number(layout_profile, "price", "dollar_sign_margin_right_pt", 0.6)
         cents_margin = _profile_number(layout_profile, "price", "cents_margin_left_pt", 0.6)
         item_left = price_x + dollar_sign_w + dollar_sign_margin + dollars_w + cents_margin + item_anchor_offset
+    if center_main_amount:
+        item_w = min(item_w, max(8.0, w - (2 * SAMS_HOLIDAY_TEMPLATE.sku_inset_pt)))
+        item_left = w - SAMS_HOLIDAY_TEMPLATE.sku_inset_pt - item_w
     item_left = max(pad_x, min(item_left, w - pad_x - item_w))
     desc_1_w = min(max(8.0, w * desc_1_width_ratio), max(8.0, w - desc_1_left))
     desc_2_w = min(max(8.0, w * desc_2_width_ratio), max(8.0, w - desc_2_left))
@@ -1501,14 +1523,6 @@ def _generate_ticket_html(
         desc_2 = (segment.desc_2 or "-").strip() or "-"
     desc_block_left = min(brand_left, desc_1_left, desc_2_left)
     desc_block_w = max(brand_w, desc_1_w, desc_2_w)
-    if center_main_amount and slot_center_x is not None:
-        price_group_left_abs = x + price_x
-        desc_block_left_abs, desc_block_w = _calculate_holiday_description_box(
-            x,
-            w,
-            price_group_left_abs,
-        )
-        desc_block_left = desc_block_left_abs - x
     desc_block_safe_right = max(8.0, item_left - 8.0)
     desc_block_w = max(
         desc_block_w,
@@ -1520,7 +1534,7 @@ def _generate_ticket_html(
         desc_block_left_abs, max_desc_w = _calculate_holiday_description_box(
             x,
             w,
-            x + price_x,
+            dollars,
         )
         desc_block_left = desc_block_left_abs - x
         desc_block_w = min(desc_block_w, max_desc_w)
@@ -1567,7 +1581,12 @@ def _generate_ticket_html(
 </div>
 """
 
-    return ticket_html.strip(), desc_block_left
+    footer_anchor_left = (
+        SAMS_HOLIDAY_TEMPLATE.footer_inset_pt
+        if center_main_amount
+        else desc_block_left
+    )
+    return ticket_html.strip(), footer_anchor_left
 
 
 def _font_file_to_data_uri(font_path: Path) -> str:

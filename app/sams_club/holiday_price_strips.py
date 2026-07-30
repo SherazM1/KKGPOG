@@ -38,8 +38,13 @@ class SamsHolidayTemplate:
     brand_top_pt: float
     description_top_pt: float
     pack_range_top_pt: float
-    description_left_adjustment_pt: float
-    description_safe_margin_pt: float
+    description_inset_pt: float
+    single_digit_description_shift_pt: float
+    maximum_description_shift_pt: float
+    minimum_description_to_price_gap_pt: float
+    description_box_width_pt: float
+    footer_inset_pt: float
+    sku_inset_pt: float
     center_price_amount: bool = True
 
 
@@ -65,8 +70,13 @@ SAMS_HOLIDAY_TEMPLATE = SamsHolidayTemplate(
     brand_top_pt=59.5,
     description_top_pt=74.9,
     pack_range_top_pt=90.3,
-    description_left_adjustment_pt=0.0,
-    description_safe_margin_pt=6.0,
+    description_inset_pt=36.0,
+    single_digit_description_shift_pt=10.0,
+    maximum_description_shift_pt=12.0,
+    minimum_description_to_price_gap_pt=18.0,
+    description_box_width_pt=170.0,
+    footer_inset_pt=36.0,
+    sku_inset_pt=18.0,
 )
 
 
