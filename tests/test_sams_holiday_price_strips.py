@@ -272,9 +272,9 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         self.assertNotIn("...", html)
         self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.description_font_size_pt, 18.0)
         self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.price_dollar_sign_font_size_pt, 38.0)
-        self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.brand_top_pt, 50.5)
-        self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.description_top_pt, 65.9)
-        self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.pack_range_top_pt, 81.3)
+        self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.brand_top_pt, 48.5)
+        self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.description_top_pt, 63.9)
+        self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.pack_range_top_pt, 79.3)
         self.assertAlmostEqual(
             SAMS_HOLIDAY_TEMPLATE.description_top_pt - SAMS_HOLIDAY_TEMPLATE.brand_top_pt,
             15.4,
