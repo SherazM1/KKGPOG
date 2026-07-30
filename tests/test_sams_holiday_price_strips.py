@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
+import pandas as pd
+
+from app.sams_club.extract_price_strips import build_sams_price_strip_rows
 from app.sams_club.holiday_price_strips import (
     SAMS_HOLIDAY_TEMPLATE_NAME,
     expand_holiday_row_to_slots,
@@ -122,6 +127,39 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         self.assert_points_close(thin_h, 247.5)
         self.assert_points_close(wide_w, 2767.5)
         self.assert_points_close(wide_h, 247.5)
+
+    def test_build_sams_price_strip_rows_accepts_holiday_template_keyword(self) -> None:
+        workbook_rows = []
+        for row in range(1, 6):
+            workbook_rows.append(
+                {
+                    "POG": "POG1",
+                    "Side": 1,
+                    "Row": row,
+                    "Column": 1,
+                    "Item Number": f"ITEM{row}",
+                    "Brand": "BRAND",
+                    "Desc 1": "DESC 1",
+                    "Desc 2": "DESC 2",
+                    "Retail": "25.00",
+                }
+            )
+
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as handle:
+            workbook_path = Path(handle.name)
+
+        try:
+            with pd.ExcelWriter(workbook_path) as writer:
+                pd.DataFrame(workbook_rows).to_excel(writer, sheet_name="Price Strip Data", index=False)
+
+            result = build_sams_price_strip_rows(workbook_path, template_name=SAMS_HOLIDAY_TEMPLATE_NAME)
+
+            self.assertEqual(result.errors, [])
+            self.assertEqual(result.debug["template_name"], SAMS_HOLIDAY_TEMPLATE_NAME)
+            self.assertEqual(len(result.strip_rows), 5)
+            self.assertTrue(all(len(row.segments) == 6 for row in result.strip_rows))
+        finally:
+            workbook_path.unlink(missing_ok=True)
 
     def test_main_amount_midpoint_equals_slot_center(self) -> None:
         center_x = holiday_slot_centers_pt(holiday_geometry_for_side(1))[0]

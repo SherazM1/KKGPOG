@@ -93,6 +93,15 @@ def _upload_contains_pdf(uploaded: object) -> bool:
     return False
 
 
+def _build_sams_price_strip_rows_compat(source_file: object, template_name: str | None = None):
+    try:
+        return build_sams_price_strip_rows(source_file, template_name=template_name)
+    except TypeError as exc:
+        if "unexpected keyword argument 'template_name'" not in str(exc):
+            raise
+        return build_sams_price_strip_rows(source_file)
+
+
 # Renderer toggle: set to True to use the new HTML/Playwright renderer, False for the old ReportLab renderer
 USE_HTML_PRICE_STRIP_RENDERER = True
 
@@ -482,7 +491,7 @@ def main() -> None:
         else:
             if generate_sams_price_strips:
                 with st.spinner("Building Sam's price strip groups..."):
-                    strip_build = build_sams_price_strip_rows(
+                    strip_build = _build_sams_price_strip_rows_compat(
                         sams_excel_file,
                         template_name=sams_price_strip_template,
                     )
