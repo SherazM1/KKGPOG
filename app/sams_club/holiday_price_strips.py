@@ -35,6 +35,9 @@ class SamsHolidayTemplate:
     name: str
     thin_side: SamsHolidaySideGeometry
     wide_side: SamsHolidaySideGeometry
+    brand_top_pt: float
+    description_top_pt: float
+    pack_range_top_pt: float
     center_price_amount: bool = True
 
 
@@ -57,6 +60,9 @@ SAMS_HOLIDAY_TEMPLATE = SamsHolidayTemplate(
         applicable_sides=(2, 4),
         excluded_cr80_rows=1,
     ),
+    brand_top_pt=59.5,
+    description_top_pt=74.9,
+    pack_range_top_pt=90.3,
 )
 
 

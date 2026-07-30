@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+import re
 
 import pandas as pd
 
@@ -181,6 +182,29 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         self.assertIn("holiday-calibration", html)
         for center in holiday_slot_centers_pt(holiday_geometry_for_side(2)):
             self.assertIn(f"left:{center}pt", html)
+
+    def test_holiday_text_y_anchors_do_not_depend_on_content(self) -> None:
+        row = SamsPriceStripRow(
+            pog="POG",
+            side=1,
+            row=1,
+            segments=[
+                SamsPriceStripSegment(pog="POG", side=1, row=1, column=1, brand="BRAND", desc_1="ONE LINE", desc_2="", retail="25.00"),
+                SamsPriceStripSegment(pog="POG", side=1, row=1, column=2, brand="BRAND", desc_1="TWO LINE", desc_2="$20-$500", retail="25.00"),
+                SamsPriceStripSegment(pog="POG", side=1, row=1, column=3, brand="", desc_1="", desc_2="", retail="25.00"),
+            ],
+        )
+        warnings: list[str] = []
+        html = _build_full_html([expand_holiday_row_to_slots(row)], warnings, SAMS_HOLIDAY_TEMPLATE_NAME, False)[0]
+
+        brand_tops = re.findall(r'class="field brand-field" style="[^"]* top: ([0-9.]+)pt;', html)
+        desc_tops = re.findall(r'class="field desc-field" style="[^"]* top: ([0-9.]+)pt;', html)
+
+        self.assertGreaterEqual(len(brand_tops), 3)
+        self.assertEqual(set(brand_tops[:3]), {"59.5"})
+        self.assertGreaterEqual(len(desc_tops), 6)
+        self.assertEqual(set(desc_tops[0::2][:3]), {"74.9"})
+        self.assertEqual(set(desc_tops[1::2][:3]), {"90.3"})
 
 
 if __name__ == "__main__":

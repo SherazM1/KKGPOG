@@ -1441,6 +1441,11 @@ def _generate_ticket_html(
     desc_2_size = _profile_field_number(layout_profile, "desc_2", "font_size_pt", _SAMS_DESC_SIZE)
     desc_2_weight = _profile_field_value(layout_profile, "desc_2", "font_weight", 400)
 
+    if center_main_amount:
+        brand_top = SAMS_HOLIDAY_TEMPLATE.brand_top_pt
+        desc_1_top = SAMS_HOLIDAY_TEMPLATE.description_top_pt
+        desc_2_top = SAMS_HOLIDAY_TEMPLATE.pack_range_top_pt
+
     def _font_weight_name(value) -> str:
         try:
             return "semibold" if int(value) >= 600 else "regular"
@@ -1467,9 +1472,14 @@ def _generate_ticket_html(
     desc_1_w = min(max(8.0, w * desc_1_width_ratio), max(8.0, w - desc_1_left))
     desc_2_w = min(max(8.0, w * desc_2_width_ratio), max(8.0, w - desc_2_left))
 
-    brand = (segment.brand or "-").strip() or "-"
-    desc_1 = (segment.desc_1 or "-").strip() or "-"
-    desc_2 = (segment.desc_2 or "-").strip() or "-"
+    if center_main_amount:
+        brand = (segment.brand or "").strip()
+        desc_1 = (segment.desc_1 or "").strip()
+        desc_2 = (segment.desc_2 or "").strip()
+    else:
+        brand = (segment.brand or "-").strip() or "-"
+        desc_1 = (segment.desc_1 or "-").strip() or "-"
+        desc_2 = (segment.desc_2 or "-").strip() or "-"
     desc_block_left = min(brand_left, desc_1_left, desc_2_left)
     desc_block_w = max(brand_w, desc_1_w, desc_2_w)
     desc_block_safe_right = max(8.0, item_left - 8.0)
