@@ -285,7 +285,7 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         )
         self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.price_dollars_font_size_pt, 110.0)
         self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.price_cents_font_size_pt, 44.0)
-        self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.price_cents_translate_y_pt, -7.0)
+        self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.price_cents_translate_y_pt, -6.0)
         self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.footer_font_size_pt, 8.0)
         self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.sku_font_size_pt, 9.0)
         self.assertIn(f"font-size: {SAMS_HOLIDAY_TEMPLATE.price_dollar_sign_font_size_pt}pt;", html)
