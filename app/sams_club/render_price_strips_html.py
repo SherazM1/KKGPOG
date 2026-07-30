@@ -1246,6 +1246,7 @@ def _generate_strip_html(
         dollar_sign_size_pt = SAMS_HOLIDAY_TEMPLATE.price_dollar_sign_font_size_pt
         dollars_size_pt = SAMS_HOLIDAY_TEMPLATE.price_dollars_font_size_pt
         cents_size_pt = SAMS_HOLIDAY_TEMPLATE.price_cents_font_size_pt
+        cents_translate_y_pt = SAMS_HOLIDAY_TEMPLATE.price_cents_translate_y_pt
         footer_font_size_pt = SAMS_HOLIDAY_TEMPLATE.footer_font_size_pt
         brand_font_size_pt = SAMS_HOLIDAY_TEMPLATE.description_font_size_pt
         desc_font_size_pt = SAMS_HOLIDAY_TEMPLATE.description_font_size_pt

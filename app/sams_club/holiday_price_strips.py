@@ -52,6 +52,7 @@ class SamsHolidayTemplate:
     price_dollar_sign_font_size_pt: float
     price_dollars_font_size_pt: float
     price_cents_font_size_pt: float
+    price_cents_translate_y_pt: float
     footer_font_size_pt: float
     sku_font_size_pt: float
     footer_inset_pt: float
@@ -95,6 +96,7 @@ SAMS_HOLIDAY_TEMPLATE = SamsHolidayTemplate(
     price_dollar_sign_font_size_pt=38.0,
     price_dollars_font_size_pt=110.0,
     price_cents_font_size_pt=44.0,
+    price_cents_translate_y_pt=-10.0,
     footer_font_size_pt=8.0,
     sku_font_size_pt=9.0,
     footer_inset_pt=36.0,

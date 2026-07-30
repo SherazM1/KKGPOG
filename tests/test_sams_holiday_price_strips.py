@@ -285,13 +285,64 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         )
         self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.price_dollars_font_size_pt, 110.0)
         self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.price_cents_font_size_pt, 44.0)
+        self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.price_cents_translate_y_pt, -10.0)
         self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.footer_font_size_pt, 8.0)
         self.assertAlmostEqual(SAMS_HOLIDAY_TEMPLATE.sku_font_size_pt, 9.0)
         self.assertIn(f"font-size: {SAMS_HOLIDAY_TEMPLATE.price_dollar_sign_font_size_pt}pt;", html)
         self.assertIn(f"font-size: {SAMS_HOLIDAY_TEMPLATE.price_dollars_font_size_pt}pt;", html)
         self.assertIn(f"font-size: {SAMS_HOLIDAY_TEMPLATE.price_cents_font_size_pt}pt;", html)
+        self.assertIn(f"transform: translateY({SAMS_HOLIDAY_TEMPLATE.price_cents_translate_y_pt}pt);", html)
         self.assertIn(f"font-size: {SAMS_HOLIDAY_TEMPLATE.footer_font_size_pt}pt;", html)
         self.assertAlmostEqual(float(item_match.group(3)), SAMS_HOLIDAY_TEMPLATE.sku_font_size_pt)
+
+    def test_holiday_cents_vertical_offset_is_fixed_across_prices(self) -> None:
+        prices = ["1.23", "22.50", "78.58", "153.78", "201.25"]
+        observed_price_lefts: list[float] = []
+        observed_transforms: set[str] = set()
+
+        for price in prices:
+            row = SamsPriceStripRow(
+                pog="POG",
+                side=1,
+                row=1,
+                segments=[
+                    SamsPriceStripSegment(
+                        pog="POG",
+                        side=1,
+                        row=1,
+                        column=1,
+                        brand="BRAND",
+                        desc_1="DESCRIPTION",
+                        desc_2="PACK",
+                        retail=price,
+                    )
+                ],
+            )
+            warnings: list[str] = []
+            html = _build_full_html([expand_holiday_row_to_slots(row)], warnings, SAMS_HOLIDAY_TEMPLATE_NAME, False)[0]
+            price_left = float(re.search(r'<div class="price" style="left: ([0-9.]+)pt;', html).group(1))
+            transform = re.search(r'\.cents \{[^}]*transform: translateY\((-?[0-9.]+)pt\);', html).group(1)
+            cents_font = re.search(r'\.cents \{[^}]*font-size: ([0-9.]+)pt;', html).group(1)
+
+            dollars, cents = _normalize_price_parts(price)
+            group_width = _estimate_price_object_width(
+                dollars,
+                cents,
+                SAMS_HOLIDAY_TEMPLATE.price_dollar_sign_font_size_pt,
+                SAMS_HOLIDAY_TEMPLATE.price_dollars_font_size_pt,
+                SAMS_HOLIDAY_TEMPLATE.price_cents_font_size_pt,
+                0.6,
+                0.6,
+            )
+            ticket_left = float(re.search(r'<div class="ticket" style="left: ([0-9.]+)pt;', html).group(1))
+            center_x = holiday_slot_centers_pt(holiday_geometry_for_side(1))[0]
+
+            observed_price_lefts.append(price_left)
+            observed_transforms.add(transform)
+            self.assertAlmostEqual(float(cents_font), SAMS_HOLIDAY_TEMPLATE.price_cents_font_size_pt)
+            self.assert_points_close(ticket_left + price_left + (group_width / 2.0), center_x)
+
+        self.assertEqual(observed_transforms, {str(SAMS_HOLIDAY_TEMPLATE.price_cents_translate_y_pt)})
 
     def test_holiday_footer_and_sku_x_are_fixed_across_prices(self) -> None:
         prices = ["1.23", "5.98", "24.13", "51.25", "153.78"]
