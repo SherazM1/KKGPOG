@@ -11,11 +11,12 @@ from typing import Any, Iterable
 from PIL import Image, ImageOps
 
 from app.sams_club.image_resolution import (
-    SOURCE_OCR_FILENAME_UPC,
-    SOURCE_OCR_UPC_VARIANT,
     _digits_only,
     _identifier_keys,
 )
+
+SOURCE_OCR_FILENAME_UPC = "ocr_filename_upc"
+SOURCE_OCR_UPC_VARIANT = "ocr_upc_variant"
 
 OCR_CATALOG_COLUMNS = (
     "file_path",

@@ -13,8 +13,6 @@ from app.sams_club.image_resolution import (
     SOURCE_LOCAL_UPC,
     SOURCE_MANUAL_ITEM_NUMBER,
     SOURCE_MANUAL_UPC,
-    SOURCE_OCR_FILENAME_UPC,
-    SOURCE_OCR_UPC_VARIANT,
     SOURCE_ORIGINAL_PATH,
     SOURCE_ZIP_BASENAME,
     SOURCE_ZIP_ITEM_NUMBER,
@@ -29,6 +27,8 @@ from app.sams_club.image_resolution import (
 )
 from app.sams_club.models import SamsPlanogram, SamsRow, SamsSidePage, SamsSlot
 from app.sams_club.ocr_image_resolution import (
+    SOURCE_OCR_FILENAME_UPC,
+    SOURCE_OCR_UPC_VARIANT,
     build_ocr_candidates_for_records,
     load_sams_ocr_catalog,
     resolve_by_ocr_catalog_upc,
