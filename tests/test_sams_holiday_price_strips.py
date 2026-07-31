@@ -131,14 +131,39 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         self.assertEqual([row.row for row in mapped], [2, 3, 4, 5])
         self.assertTrue(all(len(row.segments) == 8 for row in mapped))
 
+    def test_wide_side_starting_at_row_two_keeps_packaging_row(self) -> None:
+        rows = [_pog_row("National", 2, row, list(range(1, 9))) for row in range(2, 6)]
+        rows.extend(_pog_row("National SLFCHK", 4, row, list(range(1, 9))) for row in range(2, 6))
+
+        mapped, warnings = map_holiday_rows_to_strips(rows)
+
+        self.assertEqual(warnings, [])
+        self.assertIn(("National", 2, 2), [(row.pog, row.side, row.row) for row in mapped])
+        self.assertIn(("National SLFCHK", 4, 2), [(row.pog, row.side, row.row) for row in mapped])
+        self.assertEqual(
+            [(row.pog, row.side, row.row) for row in mapped],
+            [
+                ("National", 2, 2),
+                ("National", 2, 3),
+                ("National", 2, 4),
+                ("National", 2, 5),
+                ("National SLFCHK", 4, 2),
+                ("National SLFCHK", 4, 3),
+                ("National SLFCHK", 4, 4),
+                ("National SLFCHK", 4, 5),
+            ],
+        )
+
     def test_holiday_rows_are_ordered_by_complete_planogram_then_side_then_row(self) -> None:
         rows: list[SamsPriceStripRow] = []
         for pog in ("POG 1", "POG 2"):
             rows.extend(_pog_row(pog, 1, row, list(range(1, 7))) for row in range(1, 6))
-            rows.append(_pog_row(pog, 2, 1, list(range(1, 10))))
+            if pog == "POG 1":
+                rows.append(_pog_row(pog, 2, 1, list(range(1, 10))))
             rows.extend(_pog_row(pog, 2, row, list(range(1, 9))) for row in range(2, 6))
             rows.extend(_pog_row(pog, 3, row, list(range(1, 7))) for row in range(1, 6))
-            rows.append(_pog_row(pog, 4, 1, list(range(1, 10))))
+            if pog == "POG 1":
+                rows.append(_pog_row(pog, 4, 1, list(range(1, 10))))
             rows.extend(_pog_row(pog, 4, row, list(range(1, 9))) for row in range(2, 6))
 
         interleaved_rows = [

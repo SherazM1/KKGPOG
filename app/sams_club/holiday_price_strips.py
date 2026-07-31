@@ -194,12 +194,13 @@ def map_holiday_rows_to_strips(
         priced_rows = side_rows
         if geometry.excluded_cr80_rows:
             excluded_rows = side_rows[: geometry.excluded_cr80_rows]
-            priced_rows = side_rows[geometry.excluded_cr80_rows :]
             if not excluded_rows:
                 warnings.append(
                     f"Sam's Holiday POG={pog} Side {side} expected one CR80 row to exclude before priced rows, but no rows were available."
                 )
-            elif len(excluded_rows[0].segments) != 9:
+            elif len(excluded_rows[0].segments) == 9:
+                priced_rows = side_rows[geometry.excluded_cr80_rows :]
+            elif excluded_rows[0].row == 1:
                 warnings.append(
                     f"Sam's Holiday POG={pog} Side {side} expected CR80 row with 9 cards before generated strips, "
                     f"but row {excluded_rows[0].row} has {len(excluded_rows[0].segments)} populated segment(s)."
