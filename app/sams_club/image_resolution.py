@@ -22,6 +22,8 @@ SOURCE_LOCAL_UPC = "local_upc"
 SOURCE_LOCAL_ITEM_NUMBER = "local_item_number"
 SOURCE_MANUAL_UPC = "manual_upc"
 SOURCE_MANUAL_ITEM_NUMBER = "manual_item_number"
+SOURCE_OCR_FILENAME_UPC = "ocr_filename_upc"
+SOURCE_OCR_UPC_VARIANT = "ocr_upc_variant"
 SOURCE_ZIP_BASENAME = "zip_basename"
 SOURCE_ZIP_UPC = "zip_upc"
 SOURCE_ZIP_ITEM_NUMBER = "zip_item_number"
@@ -298,6 +300,34 @@ def _can_open_image(path_text: str) -> bool:
     if not path_text:
         return False
 
+    try:
+        path = Path(path_text)
+
+        if not path.exists() or not path.is_file():
+            return False
+
+        with Image.open(path) as image:
+            image.verify()
+
+        return True
+    except Exception:
+        return False
+
+
+def _lookup_manual_mapping(
+    identifier: str,
+    mapping: dict[str, str],
+) -> str:
+    if not mapping:
+        return ""
+
+    for key in _identifier_keys(identifier):
+        resolved = mapping.get(key)
+        if resolved:
+            return resolved
+
+    return ""
+
 
 def load_sams_manual_image_mappings(
     mapping_path: str | Path = "unresolved/manual_image_mappings.csv",
@@ -339,34 +369,6 @@ def load_sams_manual_image_mappings(
         )
 
     return result
-
-
-def _lookup_manual_mapping(
-    identifier: str,
-    mapping: dict[str, str],
-) -> str:
-    if not mapping:
-        return ""
-
-    for key in _identifier_keys(identifier):
-        resolved = mapping.get(key)
-        if resolved:
-            return resolved
-
-    return ""
-
-    try:
-        path = Path(path_text)
-
-        if not path.exists() or not path.is_file():
-            return False
-
-        with Image.open(path) as image:
-            image.verify()
-
-        return True
-    except Exception:
-        return False
 
 
 def _basename(path_text: str) -> str:

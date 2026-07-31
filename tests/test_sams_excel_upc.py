@@ -13,6 +13,8 @@ from app.sams_club.image_resolution import (
     SOURCE_LOCAL_ITEM_NUMBER,
     SOURCE_LOCAL_UPC,
     SOURCE_MANUAL_UPC,
+    SOURCE_OCR_FILENAME_UPC,
+    SOURCE_OCR_UPC_VARIANT,
     SOURCE_UNRESOLVED,
     SamsImageIndex,
     SamsManualImageMappingIndex,
@@ -24,6 +26,14 @@ from app.sams_club.image_resolution import (
     resolve_sams_image_path,
 )
 from app.sams_club.models import SamsPlanogram, SamsRow, SamsSidePage, SamsSlot
+from app.sams_club.ocr_image_resolution import (
+    append_manual_image_mapping,
+    load_sams_ocr_catalog,
+    preview_image_status,
+    remove_manual_image_mapping,
+    score_ocr_candidate,
+    upc_comparison_keys,
+)
 from app.sams_club.render_planogram import render_sams_planogram_pdf
 from app.sams_club.service import build_sams_planogram_structure
 from scripts.catalog_sams_images import catalog_image
@@ -95,6 +105,23 @@ class SamsExcelUpcTests(unittest.TestCase):
                     },
                 )
                 self.assertEqual(mapping["upc"], header)
+
+    def test_check_digit_and_12_digit_upc_headers_are_preserved(self) -> None:
+        mapping = _build_mapping(
+            ["POG", "Item Number", "Side", "Row", "Column", "Check Digit", "12 Digit UPC"],
+            {
+                "pog": ("pog",),
+                "item_number": ("item number",),
+                "side": ("side",),
+                "row": ("row",),
+                "column": ("column",),
+                "check_digit": ("check digit", "check_digit"),
+                "upc12": ("12 digit upc", "upc12"),
+            },
+        )
+
+        self.assertEqual(mapping["check_digit"], "Check Digit")
+        self.assertEqual(mapping["upc12"], "12 Digit UPC")
 
     def test_numeric_upc_values_normalize_to_digits(self) -> None:
         self.assertEqual(_normalize_upc_value(87458605402), "87458605402")
@@ -565,6 +592,278 @@ class SamsExcelUpcTests(unittest.TestCase):
 
         self.assertEqual(result.missing_image_slots, 0)
         self.assertEqual(result.warnings, [])
+
+    def test_ocr_upc_comparison_keys_include_upc11_check_digit(self) -> None:
+        keys = upc_comparison_keys("19674217114")
+
+        self.assertIn("19674217114", keys)
+        self.assertIn("196742171143", keys)
+
+    def test_ocr_catalog_exact_12_digit_upc_match_resolves_before_review(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workbook = root / "source.xlsx"
+            catalog_path = root / "image_catalog.csv"
+            image_path = root / "196742171143.jpg"
+            self._write_workbook(workbook, "UPC", "196742171143")
+            self._write_image(image_path)
+            pd.DataFrame(
+                [
+                    {
+                        "file_path": str(image_path),
+                        "filename": image_path.name,
+                        "filename_upc": "196742171143",
+                        "detected_text": "Visa $150",
+                        "normalized_text": "VISA $150",
+                        "detected_brand": "Visa",
+                        "detected_denomination": "$150",
+                        "detected_pack_quantity": "",
+                        "catalog_status": "ok",
+                        "catalog_error": "",
+                    }
+                ]
+            ).to_csv(catalog_path, index=False)
+
+            result = build_sams_planogram_structure(
+                workbook,
+                selected_pog="POG1",
+                local_image_root="",
+                ocr_catalog_file=catalog_path,
+            )
+
+        slot = result.planogram.side_pages[0].rows[0].slots[0]
+        self.assertEqual(slot.image_resolution_source, SOURCE_OCR_FILENAME_UPC)
+        self.assertEqual(slot.resolved_image_path, str(image_path))
+        self.assertEqual(result.debug["image_resolution"]["resolved_by_ocr_filename_upc"], 1)
+        self.assertEqual(result.debug["image_resolution"]["ocr_catalog_candidates_available"], 0)
+
+    def test_ocr_catalog_upc11_matches_upc12_filename_variant(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workbook = root / "source.xlsx"
+            catalog_path = root / "image_catalog.csv"
+            image_path = root / "196742171143.jpg"
+            self._write_workbook(workbook, "UPC", "19674217114")
+            self._write_image(image_path)
+            pd.DataFrame(
+                [
+                    {
+                        "file_path": str(image_path),
+                        "filename": image_path.name,
+                        "filename_upc": "196742171143",
+                        "detected_text": "",
+                        "normalized_text": "",
+                        "detected_brand": "",
+                        "detected_denomination": "",
+                        "detected_pack_quantity": "",
+                        "catalog_status": "ok",
+                        "catalog_error": "",
+                    }
+                ]
+            ).to_csv(catalog_path, index=False)
+
+            result = build_sams_planogram_structure(
+                workbook,
+                selected_pog="POG1",
+                local_image_root="",
+                ocr_catalog_file=catalog_path,
+            )
+
+        slot = result.planogram.side_pages[0].rows[0].slots[0]
+        self.assertEqual(slot.image_resolution_source, SOURCE_OCR_UPC_VARIANT)
+        self.assertEqual(slot.resolved_image_path, str(image_path))
+
+    def test_ocr_catalog_handles_missing_columns_blank_ocr_and_missing_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            image_path = root / "valid.JPG"
+            missing_path = root / "missing.JPG"
+            catalog_path = root / "image_catalog.csv"
+            self._write_image(image_path)
+            pd.DataFrame(
+                [
+                    {"file_path": str(image_path), "filename": "valid.JPG"},
+                    {"file_path": str(missing_path), "filename": "missing.JPG"},
+                    {"file_path": "", "filename": "blank.JPG"},
+                ]
+            ).to_csv(catalog_path, index=False)
+
+            catalog = load_sams_ocr_catalog(catalog_path)
+
+        self.assertTrue(catalog.loaded)
+        self.assertEqual(catalog.rows_read, 3)
+        self.assertEqual(catalog.valid_rows, 1)
+        self.assertEqual(catalog.invalid_rows, 2)
+        self.assertEqual(catalog.missing_file_rows, 1)
+
+    def test_ocr_catalog_ignores_failed_rows_without_useful_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            image_path = root / "failed.JPG"
+            catalog_path = root / "image_catalog.csv"
+            self._write_image(image_path)
+            pd.DataFrame(
+                [
+                    {
+                        "file_path": str(image_path),
+                        "filename": image_path.name,
+                        "catalog_status": "error",
+                        "catalog_error": "ocr failed",
+                    }
+                ]
+            ).to_csv(catalog_path, index=False)
+
+            catalog = load_sams_ocr_catalog(catalog_path)
+
+        self.assertEqual(catalog.valid_rows, 0)
+        self.assertEqual(catalog.failed_rows_ignored, 1)
+
+    def test_ocr_scoring_brand_denomination_and_pack_penalties(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            good_image = root / "playstation.JPG"
+            bad_image = root / "steam.JPG"
+            catalog_path = root / "image_catalog.csv"
+            self._write_image(good_image)
+            self._write_image(bad_image)
+            pd.DataFrame(
+                [
+                    {
+                        "file_path": str(good_image),
+                        "filename": good_image.name,
+                        "detected_text": "PlayStation $50 2 x $25",
+                        "detected_brand": "PlayStation",
+                        "detected_denomination": "2 x $25",
+                        "detected_pack_quantity": "2",
+                        "catalog_status": "ok",
+                    },
+                    {
+                        "file_path": str(bad_image),
+                        "filename": bad_image.name,
+                        "detected_text": "Steam $25 4 x $25",
+                        "detected_brand": "Steam",
+                        "detected_denomination": "$25",
+                        "detected_pack_quantity": "4",
+                        "catalog_status": "ok",
+                    },
+                ]
+            ).to_csv(catalog_path, index=False)
+            catalog = load_sams_ocr_catalog(catalog_path)
+            product = {
+                "upc": "111",
+                "item_number": "222",
+                "brand": "PlayStation",
+                "description": "PlayStation Gift Card 2 x $25",
+            }
+
+            good_score = score_ocr_candidate(product, catalog.entries[0])
+            bad_score = score_ocr_candidate(product, catalog.entries[1])
+
+        self.assertEqual(good_score.confidence_label, "High")
+        self.assertLess(bad_score.denomination_score, 0)
+        self.assertLess(bad_score.pack_score, 0)
+        self.assertGreater(good_score.total_score, bad_score.total_score)
+
+    def test_saved_mapping_reuse_deleted_mapping_manual_browse_and_clear(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workbook = root / "source.xlsx"
+            image_path = root / "approved.png"
+            mapping_path = root / "manual.csv"
+            self._write_workbook(workbook, "UPC", "19674217114")
+            self._write_image(image_path)
+            append_manual_image_mapping(
+                mapping_path,
+                upc="19674217114",
+                original_upc="19674217114",
+                item_number="12345",
+                file_path=str(image_path),
+                source="MANUAL_BROWSE",
+            )
+            manual_index = load_sams_manual_image_mappings(mapping_path)
+
+            with patch(
+                "app.sams_club.service.load_sams_manual_image_mappings",
+                lambda: manual_index,
+            ):
+                result = build_sams_planogram_structure(
+                    workbook,
+                    selected_pog="POG1",
+                    local_image_root="",
+                )
+            removed = remove_manual_image_mapping(mapping_path, "19674217114", "12345")
+            image_path.unlink()
+            deleted_index = load_sams_manual_image_mappings(mapping_path)
+
+        slot = result.planogram.side_pages[0].rows[0].slots[0]
+        self.assertEqual(slot.image_resolution_source, SOURCE_MANUAL_UPC)
+        self.assertEqual(slot.resolved_image_path, str(image_path))
+        self.assertEqual(removed, 1)
+        self.assertEqual(deleted_index.approved_count, 0)
+
+    def test_preview_status_handles_corrupt_image(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            corrupt_path = Path(temp_dir) / "bad.jpg"
+            self._write_corrupt_file(corrupt_path)
+
+            ok, message = preview_image_status(str(corrupt_path))
+
+        self.assertFalse(ok)
+        self.assertIn("Image preview unavailable", message)
+
+    def test_pdf_generation_after_approved_fallback_preserves_cpp_and_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workbook = root / "source.xlsx"
+            image_path = root / "approved.png"
+            self._write_image(image_path)
+            pd.DataFrame(
+                [
+                    {
+                        "POG": "POG1",
+                        "Side": 1,
+                        "Row": 1,
+                        "Column": 2,
+                        "Item Number": "222",
+                        "UPC": "22222222222",
+                        "Retail": "9.99",
+                        "CPP": "6",
+                        "Description": "Second",
+                    },
+                    {
+                        "POG": "POG1",
+                        "Side": 1,
+                        "Row": 1,
+                        "Column": 1,
+                        "Item Number": "111",
+                        "UPC": "11111111111",
+                        "Retail": "9.99",
+                        "CPP": "2",
+                        "Description": "First",
+                    },
+                ]
+            ).to_excel(workbook, index=False)
+            manual_index = SamsManualImageMappingIndex(
+                by_upc={"11111111111": str(image_path), "22222222222": str(image_path)},
+                approved_count=2,
+            )
+
+            with patch(
+                "app.sams_club.service.load_sams_manual_image_mappings",
+                lambda: manual_index,
+            ):
+                result = build_sams_planogram_structure(
+                    workbook,
+                    selected_pog="POG1",
+                    local_image_root="",
+                )
+            pdf_result = render_sams_planogram_pdf(result.planogram)
+
+        slots = result.planogram.side_pages[0].rows[0].slots
+        self.assertEqual([slot.column for slot in slots], [1, 2])
+        self.assertEqual([slot.cpp for slot in slots], ["2", "6"])
+        self.assertGreater(len(pdf_result.pdf_bytes), 0)
+        self.assertEqual(pdf_result.missing_image_slots, 0)
 
 
 if __name__ == "__main__":

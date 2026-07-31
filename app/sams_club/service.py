@@ -13,6 +13,8 @@ from app.sams_club.image_resolution import (
     SOURCE_LOCAL_UPC,
     SOURCE_MANUAL_ITEM_NUMBER,
     SOURCE_MANUAL_UPC,
+    SOURCE_OCR_FILENAME_UPC,
+    SOURCE_OCR_UPC_VARIANT,
     SOURCE_ORIGINAL_PATH,
     SOURCE_ZIP_BASENAME,
     SOURCE_ZIP_ITEM_NUMBER,
@@ -26,6 +28,11 @@ from app.sams_club.image_resolution import (
     resolve_sams_image_path,
 )
 from app.sams_club.models import SamsPlanogram, SamsRow, SamsSidePage, SamsSlot
+from app.sams_club.ocr_image_resolution import (
+    build_ocr_candidates_for_records,
+    load_sams_ocr_catalog,
+    resolve_by_ocr_catalog_upc,
+)
 from app.sams_club.validate import (
     side_column_limit,
     validate_column,
@@ -100,6 +107,8 @@ def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
         "desc_2": _as_text(record.get("desc_2")),
         "upc": _as_text(record.get("upc")),
         "raw_upc": _as_text(record.get("_raw_upc", record.get("upc"))),
+        "check_digit": _as_text(record.get("check_digit")),
+        "upc12": _as_text(record.get("upc12")),
         "cpp": _as_text(record.get("cpp")),
         "file_path": _as_text(record.get("file_path")),
         "description": _as_text(record.get("description")),
@@ -198,6 +207,7 @@ def build_sams_planogram_structure(
     image_zip_file: Any = None,
     selected_pog: str | None = None,
     local_image_root: str | None = None,
+    ocr_catalog_file: Any = None,
 ) -> SamsBuildResult:
     """
     Build a populated Sam's Club planogram structure.
@@ -225,6 +235,9 @@ def build_sams_planogram_structure(
 
     manual_image_index = load_sams_manual_image_mappings()
     warnings.extend(manual_image_index.warnings)
+
+    ocr_catalog_index = load_sams_ocr_catalog(ocr_catalog_file)
+    warnings.extend(ocr_catalog_index.warnings)
 
     extraction = extract_master_pog_source(main_source_file)
     warnings.extend(extraction.warnings)
@@ -369,11 +382,14 @@ def build_sams_planogram_structure(
     resolved_by_local_item_number = 0
     resolved_by_manual_upc = 0
     resolved_by_manual_item_number = 0
+    resolved_by_ocr_filename_upc = 0
+    resolved_by_ocr_upc_variant = 0
     resolved_by_zip_basename = 0
     resolved_by_zip_upc = 0
     resolved_by_zip_item_number = 0
     unresolved = 0
     unresolved_examples: list[dict[str, Any]] = []
+    ocr_review_records: list[dict[str, Any]] = []
     image_resolution_samples: list[dict[str, Any]] = []
     is_tabular_source = extraction.source_type in {"xlsx", "csv"}
 
@@ -400,6 +416,16 @@ def build_sams_planogram_structure(
             local_index=local_image_index,
             manual_index=manual_image_index,
         )
+        ocr_matched_index_key = ""
+        if not resolution.resolved_path:
+            (
+                ocr_resolved_path,
+                ocr_resolution_source,
+                ocr_matched_index_key,
+            ) = resolve_by_ocr_catalog_upc(record["upc"], ocr_catalog_index)
+            if ocr_resolved_path:
+                resolution.resolved_path = ocr_resolved_path
+                resolution.source = ocr_resolution_source
         slot_file_path = (
             supplied_file_path
             if supplied_file_path_exists or not is_tabular_source
@@ -420,6 +446,10 @@ def build_sams_planogram_structure(
             resolved_by_manual_upc += 1
         elif resolution.source == SOURCE_MANUAL_ITEM_NUMBER:
             resolved_by_manual_item_number += 1
+        elif resolution.source == SOURCE_OCR_FILENAME_UPC:
+            resolved_by_ocr_filename_upc += 1
+        elif resolution.source == SOURCE_OCR_UPC_VARIANT:
+            resolved_by_ocr_upc_variant += 1
         elif resolution.source == SOURCE_ZIP_BASENAME:
             resolved_by_zip_basename += 1
         elif resolution.source == SOURCE_ZIP_UPC:
@@ -428,6 +458,7 @@ def build_sams_planogram_structure(
             resolved_by_zip_item_number += 1
         else:
             unresolved += 1
+            ocr_review_records.append(record)
 
             if len(unresolved_examples) < 10:
                 unresolved_examples.append(
@@ -435,8 +466,9 @@ def build_sams_planogram_structure(
                         "side": record["side"],
                         "row": record["row"],
                         "column": record["column"],
-                        "upc": record["upc"],
-                        "item_number": record["item_number"],
+                    "upc": record["upc"],
+                    "upc12": record["upc12"],
+                    "item_number": record["item_number"],
                         "file_path": slot_file_path,
                     }
                 )
@@ -482,12 +514,19 @@ def build_sams_planogram_structure(
                     ),
                     "",
                 )
+            elif resolution.source in {
+                SOURCE_OCR_FILENAME_UPC,
+                SOURCE_OCR_UPC_VARIANT,
+            }:
+                matched_index_key = ocr_matched_index_key
 
             image_resolution_samples.append(
                 {
                     "item_number": record["item_number"],
                     "raw_upc": record["raw_upc"],
                     "normalized_upc": record["upc"],
+                    "check_digit": record["check_digit"],
+                    "upc12": record["upc12"],
                     "supplied_file_path": supplied_file_path,
                     "supplied_file_path_exists": supplied_file_path_exists,
                     "generated_upc_keys": generated_upc_keys,
@@ -622,6 +661,11 @@ def build_sams_planogram_structure(
             startup_probe_path and Path(startup_probe_path).is_file()
         ),
     }
+    ocr_candidates = build_ocr_candidates_for_records(
+        ocr_review_records,
+        ocr_catalog_index,
+        limit=5,
+    )
     if (
         local_image_index is not None
         and local_image_root_exists
@@ -676,6 +720,21 @@ def build_sams_planogram_structure(
             "resolved_by_manual_item_number": (
                 resolved_by_manual_item_number
             ),
+            "ocr_catalog_loaded": ocr_catalog_index.loaded,
+            "ocr_catalog_source": ocr_catalog_index.source_name,
+            "ocr_catalog_rows_read": ocr_catalog_index.rows_read,
+            "ocr_catalog_valid_rows": ocr_catalog_index.valid_rows,
+            "ocr_catalog_invalid_rows": ocr_catalog_index.invalid_rows,
+            "ocr_catalog_missing_file_rows": (
+                ocr_catalog_index.missing_file_rows
+            ),
+            "ocr_catalog_failed_rows_ignored": (
+                ocr_catalog_index.failed_rows_ignored
+            ),
+            "ocr_catalog_candidates_available": len(ocr_candidates),
+            "ocr_candidates": ocr_candidates,
+            "resolved_by_ocr_filename_upc": resolved_by_ocr_filename_upc,
+            "resolved_by_ocr_upc_variant": resolved_by_ocr_upc_variant,
             "resolved_by_local_upc": resolved_by_local_upc,
             "resolved_by_local_item_number": (
                 resolved_by_local_item_number

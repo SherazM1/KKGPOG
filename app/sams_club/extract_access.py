@@ -22,6 +22,8 @@ NORMALIZED_KEYS = (
     "desc_1",
     "desc_2",
     "upc",
+    "check_digit",
+    "upc12",
     "cpp",
     "file_path",
     "description",
@@ -39,7 +41,9 @@ TABULAR_ALIASES: dict[str, tuple[str, ...]] = {
     "brand": ("brand",),
     "desc_1": ("desc 1", "desc1", "sign desc 1"),
     "desc_2": ("desc 2", "desc2", "sign desc 2"),
-    "upc": ("upc", "upc 11", "upc11", "upc_11", "12 digit upc"),
+    "upc": ("upc", "upc 11", "upc11", "upc_11"),
+    "check_digit": ("check digit", "check_digit", "upc check digit"),
+    "upc12": ("12 digit upc", "upc12", "upc 12"),
     "cpp": ("cpp",),
     "file_path": ("file path", "filepath", "image path"),
     "description": ("description", "product desc"),
@@ -55,7 +59,9 @@ ACCESS_ALIASES: dict[str, tuple[str, ...]] = {
     "brand": ("brand", "vendor", "manufacturer"),
     "desc_1": ("desc_1", "desc1", "description_1", "short_desc", "description1", "desc 1", "sign desc 1"),
     "desc_2": ("desc_2", "desc2", "description_2", "long_desc_2", "description2", "desc 2", "sign desc 2"),
-    "upc": ("upc", "upc12", "upc_code", "barcode", "12 digit upc"),
+    "upc": ("upc", "upc_code", "barcode"),
+    "check_digit": ("check digit", "check_digit", "upc check digit"),
+    "upc12": ("12 digit upc", "upc12", "upc 12"),
     "cpp": ("cpp", "case_pack", "casepack", "pack_qty"),
     "file_path": ("file_path", "filepath", "image_path", "asset_path", "path", "file path", "image path"),
     "description": ("description", "item_description", "long_description", "desc_full", "product desc"),
@@ -224,6 +230,10 @@ def _normalize_tabular_from_mapping(row: Mapping[str, Any], mapping: Mapping[str
         "" if raw_upc is None or pd.isna(raw_upc) else str(raw_upc).strip()
     )
     normalized["upc"] = _normalize_upc_value(raw_upc)
+    normalized["check_digit"] = _normalize_upc_value(normalized.get("check_digit"))
+    normalized["upc12"] = _normalize_upc_value(normalized.get("upc12"))
+    if not normalized["upc"] and normalized["upc12"]:
+        normalized["upc"] = normalized["upc12"]
     return normalized
 
 
@@ -337,6 +347,6 @@ def extract_master_pog_records(source_file: Any) -> list[dict[str, Any]]:
     Backward-compatible record-only extractor.
 
     Returned records use:
-    pog, side, row, column, item_number, retail, brand, desc_1, desc_2, upc, cpp, file_path, description.
+    pog, side, row, column, item_number, retail, brand, desc_1, desc_2, upc, check_digit, upc12, cpp, file_path, description.
     """
     return extract_master_pog_source(source_file).records

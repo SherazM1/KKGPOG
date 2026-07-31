@@ -11,6 +11,11 @@ from app.sams_club.extract_price_strips import build_sams_price_strip_rows
 from app.sams_club.holiday_price_strips import is_sams_holiday_template
 from app.sams_club.render_planogram import render_sams_planogram_pdf
 from app.sams_club.service import build_sams_planogram_structure, detect_sams_pogs
+from app.sams_club.ocr_image_resolution import (
+    append_manual_image_mapping,
+    preview_image_status,
+    remove_manual_image_mapping,
+)
 from app.shared.constants import DISPLAY_FULL_PALLET, DISPLAY_SAMS_CLUB, DISPLAY_STANDARD
 from app.shared import upload_utils as _upload_utils
 
@@ -174,6 +179,17 @@ def main() -> None:
                 ),
                 key="sams_image_zip_file",
             )
+            sams_ocr_catalog_file = st.file_uploader(
+                "OCR Image Catalog (optional CSV)",
+                type=["csv"],
+                help=(
+                    "Optional image-search catalog used only for unresolved Sam's images. "
+                    "Direct UPC matches and saved mappings are applied before OCR review."
+                ),
+                key="sams_ocr_catalog_file",
+            )
+            if sams_ocr_catalog_file is not None:
+                st.session_state["sams_recent_ocr_catalog_name"] = sams_ocr_catalog_file.name
             sams_local_image_root = st.text_input(
                 "Local Sam's Image Folder",
                 value=r"Z:\Kendal King\Images",
@@ -291,6 +307,7 @@ def main() -> None:
                     image_zip_file=sams_image_zip_file,
                     selected_pog=sams_selected_pog,
                     local_image_root=sams_local_image_root,
+                    ocr_catalog_file=sams_ocr_catalog_file,
                 )
             st.session_state["sams_build_result"] = result
             st.session_state["sams_pdf_result"] = None
@@ -315,7 +332,15 @@ def main() -> None:
                 "records_with_item_number": result.debug.get("records_with_item_number", 0),
                 "resolved_by_local_upc": image_debug.get("resolved_by_local_upc", 0),
                 "resolved_by_local_item_number": image_debug.get("resolved_by_local_item_number", 0),
+                "resolved_by_ocr_filename_upc": image_debug.get("resolved_by_ocr_filename_upc", 0),
+                "resolved_by_ocr_upc_variant": image_debug.get("resolved_by_ocr_upc_variant", 0),
                 "unresolved": image_debug.get("unresolved", 0),
+                "ocr_catalog_loaded": image_debug.get("ocr_catalog_loaded", False),
+                "ocr_catalog_source": image_debug.get("ocr_catalog_source", ""),
+                "ocr_catalog_rows_read": image_debug.get("ocr_catalog_rows_read", 0),
+                "ocr_catalog_valid_rows": image_debug.get("ocr_catalog_valid_rows", 0),
+                "ocr_catalog_invalid_rows": image_debug.get("ocr_catalog_invalid_rows", 0),
+                "ocr_catalog_candidates_available": image_debug.get("ocr_catalog_candidates_available", 0),
                 "first_five_unresolved_examples": image_debug.get("unresolved_examples", [])[:5],
                 "first_five_resolution_samples": image_debug.get("debug_sample", [])[:5],
                 "startup_probe_190199709997": image_debug.get("startup_probe", {}),
@@ -331,9 +356,134 @@ def main() -> None:
                 )
             st.markdown("#### Local Image Folder Diagnostics")
             st.json(local_image_diagnostics)
+            if not image_debug.get("ocr_catalog_loaded"):
+                recent_catalog = st.session_state.get("sams_recent_ocr_catalog_name", "")
+                if recent_catalog:
+                    st.info(f"No OCR catalog is loaded. Most recent catalog: {recent_catalog}.")
+                else:
+                    st.info("No OCR catalog is loaded. Direct UPC, saved mappings, local folder, and ZIP fallback still run.")
 
             candidate_path = Path("unresolved/candidate_matches.csv")
             manual_mapping_path = Path("unresolved/manual_image_mappings.csv")
+            ocr_candidates = image_debug.get("ocr_candidates", [])
+            if ocr_candidates:
+                st.markdown("#### Review Missing Images")
+                unresolved_keys = {
+                    (
+                        str(candidate.get("unresolved_upc", "")),
+                        str(candidate.get("item_number", "")),
+                    )
+                    for candidate in ocr_candidates
+                }
+                accepted_count = image_debug.get("manual_mapping_approved_count", 0)
+                st.write(
+                    {
+                        "products_needing_review": len(unresolved_keys),
+                        "accepted_saved_mappings": accepted_count,
+                        "still_unresolved": image_debug.get("unresolved", 0),
+                        "candidate_rows": len(ocr_candidates),
+                    }
+                )
+                grouped_ocr_candidates: dict[tuple[str, str], list[dict[str, object]]] = {}
+                for candidate in ocr_candidates:
+                    grouped_ocr_candidates.setdefault(
+                        (
+                            str(candidate.get("unresolved_upc", "")),
+                            str(candidate.get("item_number", "")),
+                        ),
+                        [],
+                    ).append(candidate)
+                for group_index, ((upc_value, item_value), group_rows) in enumerate(
+                    list(grouped_ocr_candidates.items())[:10],
+                    start=1,
+                ):
+                    label = f"{group_index} of {len(grouped_ocr_candidates)} | UPC {upc_value or '-'} | Item {item_value or '-'}"
+                    with st.expander(label):
+                        product_name = str(group_rows[0].get("product_name", ""))
+                        st.write(
+                            {
+                                "POG": result.selected_pog,
+                                "UPC": upc_value,
+                                "Merchant SKU": item_value,
+                                "product": product_name,
+                            }
+                        )
+                        for candidate in sorted(group_rows, key=lambda row: int(row.get("candidate_rank", 0) or 0)):
+                            candidate_path_text = str(candidate.get("candidate_file_path", ""))
+                            preview_ok, preview_error = preview_image_status(candidate_path_text)
+                            cols = st.columns([1, 2])
+                            if preview_ok:
+                                cols[0].image(candidate_path_text, caption=str(candidate.get("candidate_filename", "")), width=160)
+                            else:
+                                cols[0].warning(preview_error)
+                            cols[1].write(
+                                {
+                                    "rank": candidate.get("candidate_rank", ""),
+                                    "file_path": candidate_path_text,
+                                    "filename_upc": candidate.get("candidate_filename_upc", ""),
+                                    "detected_brand": candidate.get("detected_brand", ""),
+                                    "detected_denomination": candidate.get("detected_denomination", ""),
+                                    "detected_pack_quantity": candidate.get("detected_pack_quantity", ""),
+                                    "confidence_score": candidate.get("confidence_score", ""),
+                                    "confidence_label": candidate.get("confidence_label", ""),
+                                    "reasons": candidate.get("reasons", ""),
+                                    "detected_text": str(candidate.get("detected_text", ""))[:300],
+                                }
+                            )
+                            accept_key = f"sams_ocr_accept_{group_index}_{candidate.get('candidate_rank', '')}"
+                            reject_key = f"sams_ocr_reject_{group_index}_{candidate.get('candidate_rank', '')}"
+                            accept_col, reject_col = st.columns(2)
+                            if accept_col.button("Accept candidate", key=accept_key):
+                                append_manual_image_mapping(
+                                    manual_mapping_path,
+                                    upc=upc_value,
+                                    original_upc=upc_value,
+                                    item_number=item_value,
+                                    file_path=candidate_path_text,
+                                    filename_upc=candidate.get("candidate_filename_upc", ""),
+                                    source="OCR_ACCEPTED",
+                                    notes=str(candidate.get("reasons", "")),
+                                )
+                                st.success("Saved approved fallback mapping. Rebuild before generating the PDF.")
+                            if reject_col.button("Reject candidate", key=reject_key):
+                                st.info("Candidate rejected for this review session.")
+                        manual_path = st.text_input(
+                            "Browse/manual image path",
+                            key=f"sams_manual_path_{group_index}",
+                            help="Paste a verified local image path to save as a manual fallback for this product.",
+                        )
+                        manual_cols = st.columns(3)
+                        if manual_cols[0].button("Save manual image", key=f"sams_manual_save_{group_index}"):
+                            if Path(manual_path).is_file():
+                                append_manual_image_mapping(
+                                    manual_mapping_path,
+                                    upc=upc_value,
+                                    original_upc=upc_value,
+                                    item_number=item_value,
+                                    file_path=manual_path,
+                                    source="MANUAL_BROWSE",
+                                    notes="Saved from Streamlit review",
+                                )
+                                st.success("Saved manual image mapping. Rebuild before generating the PDF.")
+                            else:
+                                st.error("Manual image path does not exist.")
+                        if manual_cols[1].button("Clear existing selection", key=f"sams_manual_clear_{group_index}"):
+                            removed = remove_manual_image_mapping(manual_mapping_path, upc_value, item_value)
+                            st.info(f"Removed {removed} saved mapping(s).")
+                        if manual_cols[2].button("Skip for now", key=f"sams_manual_skip_{group_index}"):
+                            st.info("Skipped for now.")
+                if st.button("Rebuild Planogram With Saved Fallbacks", key="rebuild_sams_ocr_after_mapping"):
+                    with st.spinner("Rebuilding Sam's Club structure with approved mappings..."):
+                        st.session_state["sams_build_result"] = build_sams_planogram_structure(
+                            sams_main_source_file,
+                            sams_excel_file,
+                            image_zip_file=sams_image_zip_file,
+                            selected_pog=sams_selected_pog,
+                            local_image_root=sams_local_image_root,
+                            ocr_catalog_file=sams_ocr_catalog_file,
+                        )
+                        st.session_state["sams_pdf_result"] = None
+                    st.rerun()
             if candidate_path.exists():
                 candidate_df = pd.read_csv(candidate_path).fillna("")
                 if not candidate_df.empty:
@@ -400,6 +550,7 @@ def main() -> None:
                                 image_zip_file=sams_image_zip_file,
                                 selected_pog=sams_selected_pog,
                                 local_image_root=sams_local_image_root,
+                                ocr_catalog_file=sams_ocr_catalog_file,
                             )
                             st.session_state["sams_pdf_result"] = None
                         st.rerun()
