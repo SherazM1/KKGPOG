@@ -183,13 +183,13 @@ def map_holiday_rows_to_strips(
     warnings: list[str] = []
     mapped_rows: list[SamsPriceStripRow] = []
 
-    rows_by_side: dict[int, list[SamsPriceStripRow]] = {}
+    rows_by_pog_side: dict[tuple[str, int], list[SamsPriceStripRow]] = {}
     for row in rows:
-        rows_by_side.setdefault(row.side, []).append(row)
+        rows_by_pog_side.setdefault((row.pog, row.side), []).append(row)
 
-    for side in sorted(rows_by_side):
+    for pog, side in sorted(rows_by_pog_side, key=lambda key: (key[0], key[1])):
         geometry = holiday_geometry_for_side(side)
-        side_rows = sorted(rows_by_side[side], key=lambda row: row.row)
+        side_rows = sorted(rows_by_pog_side[(pog, side)], key=lambda row: row.row)
 
         priced_rows = side_rows
         if geometry.excluded_cr80_rows:
@@ -197,17 +197,17 @@ def map_holiday_rows_to_strips(
             priced_rows = side_rows[geometry.excluded_cr80_rows :]
             if not excluded_rows:
                 warnings.append(
-                    f"Sam's Holiday Side {side} expected one CR80 row to exclude before priced rows, but no rows were available."
+                    f"Sam's Holiday POG={pog} Side {side} expected one CR80 row to exclude before priced rows, but no rows were available."
                 )
             elif len(excluded_rows[0].segments) != 9:
                 warnings.append(
-                    f"Sam's Holiday Side {side} expected CR80 row with 9 cards before generated strips, "
+                    f"Sam's Holiday POG={pog} Side {side} expected CR80 row with 9 cards before generated strips, "
                     f"but row {excluded_rows[0].row} has {len(excluded_rows[0].segments)} populated segment(s)."
                 )
 
         if len(priced_rows) != geometry.expected_priced_rows:
             warnings.append(
-                f"Sam's Holiday Side {side} expected {geometry.expected_priced_rows} priced rows of "
+                f"Sam's Holiday POG={pog} Side {side} expected {geometry.expected_priced_rows} priced rows of "
                 f"{geometry.slot_count} positions after excluding the CR80 row, but received {len(priced_rows)} priced rows."
             )
 

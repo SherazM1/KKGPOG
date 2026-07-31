@@ -51,6 +51,29 @@ def _row(side: int, row: int, columns: list[int]) -> SamsPriceStripRow:
     )
 
 
+def _pog_row(pog: str, side: int, row: int, columns: list[int]) -> SamsPriceStripRow:
+    row_data = _row(side, row, columns)
+    return SamsPriceStripRow(
+        pog=pog,
+        side=row_data.side,
+        row=row_data.row,
+        segments=[
+            SamsPriceStripSegment(
+                pog=pog,
+                side=segment.side,
+                row=segment.row,
+                column=segment.column,
+                item_number=segment.item_number,
+                brand=segment.brand,
+                desc_1=segment.desc_1,
+                desc_2=segment.desc_2,
+                retail=segment.retail,
+            )
+            for segment in row_data.segments
+        ],
+    )
+
+
 class SamsHolidayPriceStripTests(unittest.TestCase):
     def assert_points_close(self, actual: float, expected: float) -> None:
         self.assertAlmostEqual(actual, expected, places=5)
@@ -107,6 +130,69 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         self.assertEqual(len(mapped), 4)
         self.assertEqual([row.row for row in mapped], [2, 3, 4, 5])
         self.assertTrue(all(len(row.segments) == 8 for row in mapped))
+
+    def test_holiday_rows_are_ordered_by_complete_planogram_then_side_then_row(self) -> None:
+        rows: list[SamsPriceStripRow] = []
+        for pog in ("POG 1", "POG 2"):
+            rows.extend(_pog_row(pog, 1, row, list(range(1, 7))) for row in range(1, 6))
+            rows.append(_pog_row(pog, 2, 1, list(range(1, 10))))
+            rows.extend(_pog_row(pog, 2, row, list(range(1, 9))) for row in range(2, 6))
+            rows.extend(_pog_row(pog, 3, row, list(range(1, 7))) for row in range(1, 6))
+            rows.append(_pog_row(pog, 4, 1, list(range(1, 10))))
+            rows.extend(_pog_row(pog, 4, row, list(range(1, 9))) for row in range(2, 6))
+
+        interleaved_rows = [
+            row
+            for side in (1, 2, 3, 4)
+            for row_number in range(1, 6)
+            for row in rows
+            if row.side == side and row.row == row_number
+        ]
+
+        mapped, warnings = map_holiday_rows_to_strips(interleaved_rows)
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(
+            [(row.pog, row.side, row.row) for row in mapped],
+            [
+                ("POG 1", 1, 1),
+                ("POG 1", 1, 2),
+                ("POG 1", 1, 3),
+                ("POG 1", 1, 4),
+                ("POG 1", 1, 5),
+                ("POG 1", 2, 2),
+                ("POG 1", 2, 3),
+                ("POG 1", 2, 4),
+                ("POG 1", 2, 5),
+                ("POG 1", 3, 1),
+                ("POG 1", 3, 2),
+                ("POG 1", 3, 3),
+                ("POG 1", 3, 4),
+                ("POG 1", 3, 5),
+                ("POG 1", 4, 2),
+                ("POG 1", 4, 3),
+                ("POG 1", 4, 4),
+                ("POG 1", 4, 5),
+                ("POG 2", 1, 1),
+                ("POG 2", 1, 2),
+                ("POG 2", 1, 3),
+                ("POG 2", 1, 4),
+                ("POG 2", 1, 5),
+                ("POG 2", 2, 2),
+                ("POG 2", 2, 3),
+                ("POG 2", 2, 4),
+                ("POG 2", 2, 5),
+                ("POG 2", 3, 1),
+                ("POG 2", 3, 2),
+                ("POG 2", 3, 3),
+                ("POG 2", 3, 4),
+                ("POG 2", 3, 5),
+                ("POG 2", 4, 2),
+                ("POG 2", 4, 3),
+                ("POG 2", 4, 4),
+                ("POG 2", 4, 5),
+            ],
+        )
 
     def test_empty_positions_do_not_shift_later_prices(self) -> None:
         expanded = expand_holiday_row_to_slots(_row(1, 1, [1, 3, 6]))
