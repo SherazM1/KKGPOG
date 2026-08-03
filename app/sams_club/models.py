@@ -22,6 +22,12 @@ class SamsSlot:
     resolved_image_path: str = ""
     image_resolution_source: str = "unresolved"
     description: str = ""
+    image_status: str = ""
+    intentional_blank: bool = False
+    gci_pending_image: bool = False
+    section: str = ""
+    merchant_category: str = ""
+    segment: str = ""
     warnings: list[str] = field(default_factory=list)
 
 

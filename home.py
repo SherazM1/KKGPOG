@@ -334,7 +334,9 @@ def main() -> None:
                 "resolved_by_local_item_number": image_debug.get("resolved_by_local_item_number", 0),
                 "resolved_by_ocr_filename_upc": image_debug.get("resolved_by_ocr_filename_upc", 0),
                 "resolved_by_ocr_upc_variant": image_debug.get("resolved_by_ocr_upc_variant", 0),
-                "unresolved": image_debug.get("unresolved", 0),
+                "real_unresolved_products": image_debug.get("unresolved", 0),
+                "intentional_blank_positions": image_debug.get("intentional_blank_positions", 0),
+                "gci_pending_image_positions": image_debug.get("gci_pending_image_positions", 0),
                 "ocr_catalog_loaded": image_debug.get("ocr_catalog_loaded", False),
                 "ocr_catalog_source": image_debug.get("ocr_catalog_source", ""),
                 "ocr_catalog_rows_read": image_debug.get("ocr_catalog_rows_read", 0),
@@ -356,6 +358,19 @@ def main() -> None:
                 )
             st.markdown("#### Local Image Folder Diagnostics")
             st.json(local_image_diagnostics)
+            st.markdown("#### Planogram Image Summary")
+            st.write(
+                {
+                    "total_positioned_products": image_debug.get("total_positioned_products", image_debug.get("total_slots", 0)),
+                    "resolved_images": image_debug.get("resolved_images", 0),
+                    "direct_upc_matches": image_debug.get("direct_upc_matches", 0),
+                    "saved_manual_matches": image_debug.get("saved_manual_matches", 0),
+                    "ocr_approved_matches": image_debug.get("ocr_approved_matches", 0),
+                    "real_unresolved_products": image_debug.get("unresolved", 0),
+                    "intentional_blank_positions": image_debug.get("intentional_blank_positions", 0),
+                    "gci_pending_image_positions": image_debug.get("gci_pending_image_positions", 0),
+                }
+            )
             if not image_debug.get("ocr_catalog_loaded"):
                 recent_catalog = st.session_state.get("sams_recent_ocr_catalog_name", "")
                 if recent_catalog:
@@ -393,19 +408,43 @@ def main() -> None:
                         ),
                         [],
                     ).append(candidate)
-                for group_index, ((upc_value, item_value), group_rows) in enumerate(
-                    list(grouped_ocr_candidates.items())[:10],
-                    start=1,
-                ):
+                review_groups = list(grouped_ocr_candidates.items())
+                review_index_key = "sams_ocr_review_index"
+                current_review_index = int(st.session_state.get(review_index_key, 0) or 0)
+                current_review_index = max(0, min(current_review_index, len(review_groups) - 1))
+                nav_cols = st.columns([1, 1, 4])
+                if nav_cols[0].button("Previous", key="sams_ocr_previous"):
+                    st.session_state[review_index_key] = max(0, current_review_index - 1)
+                    st.rerun()
+                if nav_cols[1].button("Next", key="sams_ocr_next"):
+                    st.session_state[review_index_key] = min(len(review_groups) - 1, current_review_index + 1)
+                    st.rerun()
+                nav_cols[2].write(
+                    f"Product {current_review_index + 1} of {len(review_groups)}"
+                )
+                st.session_state[review_index_key] = current_review_index
+
+                for group_index, ((upc_value, item_value), group_rows) in [
+                    (current_review_index + 1, review_groups[current_review_index])
+                ]:
                     label = f"{group_index} of {len(grouped_ocr_candidates)} | UPC {upc_value or '-'} | Item {item_value or '-'}"
                     with st.expander(label):
                         product_name = str(group_rows[0].get("product_name", ""))
                         st.write(
                             {
-                                "POG": result.selected_pog,
+                                "POG": group_rows[0].get("pog", result.selected_pog),
+                                "side": group_rows[0].get("side", ""),
+                                "row": group_rows[0].get("row", ""),
+                                "column": group_rows[0].get("column", ""),
+                                "item_number": item_value,
                                 "UPC": upc_value,
-                                "Merchant SKU": item_value,
+                                "12_digit_UPC": group_rows[0].get("upc12", ""),
                                 "product": product_name,
+                                "description": group_rows[0].get("description", ""),
+                                "CPP": group_rows[0].get("cpp", ""),
+                                "expected_brand": group_rows[0].get("expected_brand", ""),
+                                "expected_denomination": group_rows[0].get("expected_denomination", ""),
+                                "expected_pack_quantity": group_rows[0].get("expected_pack_quantity", ""),
                             }
                         )
                         for candidate in sorted(group_rows, key=lambda row: int(row.get("candidate_rank", 0) or 0)):
@@ -433,7 +472,7 @@ def main() -> None:
                             accept_key = f"sams_ocr_accept_{group_index}_{candidate.get('candidate_rank', '')}"
                             reject_key = f"sams_ocr_reject_{group_index}_{candidate.get('candidate_rank', '')}"
                             accept_col, reject_col = st.columns(2)
-                            if accept_col.button("Accept candidate", key=accept_key):
+                            if accept_col.button("Approve", key=accept_key):
                                 append_manual_image_mapping(
                                     manual_mapping_path,
                                     upc=upc_value,
@@ -619,10 +658,13 @@ def main() -> None:
             image_debug = result.debug.get("image_resolution", {})
             st.write("Sam's image zip uploaded:", "yes" if image_debug.get("image_zip_uploaded") else "no")
             st.write("Sam's total slots:", image_debug.get("total_slots", 0))
+            st.write("Resolved images:", image_debug.get("resolved_images", 0))
+            st.write("Intentional blanks:", image_debug.get("intentional_blank_positions", 0))
+            st.write("GCI pending images:", image_debug.get("gci_pending_image_positions", 0))
             st.write("Resolved by original path:", image_debug.get("resolved_by_original_path", 0))
             st.write("Resolved by zip basename:", image_debug.get("resolved_by_zip_basename", 0))
             st.write("Resolved by zip UPC:", image_debug.get("resolved_by_zip_upc", 0))
-            st.write("Unresolved:", image_debug.get("unresolved", 0))
+            st.write("Real unresolved products:", image_debug.get("unresolved", 0))
             unresolved_examples = image_debug.get("unresolved_examples", [])
             if unresolved_examples:
                 with st.expander("Unresolved image examples (up to 10)"):

@@ -47,6 +47,7 @@ CANDIDATE_COLUMNS = [
 ]
 
 MANUAL_COLUMNS = ["UPC", "Item Number", "file_path", "approved", "source", "notes"]
+KNOWN_SAMS_FP_GFT_IDENTIFIERS = {"SAMTEMP6"}
 
 
 def _row_get(row: dict[str, str], *names: str) -> str:
@@ -63,6 +64,53 @@ def _digits(value: Any) -> str:
     if text.endswith(".0"):
         text = text[:-2]
     return "".join(ch for ch in text if ch.isdigit())
+
+
+def _normalized_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().upper().replace("_", " ").split())
+
+
+def _truthy(value: Any) -> bool:
+    return _normalized_text(value) in {"TRUE", "YES", "Y", "1"}
+
+
+def _is_intentional_blank(row: dict[str, str]) -> bool:
+    if _truthy(_row_get(row, "Intentional Blank", "intentional_blank")):
+        return True
+    if _normalized_text(_row_get(row, "Image Status", "image_status", "status")) == "INTENTIONAL BLANK":
+        return True
+    for name in ("merchant category", "merchant_category", "segment", "section"):
+        if _normalized_text(_row_get(row, name)) == "SAMS FP GFT":
+            return True
+    known_identifiers = {
+        _normalized_text(_row_get(row, "Item Number", "item_number")),
+        _normalized_text(_row_get(row, "UPC", "upc", "unresolved_upc")),
+        _normalized_text(_row_get(row, "UPC12", "12 Digit UPC", "upc12")),
+    }
+    if known_identifiers & KNOWN_SAMS_FP_GFT_IDENTIFIERS:
+        return True
+    return False
+
+
+def _is_gci(row: dict[str, str]) -> bool:
+    image_status = _normalized_text(_row_get(row, "Image Status", "image_status", "status"))
+    if image_status in {"GCI IMAGE PENDING", "GCI PENDING IMAGE"}:
+        return True
+
+    haystack = _normalized_text(
+        " ".join(
+            [
+                _row_get(row, "merchant category", "merchant_category"),
+                _row_get(row, "segment"),
+                _row_get(row, "section"),
+                _row_get(row, "Brand"),
+                _row_get(row, "Product Name", "product_name", "Description"),
+                _row_get(row, "Description 1", "desc_1", "Description 2", "desc_2"),
+                _row_get(row, "Item Number", "item_number"),
+            ]
+        )
+    )
+    return "GCI" in haystack.split()
 
 
 def calculated_upc12(upc: str) -> str:
@@ -121,6 +169,8 @@ def read_unresolved_products(path: Path) -> list[dict[str, str]]:
 
     deduped: dict[tuple[str, str], dict[str, str]] = {}
     for row in rows:
+        if _is_intentional_blank(row) or _is_gci(row):
+            continue
         status = _row_get(row, "status", "image_resolution_source", "resolution_method")
         if status and "unresolved" not in status.lower():
             continue

@@ -27,6 +27,11 @@ NORMALIZED_KEYS = (
     "cpp",
     "file_path",
     "description",
+    "intentional_blank",
+    "image_status",
+    "section",
+    "merchant_category",
+    "segment",
 )
 
 REQUIRED_LOGICAL_FIELDS = ("pog", "item_number", "side", "row", "column")
@@ -47,6 +52,11 @@ TABULAR_ALIASES: dict[str, tuple[str, ...]] = {
     "cpp": ("cpp",),
     "file_path": ("file path", "filepath", "image path"),
     "description": ("description", "product desc"),
+    "intentional_blank": ("intentional blank", "intentional_blank"),
+    "image_status": ("image status", "image_status", "status"),
+    "section": ("section", "merchant section", "pog section"),
+    "merchant_category": ("merchant category", "category", "merch category"),
+    "segment": ("segment", "merchant segment", "merch segment"),
 }
 
 ACCESS_ALIASES: dict[str, tuple[str, ...]] = {
@@ -65,6 +75,11 @@ ACCESS_ALIASES: dict[str, tuple[str, ...]] = {
     "cpp": ("cpp", "case_pack", "casepack", "pack_qty"),
     "file_path": ("file_path", "filepath", "image_path", "asset_path", "path", "file path", "image path"),
     "description": ("description", "item_description", "long_description", "desc_full", "product desc"),
+    "intentional_blank": ("intentional_blank", "intentional blank"),
+    "image_status": ("image_status", "image status", "status"),
+    "section": ("section", "merchant_section", "pog_section", "merchant section", "pog section"),
+    "merchant_category": ("merchant_category", "category", "merch_category", "merchant category", "merch category"),
+    "segment": ("segment", "merchant_segment", "merch_segment", "merchant segment", "merch segment"),
 }
 
 

@@ -103,6 +103,16 @@ class SamsOcrCandidate:
     unresolved_upc: str
     item_number: str
     product_name: str
+    pog: str
+    side: str
+    row: str
+    column: str
+    upc12: str
+    description: str
+    cpp: str
+    expected_brand: str
+    expected_denomination: str
+    expected_pack_quantity: str
     candidate_rank: int
     candidate_file_path: str
     candidate_filename: str
@@ -126,6 +136,16 @@ class SamsOcrCandidate:
             "unresolved_upc": self.unresolved_upc,
             "item_number": self.item_number,
             "product_name": self.product_name,
+            "pog": self.pog,
+            "side": self.side,
+            "row": self.row,
+            "column": self.column,
+            "upc12": self.upc12,
+            "description": self.description,
+            "cpp": self.cpp,
+            "expected_brand": self.expected_brand,
+            "expected_denomination": self.expected_denomination,
+            "expected_pack_quantity": self.expected_pack_quantity,
             "candidate_rank": self.candidate_rank,
             "candidate_file_path": self.candidate_file_path,
             "candidate_filename": self.candidate_filename,
@@ -344,6 +364,16 @@ def score_ocr_candidate(
         unresolved_upc=normalize_upc(product.get("upc")),
         item_number=normalize_upc(product.get("item_number")),
         product_name=product_name,
+        pog=str(product.get("pog", "") or "").strip(),
+        side=str(product.get("side", "") or "").strip(),
+        row=str(product.get("row", "") or "").strip(),
+        column=str(product.get("column", "") or "").strip(),
+        upc12=normalize_upc(product.get("upc12")),
+        description=str(product.get("description") or product_name or "").strip(),
+        cpp=str(product.get("cpp", "") or "").strip(),
+        expected_brand=expected_brand,
+        expected_denomination=expected_denomination,
+        expected_pack_quantity=expected_pack,
         candidate_rank=0,
         candidate_file_path=image.file_path,
         candidate_filename=image.filename,

@@ -28,6 +28,8 @@ SOURCE_ZIP_BASENAME = "zip_basename"
 SOURCE_ZIP_UPC = "zip_upc"
 SOURCE_ZIP_ITEM_NUMBER = "zip_item_number"
 SOURCE_UNRESOLVED = "unresolved"
+SOURCE_INTENTIONAL_BLANK = "intentional_blank"
+SOURCE_GCI_PENDING_IMAGE = "gci_pending_image"
 
 
 @dataclass
@@ -58,6 +60,8 @@ class SamsManualImageMappingIndex:
     mapping_path: str = ""
     by_upc: dict[str, str] = field(default_factory=dict)
     by_item_number: dict[str, str] = field(default_factory=dict)
+    source_by_upc: dict[str, str] = field(default_factory=dict)
+    source_by_item_number: dict[str, str] = field(default_factory=dict)
     approved_count: int = 0
     loaded_count: int = 0
     skipped_count: int = 0
@@ -329,6 +333,21 @@ def _lookup_manual_mapping(
     return ""
 
 
+def lookup_manual_mapping_source(
+    identifier: str,
+    mapping: dict[str, str],
+) -> str:
+    if not mapping:
+        return ""
+
+    for key in _identifier_keys(identifier):
+        source = mapping.get(key)
+        if source:
+            return source
+
+    return ""
+
+
 def load_sams_manual_image_mappings(
     mapping_path: str | Path = "unresolved/manual_image_mappings.csv",
 ) -> SamsManualImageMappingIndex:
@@ -353,16 +372,19 @@ def load_sams_manual_image_mappings(
                     continue
 
                 result.approved_count += 1
+                source = str(row.get("source", "")).strip()
 
                 upc = str(row.get("UPC", row.get("upc", ""))).strip()
                 for key in _identifier_keys(upc):
                     result.by_upc.setdefault(key, file_path)
+                    result.source_by_upc.setdefault(key, source)
 
                 item_number = str(
                     row.get("Item Number", row.get("item_number", ""))
                 ).strip()
                 for key in _identifier_keys(item_number):
                     result.by_item_number.setdefault(key, file_path)
+                    result.source_by_item_number.setdefault(key, source)
     except Exception as exc:
         result.warnings.append(
             f"Sam's manual image mappings could not be loaded from {path}: {exc}"
@@ -465,12 +487,6 @@ def resolve_sams_image_path(
 ) -> SamsResolvedImage:
     original = str(file_path or "").strip()
 
-    if original and _can_open_image(original):
-        return SamsResolvedImage(
-            resolved_path=original,
-            source=SOURCE_ORIGINAL_PATH,
-        )
-
     if manual_index is not None:
         manual_upc = _lookup_manual_mapping(upc, manual_index.by_upc)
         if manual_upc:
@@ -488,6 +504,12 @@ def resolve_sams_image_path(
                 resolved_path=manual_item_number,
                 source=SOURCE_MANUAL_ITEM_NUMBER,
             )
+
+    if original and _can_open_image(original):
+        return SamsResolvedImage(
+            resolved_path=original,
+            source=SOURCE_ORIGINAL_PATH,
+        )
 
     local_result = _resolve_from_index(
         original_path=original,

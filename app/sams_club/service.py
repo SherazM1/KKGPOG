@@ -17,12 +17,15 @@ from app.sams_club.image_resolution import (
     SOURCE_ZIP_BASENAME,
     SOURCE_ZIP_ITEM_NUMBER,
     SOURCE_ZIP_UPC,
+    SOURCE_GCI_PENDING_IMAGE,
+    SOURCE_INTENTIONAL_BLANK,
     build_sams_image_zip_index,
     build_sams_local_image_index,
     _identifier_keys,
     _lookup_by_identifier,
     _lookup_by_identifier_with_key,
     load_sams_manual_image_mappings,
+    lookup_manual_mapping_source,
     resolve_sams_image_path,
 )
 from app.sams_club.models import SamsPlanogram, SamsRow, SamsSidePage, SamsSlot
@@ -46,6 +49,7 @@ _REQUIRED_DISPLAY_FIELDS: tuple[tuple[str, str], ...] = (
     ("upc", "missing upc"),
     ("cpp", "missing cpp"),
 )
+_KNOWN_SAMS_FP_GFT_IDENTIFIERS = {"SAMTEMP6"}
 
 
 @dataclass
@@ -112,6 +116,11 @@ def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
         "cpp": _as_text(record.get("cpp")),
         "file_path": _as_text(record.get("file_path")),
         "description": _as_text(record.get("description")),
+        "intentional_blank": record.get("intentional_blank"),
+        "image_status": _as_text(record.get("image_status")),
+        "section": _as_text(record.get("section")),
+        "merchant_category": _as_text(record.get("merchant_category")),
+        "segment": _as_text(record.get("segment")),
     }
 
 
@@ -145,6 +154,62 @@ def _has_description(record: dict[str, Any]) -> bool:
         _as_text(record.get(field_name))
         for field_name in ("description", "desc_1", "desc_2", "brand")
     )
+
+
+def _normalize_classification_text(value: Any) -> str:
+    return " ".join(_as_text(value).upper().replace("_", " ").split())
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return _normalize_classification_text(value) in {"TRUE", "YES", "Y", "1"}
+
+
+def _contains_sams_fp_gft(value: Any) -> bool:
+    return _normalize_classification_text(value) == "SAMS FP GFT"
+
+
+def is_sams_intentional_blank(record: dict[str, Any]) -> bool:
+    """Return whether the record is an intentional Sam's blank slot."""
+    if _truthy(record.get("intentional_blank")):
+        return True
+    if _normalize_classification_text(record.get("image_status")) == "INTENTIONAL BLANK":
+        return True
+    for field_name in ("merchant_category", "segment", "section"):
+        if _contains_sams_fp_gft(record.get(field_name)):
+            return True
+    known_identifiers = {
+        _normalize_classification_text(record.get(field_name))
+        for field_name in ("item_number", "upc", "upc12")
+    }
+    if known_identifiers & _KNOWN_SAMS_FP_GFT_IDENTIFIERS:
+        return True
+    return False
+
+
+def is_sams_gci_pending_image(record: dict[str, Any]) -> bool:
+    """Return whether the record is a GCI slot whose image is out of scope."""
+    image_status = _normalize_classification_text(record.get("image_status"))
+    if image_status in {"GCI IMAGE PENDING", "GCI PENDING IMAGE"}:
+        return True
+
+    haystack = _normalize_classification_text(
+        " ".join(
+            _as_text(record.get(field_name))
+            for field_name in (
+                "merchant_category",
+                "segment",
+                "section",
+                "brand",
+                "desc_1",
+                "desc_2",
+                "description",
+                "item_number",
+            )
+        )
+    )
+    return bool(haystack and "GCI" in haystack.split())
 
 
 def _slot_context(record: dict[str, Any]) -> str:
@@ -382,19 +447,30 @@ def build_sams_planogram_structure(
     resolved_by_local_item_number = 0
     resolved_by_manual_upc = 0
     resolved_by_manual_item_number = 0
+    resolved_by_ocr_approved_mapping = 0
     resolved_by_ocr_filename_upc = 0
     resolved_by_ocr_upc_variant = 0
     resolved_by_zip_basename = 0
     resolved_by_zip_upc = 0
     resolved_by_zip_item_number = 0
     unresolved = 0
+    intentional_blank_positions = 0
+    gci_pending_image_positions = 0
     unresolved_examples: list[dict[str, Any]] = []
     ocr_review_records: list[dict[str, Any]] = []
     image_resolution_samples: list[dict[str, Any]] = []
     is_tabular_source = extraction.source_type in {"xlsx", "csv"}
 
     for record in selected_records:
-        slot_warnings = _append_record_warnings(record, warnings)
+        intentional_blank = is_sams_intentional_blank(record)
+        gci_pending_image = (
+            not intentional_blank and is_sams_gci_pending_image(record)
+        )
+        slot_warnings = (
+            []
+            if intentional_blank or gci_pending_image
+            else _append_record_warnings(record, warnings)
+        )
         supplied_file_path = record["file_path"]
         supplied_file_path_exists = False
         if supplied_file_path:
@@ -408,16 +484,29 @@ def build_sams_planogram_structure(
             else ""
         )
 
-        resolution = resolve_sams_image_path(
-            file_path=resolver_file_path,
-            upc=record["upc"],
-            item_number=record["item_number"],
-            zip_index=image_zip_index,
-            local_index=local_image_index,
-            manual_index=manual_image_index,
-        )
+        if intentional_blank:
+            resolution = resolve_sams_image_path(file_path="", upc="", item_number="")
+            resolution.source = SOURCE_INTENTIONAL_BLANK
+            intentional_blank_positions += 1
+        elif gci_pending_image:
+            resolution = resolve_sams_image_path(file_path="", upc="", item_number="")
+            resolution.source = SOURCE_GCI_PENDING_IMAGE
+            gci_pending_image_positions += 1
+        else:
+            resolution = resolve_sams_image_path(
+                file_path=resolver_file_path,
+                upc=record["upc"],
+                item_number=record["item_number"],
+                zip_index=image_zip_index,
+                local_index=local_image_index,
+                manual_index=manual_image_index,
+            )
         ocr_matched_index_key = ""
-        if not resolution.resolved_path:
+        if (
+            not intentional_blank
+            and not gci_pending_image
+            and not resolution.resolved_path
+        ):
             (
                 ocr_resolved_path,
                 ocr_resolution_source,
@@ -444,8 +533,20 @@ def build_sams_planogram_structure(
             resolved_by_local_item_number += 1
         elif resolution.source == SOURCE_MANUAL_UPC:
             resolved_by_manual_upc += 1
+            manual_source = lookup_manual_mapping_source(
+                record["upc"],
+                manual_image_index.source_by_upc,
+            )
+            if "OCR" in manual_source.upper():
+                resolved_by_ocr_approved_mapping += 1
         elif resolution.source == SOURCE_MANUAL_ITEM_NUMBER:
             resolved_by_manual_item_number += 1
+            manual_source = lookup_manual_mapping_source(
+                record["item_number"],
+                manual_image_index.source_by_item_number,
+            )
+            if "OCR" in manual_source.upper():
+                resolved_by_ocr_approved_mapping += 1
         elif resolution.source == SOURCE_OCR_FILENAME_UPC:
             resolved_by_ocr_filename_upc += 1
         elif resolution.source == SOURCE_OCR_UPC_VARIANT:
@@ -456,6 +557,11 @@ def build_sams_planogram_structure(
             resolved_by_zip_upc += 1
         elif resolution.source == SOURCE_ZIP_ITEM_NUMBER:
             resolved_by_zip_item_number += 1
+        elif resolution.source in {
+            SOURCE_INTENTIONAL_BLANK,
+            SOURCE_GCI_PENDING_IMAGE,
+        }:
+            pass
         else:
             unresolved += 1
             ocr_review_records.append(record)
@@ -466,9 +572,9 @@ def build_sams_planogram_structure(
                         "side": record["side"],
                         "row": record["row"],
                         "column": record["column"],
-                    "upc": record["upc"],
-                    "upc12": record["upc12"],
-                    "item_number": record["item_number"],
+                        "upc": record["upc"],
+                        "upc12": record["upc12"],
+                        "item_number": record["item_number"],
                         "file_path": slot_file_path,
                     }
                 )
@@ -553,6 +659,12 @@ def build_sams_planogram_structure(
             resolved_image_path=resolution.resolved_path,
             image_resolution_source=resolution.source,
             description=record["description"],
+            image_status=record["image_status"],
+            intentional_blank=intentional_blank,
+            gci_pending_image=gci_pending_image,
+            section=record["section"],
+            merchant_category=record["merchant_category"],
+            segment=record["segment"],
             warnings=slot_warnings,
         )
 
@@ -643,6 +755,19 @@ def build_sams_planogram_structure(
     records_with_item_number = sum(
         1 for record in selected_records if record["item_number"]
     )
+    resolved_image_count = (
+        resolved_by_original_path
+        + resolved_by_local_basename
+        + resolved_by_local_upc
+        + resolved_by_local_item_number
+        + resolved_by_manual_upc
+        + resolved_by_manual_item_number
+        + resolved_by_ocr_filename_upc
+        + resolved_by_ocr_upc_variant
+        + resolved_by_zip_basename
+        + resolved_by_zip_upc
+        + resolved_by_zip_item_number
+    )
     local_image_root_exists = (
         bool(local_image_index and local_image_index.root_dir)
         and Path(local_image_index.root_dir).is_dir()
@@ -709,6 +834,18 @@ def build_sams_planogram_structure(
                 image_zip_index.duplicate_key_count
             ),
             "total_slots": selected_slot_count,
+            "total_positioned_products": selected_slot_count,
+            "resolved_images": resolved_image_count,
+            "direct_upc_matches": (
+                resolved_by_local_upc
+                + resolved_by_zip_upc
+            ),
+            "saved_manual_matches": (
+                resolved_by_manual_upc + resolved_by_manual_item_number
+            ),
+            "ocr_approved_matches": resolved_by_ocr_approved_mapping,
+            "intentional_blank_positions": intentional_blank_positions,
+            "gci_pending_image_positions": gci_pending_image_positions,
             "resolved_by_explicit_path": resolved_by_original_path,
             "resolved_by_original_path": resolved_by_original_path,
             "resolved_by_local_basename": resolved_by_local_basename,

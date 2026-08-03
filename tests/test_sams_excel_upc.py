@@ -13,6 +13,8 @@ from app.sams_club.image_resolution import (
     SOURCE_LOCAL_ITEM_NUMBER,
     SOURCE_LOCAL_UPC,
     SOURCE_MANUAL_UPC,
+    SOURCE_GCI_PENDING_IMAGE,
+    SOURCE_INTENTIONAL_BLANK,
     SOURCE_OCR_FILENAME_UPC,
     SOURCE_OCR_UPC_VARIANT,
     SOURCE_UNRESOLVED,
@@ -35,7 +37,11 @@ from app.sams_club.ocr_image_resolution import (
     upc_comparison_keys,
 )
 from app.sams_club.render_planogram import render_sams_planogram_pdf
-from app.sams_club.service import build_sams_planogram_structure
+from app.sams_club.service import (
+    build_sams_planogram_structure,
+    is_sams_gci_pending_image,
+    is_sams_intentional_blank,
+)
 from scripts.catalog_sams_images import catalog_image
 from scripts.match_sams_unresolved import build_candidate_matches
 
@@ -69,6 +75,12 @@ class SamsExcelUpcTests(unittest.TestCase):
 
     def _write_corrupt_file(self, path: Path) -> None:
         path.write_bytes(b"not an image")
+
+    def _pdf_text(self, pdf_bytes: bytes) -> str:
+        import fitz
+
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            return "\n".join(page.get_text() for page in doc)
 
     def test_upc_header_named_upc_is_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -509,6 +521,180 @@ class SamsExcelUpcTests(unittest.TestCase):
             warning_text,
         )
         self.assertNotIn("missing file_path", warning_text)
+
+    def test_sams_fp_gft_rows_are_blank_and_excluded_from_review(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workbook = root / "source.xlsx"
+            pd.DataFrame(
+                [
+                    {
+                        "POG": "POG1",
+                        "Side": 1,
+                        "Row": 1,
+                        "Column": 1,
+                        "Item Number": "SAMTEMP6",
+                        "UPC": "000000001816",
+                        "Retail": "181",
+                        "CPP": "1",
+                        "Description": "Temporary blank",
+                        "Merchant Category": "SAMS FP GFT",
+                    }
+                ]
+            ).to_excel(workbook, index=False)
+
+            result = build_sams_planogram_structure(
+                workbook,
+                selected_pog="POG1",
+                local_image_root="",
+            )
+            pdf_result = render_sams_planogram_pdf(result.planogram)
+
+        slot = result.planogram.side_pages[0].rows[0].slots[0]
+        image_debug = result.debug["image_resolution"]
+        pdf_text = self._pdf_text(pdf_result.pdf_bytes)
+        self.assertTrue(slot.intentional_blank)
+        self.assertEqual(slot.image_resolution_source, SOURCE_INTENTIONAL_BLANK)
+        self.assertEqual(image_debug["intentional_blank_positions"], 1)
+        self.assertEqual(image_debug["unresolved"], 0)
+        self.assertEqual(image_debug["ocr_candidates"], [])
+        self.assertEqual(pdf_result.missing_image_slots, 0)
+        self.assertNotIn("$181", pdf_text)
+        self.assertNotIn("SAMTEMP6", pdf_text)
+        self.assertNotIn("Image unavailable", pdf_text)
+
+    def test_intentional_blank_detection_uses_authoritative_fields(self) -> None:
+        self.assertTrue(is_sams_intentional_blank({"intentional_blank": "TRUE"}))
+        self.assertTrue(is_sams_intentional_blank({"image_status": "INTENTIONAL_BLANK"}))
+        self.assertTrue(is_sams_intentional_blank({"section": "SAMS FP GFT"}))
+        self.assertTrue(is_sams_intentional_blank({"merchant_category": "SAMS FP GFT"}))
+        self.assertTrue(is_sams_intentional_blank({"segment": "SAMS FP GFT"}))
+        self.assertTrue(is_sams_intentional_blank({"item_number": "SAMTEMP6"}))
+        self.assertFalse(is_sams_intentional_blank({"section": "NORMAL CARDS"}))
+
+    def test_gci_rows_preserve_values_positions_and_skip_review(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workbook = root / "source.xlsx"
+            pd.DataFrame(
+                [
+                    {
+                        "POG": "POG1",
+                        "Side": 1,
+                        "Row": 2,
+                        "Column": 3,
+                        "Item Number": "GCI-123",
+                        "UPC": "19674217114",
+                        "12 Digit UPC": "196742171143",
+                        "Retail": "50",
+                        "CPP": "12",
+                        "Description": "GCI display holder",
+                        "Section": "GCI",
+                    }
+                ]
+            ).to_excel(workbook, index=False)
+
+            result = build_sams_planogram_structure(
+                workbook,
+                selected_pog="POG1",
+                local_image_root="",
+            )
+            pdf_result = render_sams_planogram_pdf(result.planogram)
+
+        slot = result.planogram.side_pages[0].rows[0].slots[0]
+        image_debug = result.debug["image_resolution"]
+        self.assertTrue(is_sams_gci_pending_image({"section": "GCI"}))
+        self.assertTrue(is_sams_gci_pending_image({"image_status": "GCI_IMAGE_PENDING"}))
+        self.assertTrue(slot.gci_pending_image)
+        self.assertEqual(slot.image_resolution_source, SOURCE_GCI_PENDING_IMAGE)
+        self.assertEqual((slot.side, slot.row, slot.column), (1, 2, 3))
+        self.assertEqual(slot.upc, "19674217114")
+        self.assertEqual(slot.cpp, "12")
+        self.assertEqual(image_debug["gci_pending_image_positions"], 1)
+        self.assertEqual(image_debug["unresolved"], 0)
+        self.assertEqual(image_debug["ocr_candidates"], [])
+        self.assertEqual(pdf_result.missing_image_slots, 0)
+
+    def test_normal_unresolved_products_still_receive_ocr_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workbook = root / "source.xlsx"
+            catalog_path = root / "image_catalog.csv"
+            image_path = root / "ps.jpg"
+            self._write_image(image_path)
+            self._write_workbook(
+                workbook,
+                "UPC",
+                "11111111111",
+                item_number="222",
+            )
+            pd.DataFrame(
+                [
+                    {
+                        "file_path": str(image_path),
+                        "filename": image_path.name,
+                        "filename_upc": "",
+                        "detected_text": "PlayStation $50",
+                        "detected_brand": "PlayStation",
+                        "detected_denomination": "$50",
+                        "catalog_status": "ok",
+                    }
+                ]
+            ).to_csv(catalog_path, index=False)
+
+            result = build_sams_planogram_structure(
+                workbook,
+                selected_pog="POG1",
+                local_image_root="",
+                ocr_catalog_file=catalog_path,
+            )
+
+        image_debug = result.debug["image_resolution"]
+        self.assertEqual(image_debug["unresolved"], 1)
+        self.assertEqual(image_debug["ocr_catalog_candidates_available"], 1)
+        candidate = image_debug["ocr_candidates"][0]
+        self.assertEqual(candidate["pog"], "POG1")
+        self.assertEqual(candidate["side"], "1")
+        self.assertEqual(candidate["row"], "1")
+        self.assertEqual(candidate["column"], "1")
+        self.assertEqual(candidate["item_number"], "222")
+        self.assertIn("expected_brand", candidate)
+
+    def test_repeated_normal_products_require_one_approval_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workbook = root / "source.xlsx"
+            catalog_path = root / "image_catalog.csv"
+            image_path = root / "ps.jpg"
+            self._write_image(image_path)
+            pd.DataFrame(
+                [
+                    {"POG": "POG1", "Side": 1, "Row": 1, "Column": 1, "Item Number": "222", "UPC": "11111111111", "Description": "PlayStation $50"},
+                    {"POG": "POG1", "Side": 1, "Row": 1, "Column": 2, "Item Number": "222", "UPC": "11111111111", "Description": "PlayStation $50"},
+                ]
+            ).to_excel(workbook, index=False)
+            pd.DataFrame(
+                [
+                    {
+                        "file_path": str(image_path),
+                        "filename": image_path.name,
+                        "detected_text": "PlayStation $50",
+                        "detected_brand": "PlayStation",
+                        "detected_denomination": "$50",
+                        "catalog_status": "ok",
+                    }
+                ]
+            ).to_csv(catalog_path, index=False)
+
+            result = build_sams_planogram_structure(
+                workbook,
+                selected_pog="POG1",
+                local_image_root="",
+                ocr_catalog_file=catalog_path,
+            )
+
+        candidates = result.debug["image_resolution"]["ocr_candidates"]
+        self.assertEqual(len(candidates), 1)
 
     def test_ui_local_image_root_reaches_service_index_builder(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
