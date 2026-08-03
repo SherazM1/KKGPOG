@@ -1,0 +1,2249 @@
+review_group_id,unresolved_upc,calculated_upc12,item_number,product_name,description,expected_brand,expected_denomination,expected_pack_quantity,cpp,occurrence_count,pogs,positions,candidate_rank,candidate_file_path,candidate_filename,candidate_filename_upc,detected_brand,detected_denomination,detected_pack_quantity,detected_text,identifier_score,brand_score,denomination_score,pack_score,text_score,total_score,confidence,score_reasons,selected,approved,review_notes
+RG00001,19674217114,196742171143,990544241,Zift Holiday,1 X $25,ZIFT,$25,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R1:C1 | XMAS 2026 - MD-NJ - 6:S1:R1:C2 | XMAS 2026 - NATIONAL - 6:S1:R1:C1 | XMAS 2026 - NATIONAL - 6:S1:R1:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C2,1,Z:\Kendal King\Images\ 196742060737.jpg,196742060737.jpg,196742060737,APPLEBEES,$25,,"pe / $25-$500
+Applebees © — cs can
+? i Applebees
+~~
+$25-5500
+@ oe
+Applebees GIFT CARD
+HOLDER
+Z |
+22
+Applebees
+oe Aa
+Ala
+@ 25-5500
+ae WY, wy
+2 ants
+Z eo
+Z =
+bh” ~
+|
+ee
+AYa",0,-60,40,0,7,-13,Low,brand conflict; denomination match; token overlap: $25,FALSE,FALSE,
+RG00001,19674217114,196742171143,990544241,Zift Holiday,1 X $25,ZIFT,$25,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R1:C1 | XMAS 2026 - MD-NJ - 6:S1:R1:C2 | XMAS 2026 - NATIONAL - 6:S1:R1:C1 | XMAS 2026 - NATIONAL - 6:S1:R1:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C2,2,Z:\Kendal King\Images\ 196742105827.jpg,196742105827.jpg,196742105827,PANERA,$25,,"BREAD°
+BUY A $25 PANERA BREAD
+GIFT CARD, GET A FREE BAGEL.
+See reverse for details.
+Fanera LG ath
+BREAD Le ES a Sao
+Le Sap : a ab ce
+Po erate Ga tn ne *
+= ae ee a lt
+~@ 39?
+0 ee ae 7 Nhe ¢ ra
+ote S ota ea
+BREAD~°
+BUY A $25 PANERA BREAD®
+10 ai ys te
+Fanera PE Ns, a
+BREAD’  efhe ~eoe wr, i
+Me ee
+oy Ly. a. ere. i ¥ * Pe
+EI SR MEER
+y BN a and “J oy yes: ae Se
+a- = ; a gs ss one
+ie a a en
+GIFTCARD \ REE Gee ee TS
+Jy ES er
+Leen
+BREAD
+BUY AS25 PANERA BREAD®
+See roverse for details.
+. o6€ ~
+ef eee
+gh Case Be:
+BREAD oy toh bel bd te & bl 4
+Like es "" * ae ose, nS té
+A . bate Acs a 3 . “wa i N
+NB) oA OS
+eee ae
+05 CNRS af none
+GIFT CARD | ia ‘as’ Rete Re",0,-60,40,0,7,-13,Low,brand conflict; denomination match; token overlap: $25,FALSE,FALSE,
+RG00001,19674217114,196742171143,990544241,Zift Holiday,1 X $25,ZIFT,$25,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R1:C1 | XMAS 2026 - MD-NJ - 6:S1:R1:C2 | XMAS 2026 - NATIONAL - 6:S1:R1:C1 | XMAS 2026 - NATIONAL - 6:S1:R1:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C2,3,Z:\Kendal King\Images\ 799366409212.jpg,799366409212.jpg,799366409212,GE,$25,,"GE ee 25-5500
+bakers '
+square
+a / ¢
+s« Gift card
+GEOED %25-'500
+bakers
+Square 4
+ad =r |
+ben gift card
+~~ — $25-$500
+ar
+akers a * “ae i
+~. Gift card""",0,-60,40,0,7,-13,Low,brand conflict; denomination match; token overlap: $25,FALSE,FALSE,
+RG00001,19674217114,196742171143,990544241,Zift Holiday,1 X $25,ZIFT,$25,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R1:C1 | XMAS 2026 - MD-NJ - 6:S1:R1:C2 | XMAS 2026 - NATIONAL - 6:S1:R1:C1 | XMAS 2026 - NATIONAL - 6:S1:R1:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C2,4,Z:\Kendal King\Images\ 799366949541.jpg,799366949541.jpg,799366949541,AN,$25,,"aN aaa $25-
+$500
+Airbnb gift card
+With Airbnb, book places
+to stay and things to do
+all over the world.
+& “9 &%
+(2 aaa $25-",0,-60,40,0,7,-13,Low,brand conflict; denomination match; token overlap: $25,FALSE,FALSE,
+RG00001,19674217114,196742171143,990544241,Zift Holiday,1 X $25,ZIFT,$25,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R1:C1 | XMAS 2026 - MD-NJ - 6:S1:R1:C2 | XMAS 2026 - NATIONAL - 6:S1:R1:C1 | XMAS 2026 - NATIONAL - 6:S1:R1:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C2,5,Z:\Kendal King\Images\10196742104509.jpg,10196742104509.jpg,10196742104509,OUTBACK,$25,,"rat) @ufiem °25
+-a waa
+OUTBACK
+STEAKHOUSE®
+$25
+a cE
+Sunes’
+io quem *25
+-_ae hE rl el rr
+a EEE
+_—
+oo ;
+ol",0,-60,40,0,7,-13,Low,brand conflict; denomination match; token overlap: $25,FALSE,FALSE,
+RG00002,19674217113,196742171136,990547019,Zift Holiday,1 X $50,ZIFT,$50,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R1:C3 | XMAS 2026 - MD-NJ - 6:S1:R1:C4 | XMAS 2026 - NATIONAL - 6:S1:R1:C3 | XMAS 2026 - NATIONAL - 6:S1:R1:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C4,1,Z:\Kendal King\Images\033878704701.JPG,033878704701.JPG,033878704701,THE,$50,,"THE COFFEE BEAN &TEA LEAF’
+» SAVE
+) *50 Value
+: FOR ONLY
+EXTREME VALUE
+& THE COFFEE BEAN & TEA LEAF’
+ll “| SAVE
+_ Se) 20
+$50 Value
+Mil
+— SAVE
+=> 2)
+a
+LL $39. 98
+c/o .
+&) GET TWO $25 GIFT CARDS
+TEAS’
+| AM",0,-60,40,0,7,-13,Low,brand conflict; denomination match; token overlap: $50,FALSE,FALSE,
+RG00002,19674217113,196742171136,990547019,Zift Holiday,1 X $50,ZIFT,$50,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R1:C3 | XMAS 2026 - MD-NJ - 6:S1:R1:C4 | XMAS 2026 - NATIONAL - 6:S1:R1:C3 | XMAS 2026 - NATIONAL - 6:S1:R1:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C4,2,Z:\Kendal King\Images\196742004656.JPG,196742004656.JPG,196742004656,EXTREME,$50,,"EXTREME $50
+VALUE
+ory 25)
+x ‘ ~» =
+Ls, Feogt |
+tt. 1) Pa e every bite a better burger
+Ye |
+Tere |
+; os s Es
+SS |
+Bs Se, Bee
+= BURGER
+et Pin a |
+(Sts, =i
+pe. Sone? ay ay od every bite a better burger
+e |
+at °25)'
+ESD = evga 2 every bite a better burger
+.. ey j |
+PES ee TS HK KH HS
+Aes B. ry ei
+PODS ak hig so a Oe .
+scsi : io Mee F every bite a better burger
+Fe I a
+Madi °25'
+arene aoe hice ‘ every bite o better burger
+L. ~ : |
+tee 5-57 FH TH HH HR HH
+ors . ry e.
+ON om pa ME .
+ae a Me Yr every bite o better burger
+fa a ee ae ee ee ee ee ee ee ee ee et",0,-60,40,0,7,-13,Low,brand conflict; denomination match; token overlap: $50,FALSE,FALSE,
+RG00002,19674217113,196742171136,990547019,Zift Holiday,1 X $50,ZIFT,$50,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R1:C3 | XMAS 2026 - MD-NJ - 6:S1:R1:C4 | XMAS 2026 - NATIONAL - 6:S1:R1:C3 | XMAS 2026 - NATIONAL - 6:S1:R1:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C4,3,Z:\Kendal King\Images\196742007114.jpg,196742007114.jpg,196742007114,Z,$50,,"z 197
+ag Pe, tr Ve Weds pe og he ae""
+Oe a ee
+ALL AMERICAN fees
+& SPORTS THEATER
+- eet
+; 7
+iz io
+fe ae OC ee
+$50
+>
+ALL AMERICAN
+¥ a Pie.
+Ui Sel ig ees. Ae “Z tae
+aes: POEe eo Sle fe AB ry ¢:
+- ‘wi
+STEASe A ate
+Tope, S Parag bo
+Re i BE
+eS i ae a
+*50 > i
+ya 4; 4, .
+Noth Oe om
+ae A ced te LP",0,-60,40,0,7,-13,Low,brand conflict; denomination match; token overlap: $50,FALSE,FALSE,
+RG00002,19674217113,196742171136,990547019,Zift Holiday,1 X $50,ZIFT,$50,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R1:C3 | XMAS 2026 - MD-NJ - 6:S1:R1:C4 | XMAS 2026 - NATIONAL - 6:S1:R1:C3 | XMAS 2026 - NATIONAL - 6:S1:R1:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C4,4,Z:\Kendal King\Images\196742007367.JPG,196742007367.JPG,196742007367,A,$50,,"™
+a
+aa
+EXTREME  —*—— $50
+VALUE —
+\
+| >)
+{ Gea fo3.
+owt a ky heigl) my eS fea
+, ~~ a” a -
+Peat diy Og L oe
+(GEau 95)
+olorndtn sete BW
+q ~
+EXTREME $50
+VALUE
+sountaln Bigg
+(EAU D5)
+So’
+Slovan sete BO
+My ee
+cS eG Prope) aM
+Qe E_—
+‘ x > si is
+prountaln Pigg
+ee, $25
+“Stevan Seyte CPD
+Pes. got i a ‘ ae # y
+ys xa se OO
+- ae ate pe aioe Aly tyme
+, ae ——_
+eo e n
+EXTREME $ 50
+mountain Big,
+- ae i a $
+™ re a we A S nt
+a OX ae att ""
+sronntale: Pies
+Storie Sigh BO *
+OT RE a Se 7 aad ae a7 at
+en, —— gle pl .",0,-60,40,0,7,-13,Low,brand conflict; denomination match; token overlap: $50,FALSE,FALSE,
+RG00002,19674217113,196742171136,990547019,Zift Holiday,1 X $50,ZIFT,$50,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R1:C3 | XMAS 2026 - MD-NJ - 6:S1:R1:C4 | XMAS 2026 - NATIONAL - 6:S1:R1:C3 | XMAS 2026 - NATIONAL - 6:S1:R1:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R1:C4,5,Z:\Kendal King\Images\196742007404.jpg,196742007404.jpg,196742007404,BRUNCH,$50,,"BRUNCH
+& BOOZE
++ ae.
+RK? i Fa - > SESS
+"" i _
+EXTREME quis $50
+VALUE
+SCUITS
+»
+RUNCH
+J}
+V}
+“Ee, $50
+EXTREME eufiie $ 50
+BISCUITS
+Se Wee",0,-60,40,0,7,-13,Low,brand conflict; denomination match; token overlap: $50,FALSE,FALSE,
+RG00005,19674217480,196742174809,990548992,Visa,1 X $50,VISA,$50,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R2:C1 | XMAS 2026 - MD-NJ - 6:S1:R2:C2 | XMAS 2026 - NATIONAL - 6:S1:R2:C1 | XMAS 2026 - NATIONAL - 6:S1:R2:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C2,1,Z:\Kendal King\Images\196742037807.jpg,196742037807.jpg,196742037807,VISA,$50,,"i.
+yA
+7
+Kf (
+{ |
+a ?
+VISA
+Me HAPPY. Bg $50
+egg 0 Eg
+L
+\
+SX | (
+?
+oe HAPPY we $50
+Ffolidays WZ
+: ZyS
+me 0 OE a
+VA
+\ ~
+A ( (
+iw
+0
+Se HAPPY Be $50
+, OZ
+. ZS
+x BE ag",0,40,40,0,14,94,High,"brand match; denomination match; token overlap: $50, VISA",FALSE,FALSE,
+RG00005,19674217480,196742174809,990548992,Visa,1 X $50,VISA,$50,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R2:C1 | XMAS 2026 - MD-NJ - 6:S1:R2:C2 | XMAS 2026 - NATIONAL - 6:S1:R2:C1 | XMAS 2026 - NATIONAL - 6:S1:R2:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C2,2,Z:\Kendal King\Images\196742072266.jpg,196742072266.jpg,196742072266,VISA,$50,,"(ee
+( / ( ?
+VISA
+SS HAPPY % $50 f
+""aE,
+Se HAPPY %& $50
+( ( \
+( ( NYG
+ih HAPPY Fe $50
+tf . . . sit
+aS) & ate. ron i .
+Vanilla IA see no nits uerin ruscrase",0,40,40,0,14,94,High,"brand match; denomination match; token overlap: $50, VISA",FALSE,FALSE,
+RG00005,19674217480,196742174809,990548992,Visa,1 X $50,VISA,$50,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R2:C1 | XMAS 2026 - MD-NJ - 6:S1:R2:C2 | XMAS 2026 - NATIONAL - 6:S1:R2:C1 | XMAS 2026 - NATIONAL - 6:S1:R2:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C2,3,Z:\Kendal King\Images\799366696209.jpg,799366696209.jpg,799366696209,VISA,$50,,"‘VISA ee nO
+FO Gq YOU
+Ma P 7 wes
+FO G YOU
+ae eee
+| y — ae anil
+VISA _ $50
++1496 Purchase Charge
+C aid va . ~~ ~ ~-
+aaron ME Manilla:",0,40,40,0,14,94,High,"brand match; denomination match; token overlap: $50, VISA",FALSE,FALSE,
+RG00005,19674217480,196742174809,990548992,Visa,1 X $50,VISA,$50,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R2:C1 | XMAS 2026 - MD-NJ - 6:S1:R2:C2 | XMAS 2026 - NATIONAL - 6:S1:R2:C1 | XMAS 2026 - NATIONAL - 6:S1:R2:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C2,4,Z:\Kendal King\Images\799366967538.jpg,799366967538.jpg,799366967538,VISA,$50,,"Gust You
+NRC ES
+NRA
+N82 2
+Vanilla. ees nerenpuncse
+VISA $50
+NIRA
+Si AA
+Vanilla. ES et rorcisce
+VISA — $50.
+Ss =
+oR
+SS 2
+Vanilla. MANO FEES AFTER PURCHASE",0,40,40,0,14,94,High,"brand match; denomination match; token overlap: $50, VISA",FALSE,FALSE,
+RG00005,19674217480,196742174809,990548992,Visa,1 X $50,VISA,$50,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R2:C1 | XMAS 2026 - MD-NJ - 6:S1:R2:C2 | XMAS 2026 - NATIONAL - 6:S1:R2:C1 | XMAS 2026 - NATIONAL - 6:S1:R2:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C2,5,Z:\Kendal King\Images\OLD - Not Named UPC Only\799366696209_Visa Shiny Hex Box $50.jpg,799366696209_Visa Shiny Hex Box $50.jpg,799366696209,VISA,$50,,"‘VISA ee nO
+FO Gq YOU
+Ma P 7 wes
+FO G YOU
+ae eee
+| y — ae anil
+VISA _ $50
++1496 Purchase Charge
+C aid va . ~~ ~ ~-
+aaron ME Manilla:",0,40,40,0,14,94,High,"brand match; denomination match; token overlap: $50, VISA",FALSE,FALSE,
+RG00006,19674217481,196742174816,990549155,Visa,1 X $100,VISA,$100,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R2:C3 | XMAS 2026 - MD-NJ - 6:S1:R2:C4 | XMAS 2026 - NATIONAL - 6:S1:R2:C3 | XMAS 2026 - NATIONAL - 6:S1:R2:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C4,1,Z:\Kendal King\Images\OLD - Not Named UPC Only\799366696216_Visa S Hex Box $100.jpg,799366696216_Visa S Hex Box $100.jpg,799366696216,VISA,,,"VISA an...
+FO G YOU
+VISA 100 _
+FO Gi U
+»~  .-
+VISA 2100 -
+ae a AK
+is > or TA ANS
+SANG
+| RO\“
+MAN ae ta Vanilla
+Wwe pave",0,40,0,0,14,54,Low,"brand match; token overlap: $100, VISA",FALSE,FALSE,
+RG00006,19674217481,196742174816,990549155,Visa,1 X $100,VISA,$100,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R2:C3 | XMAS 2026 - MD-NJ - 6:S1:R2:C4 | XMAS 2026 - NATIONAL - 6:S1:R2:C3 | XMAS 2026 - NATIONAL - 6:S1:R2:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C4,2,Z:\Kendal King\Images\OLD - Not Named UPC Only\VV Gift Box $100 - 799366701101.jpg,VV Gift Box $100 - 799366701101.jpg,799366701101,VISA,,,"VISA <x‘ => 1100 |
+‘Vanilla. a uae
+VISA —~ > 100 _|
+ap gs
+Vanilla. ""wom tg 2
+VISA 100 |
+RR Petes Cherge |
+Ganilla. WANE hors rea uncro",0,40,0,0,14,54,Low,"brand match; token overlap: $100, VISA",FALSE,FALSE,
+RG00006,19674217481,196742174816,990549155,Visa,1 X $100,VISA,$100,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R2:C3 | XMAS 2026 - MD-NJ - 6:S1:R2:C4 | XMAS 2026 - NATIONAL - 6:S1:R2:C3 | XMAS 2026 - NATIONAL - 6:S1:R2:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C4,3,Z:\Kendal King\Images\196742037753.jpg,196742037753.jpg,196742037753,VISA,,,"A
+e
+VISA eunfum ‘20-500
+* MERRY ,
+CHRISTMAS
+x x x x
+* © *
+x
+\
+ee Sse
+So5f.
+Vanilla VANILLA VISA® GIFT CARD
+Wide",0,40,0,0,7,47,Low,brand match; token overlap: VISA,FALSE,FALSE,
+RG00006,19674217481,196742174816,990549155,Visa,1 X $100,VISA,$100,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R2:C3 | XMAS 2026 - MD-NJ - 6:S1:R2:C4 | XMAS 2026 - NATIONAL - 6:S1:R2:C3 | XMAS 2026 - NATIONAL - 6:S1:R2:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C4,4,Z:\Kendal King\Images\196742037777.jpg,196742037777.jpg,196742037777,VISA,,,"VISA eqnfeme °20-'500
+ee
+»,
+* HOLIDAYS * —
+x *
+i fark
+f ee | |
+% ‘ e o%e®
+‘ e
+ce ale o - wy
+Vanilla. vee NO FEES AFTER PURCHASE
+VISA eanffem ‘20-'500
+* HAPPY ‘
+* HOLIDAYS
+x * *
+= ft \* * ey
+°. — : :
+@ ©
+P| a ©
+Vanilla VANILLA VISA® GIFT CARD
+VISA eqnfftemp ‘20-500
+* HAPPY .
+"" * *
+*&®
+.
+l. iq ( * a
+@@®
+cee?
+e °° ° e
+© @
+xo ia",0,40,0,0,7,47,Low,brand match; token overlap: VISA,FALSE,FALSE,
+RG00006,19674217481,196742174816,990549155,Visa,1 X $100,VISA,$100,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R2:C3 | XMAS 2026 - MD-NJ - 6:S1:R2:C4 | XMAS 2026 - NATIONAL - 6:S1:R2:C3 | XMAS 2026 - NATIONAL - 6:S1:R2:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C4,5,Z:\Kendal King\Images\196742037784.jpg,196742037784.jpg,196742037784,VISA,,,"VISA eunfem ‘20-'500
+HOLIDAY ,
+CHEER *
+RS aw, C24 *
+\ ~~ ir *
+er *
+_ ji
+Vanilla VANILLA VISA® GIFT CARD
+aeafitz=
+Ss
+he",0,40,0,0,7,47,Low,brand match; token overlap: VISA,FALSE,FALSE,
+RG00007,19674217482,196742174823,990549198,Visa,1 X $200,VISA,$200,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R2:C5 | XMAS 2026 - MD-NJ - 6:S1:R2:C6 | XMAS 2026 - NATIONAL - 6:S1:R2:C5 | XMAS 2026 - NATIONAL - 6:S1:R2:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C6,1,Z:\Kendal King\Images\196742133776.jpg,196742133776.jpg,196742133776,VISA,$200,,"VISA ~—- $200
+¢ —_ 0
+= e
+= ‘ S € ae e
+y ie
+Vanilla. _ anton cis care
+—
+* +
+, Be
++
+e Oo vO
+Pr
+VISA —~ ‘“— $200
+\ ae O
+. o- “e . °
+@
+Cs]
+a rn”
+Vanilla. QB a SURcHASE",0,40,40,0,14,94,High,"brand match; denomination match; token overlap: $200, VISA",FALSE,FALSE,
+RG00007,19674217482,196742174823,990549198,Visa,1 X $200,VISA,$200,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R2:C5 | XMAS 2026 - MD-NJ - 6:S1:R2:C6 | XMAS 2026 - NATIONAL - 6:S1:R2:C5 | XMAS 2026 - NATIONAL - 6:S1:R2:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C6,2,Z:\Kendal King\Images\OLD - Not Named UPC Only\FS_Visa Stars Holiday Cheer $200_UPC 799366956235.png,FS_Visa Stars Holiday Cheer $200_UPC 799366956235.png,799366956235,VISA,,,"ViSA — — 380
+Mrtedeay
+Lobe
+‘ane “Sooeaeesl
+Hotictay
+ome SS
+~t
+Py
+Hoke
+tolideuy
+Gris wos",0,40,0,0,14,54,Low,"brand match; token overlap: $200, VISA",FALSE,FALSE,
+RG00007,19674217482,196742174823,990549198,Visa,1 X $200,VISA,$200,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R2:C5 | XMAS 2026 - MD-NJ - 6:S1:R2:C6 | XMAS 2026 - NATIONAL - 6:S1:R2:C5 | XMAS 2026 - NATIONAL - 6:S1:R2:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C6,3,Z:\Kendal King\Images\196742037753.jpg,196742037753.jpg,196742037753,VISA,,,"A
+e
+VISA eunfum ‘20-500
+* MERRY ,
+CHRISTMAS
+x x x x
+* © *
+x
+\
+ee Sse
+So5f.
+Vanilla VANILLA VISA® GIFT CARD
+Wide",0,40,0,0,7,47,Low,brand match; token overlap: VISA,FALSE,FALSE,
+RG00007,19674217482,196742174823,990549198,Visa,1 X $200,VISA,$200,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R2:C5 | XMAS 2026 - MD-NJ - 6:S1:R2:C6 | XMAS 2026 - NATIONAL - 6:S1:R2:C5 | XMAS 2026 - NATIONAL - 6:S1:R2:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C6,4,Z:\Kendal King\Images\196742037777.jpg,196742037777.jpg,196742037777,VISA,,,"VISA eqnfeme °20-'500
+ee
+»,
+* HOLIDAYS * —
+x *
+i fark
+f ee | |
+% ‘ e o%e®
+‘ e
+ce ale o - wy
+Vanilla. vee NO FEES AFTER PURCHASE
+VISA eanffem ‘20-'500
+* HAPPY ‘
+* HOLIDAYS
+x * *
+= ft \* * ey
+°. — : :
+@ ©
+P| a ©
+Vanilla VANILLA VISA® GIFT CARD
+VISA eqnfftemp ‘20-500
+* HAPPY .
+"" * *
+*&®
+.
+l. iq ( * a
+@@®
+cee?
+e °° ° e
+© @
+xo ia",0,40,0,0,7,47,Low,brand match; token overlap: VISA,FALSE,FALSE,
+RG00007,19674217482,196742174823,990549198,Visa,1 X $200,VISA,$200,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R2:C5 | XMAS 2026 - MD-NJ - 6:S1:R2:C6 | XMAS 2026 - NATIONAL - 6:S1:R2:C5 | XMAS 2026 - NATIONAL - 6:S1:R2:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R2:C6,5,Z:\Kendal King\Images\196742037784.jpg,196742037784.jpg,196742037784,VISA,,,"VISA eunfem ‘20-'500
+HOLIDAY ,
+CHEER *
+RS aw, C24 *
+\ ~~ ir *
+er *
+_ ji
+Vanilla VANILLA VISA® GIFT CARD
+aeafitz=
+Ss
+he",0,40,0,0,7,47,Low,brand match; token overlap: VISA,FALSE,FALSE,
+RG00008,19674217483,196742174830,990549200,Visa,$20-$500,VISA,$20,,10,4,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6,XMAS 2026 - MD-NJ - 6:S1:R3:C1 | XMAS 2026 - MD-NJ - 6:S1:R3:C2 | XMAS 2026 - NATIONAL - 6:S1:R3:C1 | XMAS 2026 - NATIONAL - 6:S1:R3:C2,1,Z:\Kendal King\Images\799366579847.jpg,799366579847.jpg,799366579847,VISA,$20,,"VISA a2 $20-8500
+me) Gl OU
+7 OTK
+NS 4 KC
+(Mepoettae Reon a “Vanilla: |
+= $20-$
+VISA =- ee
+A) Gl OU
+P >\ \\
+_ YARIUD Vis oiPe CR Vanilla
+VISA - *20-$500
+LG YOU
+y
+me aay
+Roe ws Vanilla",0,40,40,0,21,101,High,"brand match; denomination match; token overlap: $20, $500, VISA",FALSE,FALSE,
+RG00008,19674217483,196742174830,990549200,Visa,$20-$500,VISA,$20,,10,4,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6,XMAS 2026 - MD-NJ - 6:S1:R3:C1 | XMAS 2026 - MD-NJ - 6:S1:R3:C2 | XMAS 2026 - NATIONAL - 6:S1:R3:C1 | XMAS 2026 - NATIONAL - 6:S1:R3:C2,2,Z:\Kendal King\Images\OLD - Not Named UPC Only\VV Hex Box VGC - 799366579847.jpg,VV Hex Box VGC - 799366579847.jpg,799366579847,VISA,$20,,"VISA a2 $20-8500
+me) Gl OU
+7 OTK
+NS 4 KC
+(Mepoettae Reon a “Vanilla: |
+= $20-$
+VISA =- ee
+A) Gl OU
+P >\ \\
+_ YARIUD Vis oiPe CR Vanilla
+VISA - *20-$500
+LG YOU
+y
+me aay
+Roe ws Vanilla",0,40,40,0,21,101,High,"brand match; denomination match; token overlap: $20, $500, VISA",FALSE,FALSE,
+RG00008,19674217483,196742174830,990549200,Visa,$20-$500,VISA,$20,,10,4,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6,XMAS 2026 - MD-NJ - 6:S1:R3:C1 | XMAS 2026 - MD-NJ - 6:S1:R3:C2 | XMAS 2026 - NATIONAL - 6:S1:R3:C1 | XMAS 2026 - NATIONAL - 6:S1:R3:C2,3,Z:\Kendal King\Images\196742037845.jpg,196742037845.jpg,196742037845,VISA,$20,,"— ~— \ ,
+VISA | 260
+.Co >
+Vanilla $20
+Wanillei@itt.con A
+oye
+SS
+$
+VISA |‘ $60
+. @ .
+t.com 2
+-cO @
+@ ‘COr ;
++ +
+HOLIDAYS NOVFEES/AFTER PURCHASE
+VISA | ‘ $60
+«COM “ y ’
++ * + +
+. T.con ,
+* $
++ WN :
+» Happy
+HOLIDAYS NO FEES AFTER PURCHASE",0,40,40,0,14,94,High,"brand match; denomination match; token overlap: $20, VISA",FALSE,FALSE,
+RG00008,19674217483,196742174830,990549200,Visa,$20-$500,VISA,$20,,10,4,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6,XMAS 2026 - MD-NJ - 6:S1:R3:C1 | XMAS 2026 - MD-NJ - 6:S1:R3:C2 | XMAS 2026 - NATIONAL - 6:S1:R3:C1 | XMAS 2026 - NATIONAL - 6:S1:R3:C2,4,Z:\Kendal King\Images\799366487562.jpg,799366487562.jpg,799366487562,VISA,$20,,"+ 0.00 Purchase Charge |
+v
+rai / \ es
+SUP MS IAS
+o: . ee?) — {
+q — .
+* e) 7 , ) | { ,
+.— ,
+SD $20-5500
++ *0.00 Purchase Charge
+4 ’
+— (23) | (-
+44 lan d) 0S .
+° Fi mash f 4 wi) Se
+‘ ‘
+\
+‘ ' >
+an ¢ VANILLA VISA® GIFT CARD
+vanill. NO FEES aE MEARD
+|
+YS | $20-°500
++ 0.00 Purchase Charge
+""y .
+, : \
+4
+an
+. ~"" Y
+Vanilli. vanuavey a eae",0,40,40,0,14,94,High,"brand match; denomination match; token overlap: $20, VISA",FALSE,FALSE,
+RG00008,19674217483,196742174830,990549200,Visa,$20-$500,VISA,$20,,10,4,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6,XMAS 2026 - MD-NJ - 6:S1:R3:C1 | XMAS 2026 - MD-NJ - 6:S1:R3:C2 | XMAS 2026 - NATIONAL - 6:S1:R3:C1 | XMAS 2026 - NATIONAL - 6:S1:R3:C2,5,Z:\Kendal King\Images\799366789482.jpg,799366789482.jpg,799366789482,VISA,$20,,"ji
+Canilla nee $20
+Vanilla. yon ‘20
+@e ‘20
+Vi SA =i= + 260
+Canine $20
+Vanilla. Se 20
+Vanilla. ™ *°20
+SAVE WHEN YOU BUY
+3 CARDEEeMINO NICE!
+VANILLA VISA® GIFT CARD | NO FEES AFTER PURCHASE
+VISA — — - } 560 ;
+Vanilla. $20 |
+Vanilla. JOY’ <20 ©
+RAV 4
+vanilla. 4 y a $20
+RO \ Ne | Of)
+Per | | reer :
+3 CARDS AT ONCE! |",0,40,40,0,14,94,High,"brand match; denomination match; token overlap: $20, VISA",FALSE,FALSE,
+RG00009,19674218050,196742180503,990549201,Visa $150 Multipack,$150 (3 X $50),VISA,3 X $50,3,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R3:C3 | XMAS 2026 - MD-NJ - 6:S1:R3:C4 | XMAS 2026 - NATIONAL - 6:S1:R3:C3 | XMAS 2026 - NATIONAL - 6:S1:R3:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C3,1,Z:\Kendal King\Images\OLD - Not Named UPC Only\Visa Holiday $50 - 799366791508.jpg,Visa Holiday $50 - 799366791508.jpg,799366791508,VISA,,,"VISA enfee ‘50
+fe
+ao
+N Vag
+oe
++ : +,
+SUZ e Les
+\ 7
+on
+VISA exfim °50
+te
++ | ¢q 4
+a 2 £ ave
+<<—>
+T\ Jd) Se
+* Heyyy,
+ficlovys
++ a? a 2
+SZ WA <&
+A g \ Ai “a
+Vanilla. beepers teeta
+VISA enfem ‘50
++
+nN oe
++ .
+\. 4 «@
+7 €",0,40,0,0,14,54,Low,"brand match; token overlap: $50, VISA",FALSE,FALSE,
+RG00009,19674218050,196742180503,990549201,Visa $150 Multipack,$150 (3 X $50),VISA,3 X $50,3,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R3:C3 | XMAS 2026 - MD-NJ - 6:S1:R3:C4 | XMAS 2026 - NATIONAL - 6:S1:R3:C3 | XMAS 2026 - NATIONAL - 6:S1:R3:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C3,2,Z:\Kendal King\Images\196742037753.jpg,196742037753.jpg,196742037753,VISA,,,"A
+e
+VISA eunfum ‘20-500
+* MERRY ,
+CHRISTMAS
+x x x x
+* © *
+x
+\
+ee Sse
+So5f.
+Vanilla VANILLA VISA® GIFT CARD
+Wide",0,40,0,0,7,47,Low,brand match; token overlap: VISA,FALSE,FALSE,
+RG00009,19674218050,196742180503,990549201,Visa $150 Multipack,$150 (3 X $50),VISA,3 X $50,3,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R3:C3 | XMAS 2026 - MD-NJ - 6:S1:R3:C4 | XMAS 2026 - NATIONAL - 6:S1:R3:C3 | XMAS 2026 - NATIONAL - 6:S1:R3:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C3,3,Z:\Kendal King\Images\196742037777.jpg,196742037777.jpg,196742037777,VISA,,,"VISA eqnfeme °20-'500
+ee
+»,
+* HOLIDAYS * —
+x *
+i fark
+f ee | |
+% ‘ e o%e®
+‘ e
+ce ale o - wy
+Vanilla. vee NO FEES AFTER PURCHASE
+VISA eanffem ‘20-'500
+* HAPPY ‘
+* HOLIDAYS
+x * *
+= ft \* * ey
+°. — : :
+@ ©
+P| a ©
+Vanilla VANILLA VISA® GIFT CARD
+VISA eqnfftemp ‘20-500
+* HAPPY .
+"" * *
+*&®
+.
+l. iq ( * a
+@@®
+cee?
+e °° ° e
+© @
+xo ia",0,40,0,0,7,47,Low,brand match; token overlap: VISA,FALSE,FALSE,
+RG00009,19674218050,196742180503,990549201,Visa $150 Multipack,$150 (3 X $50),VISA,3 X $50,3,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R3:C3 | XMAS 2026 - MD-NJ - 6:S1:R3:C4 | XMAS 2026 - NATIONAL - 6:S1:R3:C3 | XMAS 2026 - NATIONAL - 6:S1:R3:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C3,4,Z:\Kendal King\Images\196742037784.jpg,196742037784.jpg,196742037784,VISA,,,"VISA eunfem ‘20-'500
+HOLIDAY ,
+CHEER *
+RS aw, C24 *
+\ ~~ ir *
+er *
+_ ji
+Vanilla VANILLA VISA® GIFT CARD
+aeafitz=
+Ss
+he",0,40,0,0,7,47,Low,brand match; token overlap: VISA,FALSE,FALSE,
+RG00009,19674218050,196742180503,990549201,Visa $150 Multipack,$150 (3 X $50),VISA,3 X $50,3,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R3:C3 | XMAS 2026 - MD-NJ - 6:S1:R3:C4 | XMAS 2026 - NATIONAL - 6:S1:R3:C3 | XMAS 2026 - NATIONAL - 6:S1:R3:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C3,5,Z:\Kendal King\Images\196742037814.jpg,196742037814.jpg,196742037814,VISA,,,"VISA eqnfeme :20-:500
++CHRISTMAS?t
+Vanilla. ANNO FEES ALTER PURCHAGE
+VISA eqnfeme :20-'500
+» Meyo +
+Vanilla. WANING FEES AbTER PURCHASE
+VISA eqn :20-500
+»  Mevyo +
++CHRISTMAS*
+Vanilla. WANING RECS ATTEN PURCHASE",0,40,0,0,7,47,Low,brand match; token overlap: VISA,FALSE,FALSE,
+RG00010,19674217486,196742174861,990547901,MasterCard,1 X $50,MASTERCARD,$50,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R3:C5 | XMAS 2026 - MD-NJ - 6:S1:R3:C6 | XMAS 2026 - NATIONAL - 6:S1:R3:C5 | XMAS 2026 - NATIONAL - 6:S1:R3:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C6,1,Z:\Kendal King\Images\OLD - Not Named UPC Only\799366085270_MC S Lotus Bow $50.jpg,799366085270_MC S Lotus Bow $50.jpg,799366085270,MASTERCARD,,5,"5
+n . VANIER MASTERCARD® GIFT CARD
+vanilla NOFEES AFTER PURCHASE
+Weriiee(a:"".\C,
+Vanilla. a
+FOR YOU.
+|",0,40,0,0,14,54,Low,"brand match; token overlap: $50, MASTERCARD",FALSE,FALSE,
+RG00010,19674217486,196742174861,990547901,MasterCard,1 X $50,MASTERCARD,$50,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R3:C5 | XMAS 2026 - MD-NJ - 6:S1:R3:C6 | XMAS 2026 - NATIONAL - 6:S1:R3:C5 | XMAS 2026 - NATIONAL - 6:S1:R3:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C6,2,Z:\Kendal King\Images\OLD - Not Named UPC Only\FS_MC Celebration Wrap Sheer Bow Purple $50_UPC 799366364931.jpg,FS_MC Celebration Wrap Sheer Bow Purple $50_UPC 799366364931.jpg,799366364931,MASTERCARD,,7,"aay Ay as, =
+. ,
+~ ,
+|
+enfles | °°
+mastercard.
+a
+<
+e® @ e ©
+» @ @ e @
+» @ ° e _® @¢ if
+@ ®@ r S
+@ S @ @
+B 7 . r
+ee *% @ e@ ®@ e
+Fait VANILLA pe crea.
+.",0,40,0,0,14,54,Low,"brand match; token overlap: $50, MASTERCARD",FALSE,FALSE,
+RG00010,19674217486,196742174861,990547901,MasterCard,1 X $50,MASTERCARD,$50,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R3:C5 | XMAS 2026 - MD-NJ - 6:S1:R3:C6 | XMAS 2026 - NATIONAL - 6:S1:R3:C5 | XMAS 2026 - NATIONAL - 6:S1:R3:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C6,3,Z:\Kendal King\Images\196742041712.jpg,196742041712.jpg,196742041712,MASTERCARD,,,"@) 80
+Vanilla *50,
+VanillaGift.com
+* ‘NX
+7 v
+VanillaGift.com vs
+Vanilla ep £50
+VanillaGift.com a
+, x
+e
+GIFTS FOR EVERYONE
+VANILLA MASTERCARD® GIFT CARD | NO FEES AFTER PURCHASE
+© 180
+Vanilla. *50
+* DV &
+Vanilla. ""50
+Vanilla. ep £50
+VanillaGift.com ‘@
+. &
+t )
+eo > .250
+Vanilla. 250.
+*k IN
+Vanilla. 230,
+Vanilla. mp 850
+VanillaGift.com 7”
+is",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00010,19674217486,196742174861,990547901,MasterCard,1 X $50,MASTERCARD,$50,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R3:C5 | XMAS 2026 - MD-NJ - 6:S1:R3:C6 | XMAS 2026 - NATIONAL - 6:S1:R3:C5 | XMAS 2026 - NATIONAL - 6:S1:R3:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C6,4,Z:\Kendal King\Images\196742041743.jpg,196742041743.jpg,196742041743,MASTERCARD,,,"© 00
+holly jolly
+a
+te (Wn,
+Vanilla VANILLA MASTERCARD® GIFT.CARD
+©  —— —.s100
++ (Wn,
+@ — ~— 00
+¥&
+7 pn,
+v ‘anil a VANILLA MASTERCARD"" GIFT CARD",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00010,19674217486,196742174861,990547901,MasterCard,1 X $50,MASTERCARD,$50,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R3:C5 | XMAS 2026 - MD-NJ - 6:S1:R3:C6 | XMAS 2026 - NATIONAL - 6:S1:R3:C5 | XMAS 2026 - NATIONAL - 6:S1:R3:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R3:C6,5,Z:\Kendal King\Images\196742072426.jpg,196742072426.jpg,196742072426,MASTERCARD,,,"CD anfie 50
+6 1904 Prrmene Onerpe
+HAPPY
+HOLIDAYS
+A
+oe
+“oo
+Qe ew a See :
+tO, POF x
+on, ae;
+He Xen See
+MASTERCARD’ GIFT CARD
+MO FEES AFTER PURCHASE
+C > emf ‘50
+ie)
+o YP. g- ON ra sey ia
+it FP W x
+ee es
+ly P ~.
+NO FEES AFTTR PURCHASE",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00011,19674217487,196742174878,990544243,MasterCard,1 X $100,MASTERCARD,$100,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R4:C1 | XMAS 2026 - MD-NJ - 6:S1:R4:C2 | XMAS 2026 - NATIONAL - 6:S1:R4:C1 | XMAS 2026 - NATIONAL - 6:S1:R4:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C3,1,Z:\Kendal King\Images\196742041712.jpg,196742041712.jpg,196742041712,MASTERCARD,,,"@) 80
+Vanilla *50,
+VanillaGift.com
+* ‘NX
+7 v
+VanillaGift.com vs
+Vanilla ep £50
+VanillaGift.com a
+, x
+e
+GIFTS FOR EVERYONE
+VANILLA MASTERCARD® GIFT CARD | NO FEES AFTER PURCHASE
+© 180
+Vanilla. *50
+* DV &
+Vanilla. ""50
+Vanilla. ep £50
+VanillaGift.com ‘@
+. &
+t )
+eo > .250
+Vanilla. 250.
+*k IN
+Vanilla. 230,
+Vanilla. mp 850
+VanillaGift.com 7”
+is",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00011,19674217487,196742174878,990544243,MasterCard,1 X $100,MASTERCARD,$100,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R4:C1 | XMAS 2026 - MD-NJ - 6:S1:R4:C2 | XMAS 2026 - NATIONAL - 6:S1:R4:C1 | XMAS 2026 - NATIONAL - 6:S1:R4:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C3,2,Z:\Kendal King\Images\196742041743.jpg,196742041743.jpg,196742041743,MASTERCARD,,,"© 00
+holly jolly
+a
+te (Wn,
+Vanilla VANILLA MASTERCARD® GIFT.CARD
+©  —— —.s100
++ (Wn,
+@ — ~— 00
+¥&
+7 pn,
+v ‘anil a VANILLA MASTERCARD"" GIFT CARD",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00011,19674217487,196742174878,990544243,MasterCard,1 X $100,MASTERCARD,$100,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R4:C1 | XMAS 2026 - MD-NJ - 6:S1:R4:C2 | XMAS 2026 - NATIONAL - 6:S1:R4:C1 | XMAS 2026 - NATIONAL - 6:S1:R4:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C3,3,Z:\Kendal King\Images\196742072426.jpg,196742072426.jpg,196742072426,MASTERCARD,,,"CD anfie 50
+6 1904 Prrmene Onerpe
+HAPPY
+HOLIDAYS
+A
+oe
+“oo
+Qe ew a See :
+tO, POF x
+on, ae;
+He Xen See
+MASTERCARD’ GIFT CARD
+MO FEES AFTER PURCHASE
+C > emf ‘50
+ie)
+o YP. g- ON ra sey ia
+it FP W x
+ee es
+ly P ~.
+NO FEES AFTTR PURCHASE",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00011,19674217487,196742174878,990544243,MasterCard,1 X $100,MASTERCARD,$100,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R4:C1 | XMAS 2026 - MD-NJ - 6:S1:R4:C2 | XMAS 2026 - NATIONAL - 6:S1:R4:C1 | XMAS 2026 - NATIONAL - 6:S1:R4:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C3,4,Z:\Kendal King\Images\196742072440.jpg,196742072440.jpg,196742072440,MASTERCARD,,,".“ GREETINGS |.
++. @ Oe toe
+ee iY Sr.
+see “p
+a
+ms Loasan S ae
+« * * -@
+“ GREETINGS |.
+«. @ Og tee
+e @ Ve
+MASTERCARD® GIFT CARD
+* GREETINGS .
++, @e,e ee
+e @ a’ > ef",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00011,19674217487,196742174878,990544243,MasterCard,1 X $100,MASTERCARD,$100,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R4:C1 | XMAS 2026 - MD-NJ - 6:S1:R4:C2 | XMAS 2026 - NATIONAL - 6:S1:R4:C1 | XMAS 2026 - NATIONAL - 6:S1:R4:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C3,5,Z:\Kendal King\Images\196742073850.jpg,196742073850.jpg,196742073850,MASTERCARD,,,"cq fie °2°-5°
+4 = ""5.04 Puschase Grange
+Pe |
+L Fang wae '
+‘i - i
+]
+. '
+\ my
+¢ = s
+-
+4 oo a
+ae ,
+~ ’
+‘ M
+‘
+a
+\)
+MASTERCARD® GIFT CARD
+NO FEES AFTER PURCHASE
+. +.
++ 1.4 Puschase Charge
+. .
+oe . . E e e *
+° * oy * =
+: * 4) .
+. = ng ' .
+L Phas ee '
+a | =a 7 i .
+‘ ’
+= ‘ ' *
+. A eee .
+¢ s
+‘ Se
+. ‘
+‘ GS Togs e
+‘ aoe
+f U
+s ~“—--—-<—-—- ‘
+‘ ; -
+\
+2 e ‘ j 7
+we * fs
+a bd : e #
+ot . * MASTERCARD® GIFT CARD
+. NO FEES AFTER PURCMASE
+a : a
+| enfiup °2°°°°°
+Ne _. thd. fae Lage
+. e
+. ry . . e
+. * e - .
+. . wy °
+. ~ 7? 1
+wel Le ’ °
+. ‘ =a 7 1 .
+. \ ' *
+‘ '
+. ~s .
+c “
+s SA
+e 4 ”
+¢ ~~” - °
+¢ ao?
+“ee eee !
+. x , *s
+\ J
+e . iY j .
+x f .
+° wT .
+*” * , ,
+. em My.
+* : * MASTERCASD* GIFT CARD
+ry MD FECES AFTER PURCHASE",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00012,19674217488,196742174885,990544244,MasterCard,1 x $200,MASTERCARD,$200,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R4:C3 | XMAS 2026 - MD-NJ - 6:S1:R4:C4 | XMAS 2026 - NATIONAL - 6:S1:R4:C3 | XMAS 2026 - NATIONAL - 6:S1:R4:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C6,1,Z:\Kendal King\Images\196742041712.jpg,196742041712.jpg,196742041712,MASTERCARD,,,"@) 80
+Vanilla *50,
+VanillaGift.com
+* ‘NX
+7 v
+VanillaGift.com vs
+Vanilla ep £50
+VanillaGift.com a
+, x
+e
+GIFTS FOR EVERYONE
+VANILLA MASTERCARD® GIFT CARD | NO FEES AFTER PURCHASE
+© 180
+Vanilla. *50
+* DV &
+Vanilla. ""50
+Vanilla. ep £50
+VanillaGift.com ‘@
+. &
+t )
+eo > .250
+Vanilla. 250.
+*k IN
+Vanilla. 230,
+Vanilla. mp 850
+VanillaGift.com 7”
+is",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00012,19674217488,196742174885,990544244,MasterCard,1 x $200,MASTERCARD,$200,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R4:C3 | XMAS 2026 - MD-NJ - 6:S1:R4:C4 | XMAS 2026 - NATIONAL - 6:S1:R4:C3 | XMAS 2026 - NATIONAL - 6:S1:R4:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C6,2,Z:\Kendal King\Images\196742041743.jpg,196742041743.jpg,196742041743,MASTERCARD,,,"© 00
+holly jolly
+a
+te (Wn,
+Vanilla VANILLA MASTERCARD® GIFT.CARD
+©  —— —.s100
++ (Wn,
+@ — ~— 00
+¥&
+7 pn,
+v ‘anil a VANILLA MASTERCARD"" GIFT CARD",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00012,19674217488,196742174885,990544244,MasterCard,1 x $200,MASTERCARD,$200,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R4:C3 | XMAS 2026 - MD-NJ - 6:S1:R4:C4 | XMAS 2026 - NATIONAL - 6:S1:R4:C3 | XMAS 2026 - NATIONAL - 6:S1:R4:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C6,3,Z:\Kendal King\Images\196742072426.jpg,196742072426.jpg,196742072426,MASTERCARD,,,"CD anfie 50
+6 1904 Prrmene Onerpe
+HAPPY
+HOLIDAYS
+A
+oe
+“oo
+Qe ew a See :
+tO, POF x
+on, ae;
+He Xen See
+MASTERCARD’ GIFT CARD
+MO FEES AFTER PURCHASE
+C > emf ‘50
+ie)
+o YP. g- ON ra sey ia
+it FP W x
+ee es
+ly P ~.
+NO FEES AFTTR PURCHASE",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00012,19674217488,196742174885,990544244,MasterCard,1 x $200,MASTERCARD,$200,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R4:C3 | XMAS 2026 - MD-NJ - 6:S1:R4:C4 | XMAS 2026 - NATIONAL - 6:S1:R4:C3 | XMAS 2026 - NATIONAL - 6:S1:R4:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C6,4,Z:\Kendal King\Images\196742072440.jpg,196742072440.jpg,196742072440,MASTERCARD,,,".“ GREETINGS |.
++. @ Oe toe
+ee iY Sr.
+see “p
+a
+ms Loasan S ae
+« * * -@
+“ GREETINGS |.
+«. @ Og tee
+e @ Ve
+MASTERCARD® GIFT CARD
+* GREETINGS .
++, @e,e ee
+e @ a’ > ef",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00012,19674217488,196742174885,990544244,MasterCard,1 x $200,MASTERCARD,$200,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R4:C3 | XMAS 2026 - MD-NJ - 6:S1:R4:C4 | XMAS 2026 - NATIONAL - 6:S1:R4:C3 | XMAS 2026 - NATIONAL - 6:S1:R4:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R4:C6,5,Z:\Kendal King\Images\196742073850.jpg,196742073850.jpg,196742073850,MASTERCARD,,,"cq fie °2°-5°
+4 = ""5.04 Puschase Grange
+Pe |
+L Fang wae '
+‘i - i
+]
+. '
+\ my
+¢ = s
+-
+4 oo a
+ae ,
+~ ’
+‘ M
+‘
+a
+\)
+MASTERCARD® GIFT CARD
+NO FEES AFTER PURCHASE
+. +.
++ 1.4 Puschase Charge
+. .
+oe . . E e e *
+° * oy * =
+: * 4) .
+. = ng ' .
+L Phas ee '
+a | =a 7 i .
+‘ ’
+= ‘ ' *
+. A eee .
+¢ s
+‘ Se
+. ‘
+‘ GS Togs e
+‘ aoe
+f U
+s ~“—--—-<—-—- ‘
+‘ ; -
+\
+2 e ‘ j 7
+we * fs
+a bd : e #
+ot . * MASTERCARD® GIFT CARD
+. NO FEES AFTER PURCMASE
+a : a
+| enfiup °2°°°°°
+Ne _. thd. fae Lage
+. e
+. ry . . e
+. * e - .
+. . wy °
+. ~ 7? 1
+wel Le ’ °
+. ‘ =a 7 1 .
+. \ ' *
+‘ '
+. ~s .
+c “
+s SA
+e 4 ”
+¢ ~~” - °
+¢ ao?
+“ee eee !
+. x , *s
+\ J
+e . iY j .
+x f .
+° wT .
+*” * , ,
+. em My.
+* : * MASTERCASD* GIFT CARD
+ry MD FECES AFTER PURCHASE",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00013,19674217489,196742174892,990544247,MasterCard,$20-$500,MASTERCARD,$20,,10,4,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6,XMAS 2026 - MD-NJ - 6:S1:R4:C5 | XMAS 2026 - MD-NJ - 6:S1:R4:C6 | XMAS 2026 - NATIONAL - 6:S1:R4:C5 | XMAS 2026 - NATIONAL - 6:S1:R4:C6,1,Z:\Kendal King\Images\196742041712.jpg,196742041712.jpg,196742041712,MASTERCARD,,,"@) 80
+Vanilla *50,
+VanillaGift.com
+* ‘NX
+7 v
+VanillaGift.com vs
+Vanilla ep £50
+VanillaGift.com a
+, x
+e
+GIFTS FOR EVERYONE
+VANILLA MASTERCARD® GIFT CARD | NO FEES AFTER PURCHASE
+© 180
+Vanilla. *50
+* DV &
+Vanilla. ""50
+Vanilla. ep £50
+VanillaGift.com ‘@
+. &
+t )
+eo > .250
+Vanilla. 250.
+*k IN
+Vanilla. 230,
+Vanilla. mp 850
+VanillaGift.com 7”
+is",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00013,19674217489,196742174892,990544247,MasterCard,$20-$500,MASTERCARD,$20,,10,4,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6,XMAS 2026 - MD-NJ - 6:S1:R4:C5 | XMAS 2026 - MD-NJ - 6:S1:R4:C6 | XMAS 2026 - NATIONAL - 6:S1:R4:C5 | XMAS 2026 - NATIONAL - 6:S1:R4:C6,2,Z:\Kendal King\Images\196742041743.jpg,196742041743.jpg,196742041743,MASTERCARD,,,"© 00
+holly jolly
+a
+te (Wn,
+Vanilla VANILLA MASTERCARD® GIFT.CARD
+©  —— —.s100
++ (Wn,
+@ — ~— 00
+¥&
+7 pn,
+v ‘anil a VANILLA MASTERCARD"" GIFT CARD",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00013,19674217489,196742174892,990544247,MasterCard,$20-$500,MASTERCARD,$20,,10,4,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6,XMAS 2026 - MD-NJ - 6:S1:R4:C5 | XMAS 2026 - MD-NJ - 6:S1:R4:C6 | XMAS 2026 - NATIONAL - 6:S1:R4:C5 | XMAS 2026 - NATIONAL - 6:S1:R4:C6,3,Z:\Kendal King\Images\196742072426.jpg,196742072426.jpg,196742072426,MASTERCARD,,,"CD anfie 50
+6 1904 Prrmene Onerpe
+HAPPY
+HOLIDAYS
+A
+oe
+“oo
+Qe ew a See :
+tO, POF x
+on, ae;
+He Xen See
+MASTERCARD’ GIFT CARD
+MO FEES AFTER PURCHASE
+C > emf ‘50
+ie)
+o YP. g- ON ra sey ia
+it FP W x
+ee es
+ly P ~.
+NO FEES AFTTR PURCHASE",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00013,19674217489,196742174892,990544247,MasterCard,$20-$500,MASTERCARD,$20,,10,4,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6,XMAS 2026 - MD-NJ - 6:S1:R4:C5 | XMAS 2026 - MD-NJ - 6:S1:R4:C6 | XMAS 2026 - NATIONAL - 6:S1:R4:C5 | XMAS 2026 - NATIONAL - 6:S1:R4:C6,4,Z:\Kendal King\Images\196742072440.jpg,196742072440.jpg,196742072440,MASTERCARD,,,".“ GREETINGS |.
++. @ Oe toe
+ee iY Sr.
+see “p
+a
+ms Loasan S ae
+« * * -@
+“ GREETINGS |.
+«. @ Og tee
+e @ Ve
+MASTERCARD® GIFT CARD
+* GREETINGS .
++, @e,e ee
+e @ a’ > ef",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00013,19674217489,196742174892,990544247,MasterCard,$20-$500,MASTERCARD,$20,,10,4,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6,XMAS 2026 - MD-NJ - 6:S1:R4:C5 | XMAS 2026 - MD-NJ - 6:S1:R4:C6 | XMAS 2026 - NATIONAL - 6:S1:R4:C5 | XMAS 2026 - NATIONAL - 6:S1:R4:C6,5,Z:\Kendal King\Images\196742073850.jpg,196742073850.jpg,196742073850,MASTERCARD,,,"cq fie °2°-5°
+4 = ""5.04 Puschase Grange
+Pe |
+L Fang wae '
+‘i - i
+]
+. '
+\ my
+¢ = s
+-
+4 oo a
+ae ,
+~ ’
+‘ M
+‘
+a
+\)
+MASTERCARD® GIFT CARD
+NO FEES AFTER PURCHASE
+. +.
++ 1.4 Puschase Charge
+. .
+oe . . E e e *
+° * oy * =
+: * 4) .
+. = ng ' .
+L Phas ee '
+a | =a 7 i .
+‘ ’
+= ‘ ' *
+. A eee .
+¢ s
+‘ Se
+. ‘
+‘ GS Togs e
+‘ aoe
+f U
+s ~“—--—-<—-—- ‘
+‘ ; -
+\
+2 e ‘ j 7
+we * fs
+a bd : e #
+ot . * MASTERCARD® GIFT CARD
+. NO FEES AFTER PURCMASE
+a : a
+| enfiup °2°°°°°
+Ne _. thd. fae Lage
+. e
+. ry . . e
+. * e - .
+. . wy °
+. ~ 7? 1
+wel Le ’ °
+. ‘ =a 7 1 .
+. \ ' *
+‘ '
+. ~s .
+c “
+s SA
+e 4 ”
+¢ ~~” - °
+¢ ao?
+“ee eee !
+. x , *s
+\ J
+e . iY j .
+x f .
+° wT .
+*” * , ,
+. em My.
+* : * MASTERCASD* GIFT CARD
+ry MD FECES AFTER PURCHASE",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00014,19674218048,196742180480,990548970,MasterCard $75 Multipack,$75 (3 X $25),MASTERCARD,3 X $25,3,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R5:C1 | XMAS 2026 - MD-NJ - 6:S1:R5:C2 | XMAS 2026 - NATIONAL - 6:S1:R5:C1 | XMAS 2026 - NATIONAL - 6:S1:R5:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C3,1,Z:\Kendal King\Images\OLD - Not Named UPC Only\Mastercard Holiday Santa $25 - 799366791096.jpg,Mastercard Holiday Santa $25 - 799366791096.jpg,799366791096,MASTERCARD,,,"@)° 825
+pe * * +83,44 a 2
+% = ry *
+christmas
+by *
+r *
+y *
+n
+d
+i @
+"" 2
+x
+|
+| ,
+""e@°
+@ ie
+VANILLA MASTERCARD® GIFT CARD
+NO FEES AFTER PURCHASE
+""@°
+‘ NO FEES AFTER PURCHASE",0,40,0,0,14,54,Low,"brand match; token overlap: $25, MASTERCARD",FALSE,FALSE,
+RG00014,19674218048,196742180480,990548970,MasterCard $75 Multipack,$75 (3 X $25),MASTERCARD,3 X $25,3,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R5:C1 | XMAS 2026 - MD-NJ - 6:S1:R5:C2 | XMAS 2026 - NATIONAL - 6:S1:R5:C1 | XMAS 2026 - NATIONAL - 6:S1:R5:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C3,2,Z:\Kendal King\Images\196742041712.jpg,196742041712.jpg,196742041712,MASTERCARD,,,"@) 80
+Vanilla *50,
+VanillaGift.com
+* ‘NX
+7 v
+VanillaGift.com vs
+Vanilla ep £50
+VanillaGift.com a
+, x
+e
+GIFTS FOR EVERYONE
+VANILLA MASTERCARD® GIFT CARD | NO FEES AFTER PURCHASE
+© 180
+Vanilla. *50
+* DV &
+Vanilla. ""50
+Vanilla. ep £50
+VanillaGift.com ‘@
+. &
+t )
+eo > .250
+Vanilla. 250.
+*k IN
+Vanilla. 230,
+Vanilla. mp 850
+VanillaGift.com 7”
+is",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00014,19674218048,196742180480,990548970,MasterCard $75 Multipack,$75 (3 X $25),MASTERCARD,3 X $25,3,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R5:C1 | XMAS 2026 - MD-NJ - 6:S1:R5:C2 | XMAS 2026 - NATIONAL - 6:S1:R5:C1 | XMAS 2026 - NATIONAL - 6:S1:R5:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C3,3,Z:\Kendal King\Images\196742041743.jpg,196742041743.jpg,196742041743,MASTERCARD,,,"© 00
+holly jolly
+a
+te (Wn,
+Vanilla VANILLA MASTERCARD® GIFT.CARD
+©  —— —.s100
++ (Wn,
+@ — ~— 00
+¥&
+7 pn,
+v ‘anil a VANILLA MASTERCARD"" GIFT CARD",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00014,19674218048,196742180480,990548970,MasterCard $75 Multipack,$75 (3 X $25),MASTERCARD,3 X $25,3,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R5:C1 | XMAS 2026 - MD-NJ - 6:S1:R5:C2 | XMAS 2026 - NATIONAL - 6:S1:R5:C1 | XMAS 2026 - NATIONAL - 6:S1:R5:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C3,4,Z:\Kendal King\Images\196742072426.jpg,196742072426.jpg,196742072426,MASTERCARD,,,"CD anfie 50
+6 1904 Prrmene Onerpe
+HAPPY
+HOLIDAYS
+A
+oe
+“oo
+Qe ew a See :
+tO, POF x
+on, ae;
+He Xen See
+MASTERCARD’ GIFT CARD
+MO FEES AFTER PURCHASE
+C > emf ‘50
+ie)
+o YP. g- ON ra sey ia
+it FP W x
+ee es
+ly P ~.
+NO FEES AFTTR PURCHASE",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00014,19674218048,196742180480,990548970,MasterCard $75 Multipack,$75 (3 X $25),MASTERCARD,3 X $25,3,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R5:C1 | XMAS 2026 - MD-NJ - 6:S1:R5:C2 | XMAS 2026 - NATIONAL - 6:S1:R5:C1 | XMAS 2026 - NATIONAL - 6:S1:R5:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C3,5,Z:\Kendal King\Images\196742072440.jpg,196742072440.jpg,196742072440,MASTERCARD,,,".“ GREETINGS |.
++. @ Oe toe
+ee iY Sr.
+see “p
+a
+ms Loasan S ae
+« * * -@
+“ GREETINGS |.
+«. @ Og tee
+e @ Ve
+MASTERCARD® GIFT CARD
+* GREETINGS .
++, @e,e ee
+e @ a’ > ef",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00015,19674217492,196742174922,990548966,MasterCard,1 X $50,MASTERCARD,$50,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R5:C3 | XMAS 2026 - MD-NJ - 6:S1:R5:C4 | XMAS 2026 - NATIONAL - 6:S1:R5:C3 | XMAS 2026 - NATIONAL - 6:S1:R5:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C6,1,Z:\Kendal King\Images\OLD - Not Named UPC Only\799366085270_MC S Lotus Bow $50.jpg,799366085270_MC S Lotus Bow $50.jpg,799366085270,MASTERCARD,,5,"5
+n . VANIER MASTERCARD® GIFT CARD
+vanilla NOFEES AFTER PURCHASE
+Weriiee(a:"".\C,
+Vanilla. a
+FOR YOU.
+|",0,40,0,0,14,54,Low,"brand match; token overlap: $50, MASTERCARD",FALSE,FALSE,
+RG00015,19674217492,196742174922,990548966,MasterCard,1 X $50,MASTERCARD,$50,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R5:C3 | XMAS 2026 - MD-NJ - 6:S1:R5:C4 | XMAS 2026 - NATIONAL - 6:S1:R5:C3 | XMAS 2026 - NATIONAL - 6:S1:R5:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C6,2,Z:\Kendal King\Images\OLD - Not Named UPC Only\FS_MC Celebration Wrap Sheer Bow Purple $50_UPC 799366364931.jpg,FS_MC Celebration Wrap Sheer Bow Purple $50_UPC 799366364931.jpg,799366364931,MASTERCARD,,7,"aay Ay as, =
+. ,
+~ ,
+|
+enfles | °°
+mastercard.
+a
+<
+e® @ e ©
+» @ @ e @
+» @ ° e _® @¢ if
+@ ®@ r S
+@ S @ @
+B 7 . r
+ee *% @ e@ ®@ e
+Fait VANILLA pe crea.
+.",0,40,0,0,14,54,Low,"brand match; token overlap: $50, MASTERCARD",FALSE,FALSE,
+RG00015,19674217492,196742174922,990548966,MasterCard,1 X $50,MASTERCARD,$50,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R5:C3 | XMAS 2026 - MD-NJ - 6:S1:R5:C4 | XMAS 2026 - NATIONAL - 6:S1:R5:C3 | XMAS 2026 - NATIONAL - 6:S1:R5:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C6,3,Z:\Kendal King\Images\196742041712.jpg,196742041712.jpg,196742041712,MASTERCARD,,,"@) 80
+Vanilla *50,
+VanillaGift.com
+* ‘NX
+7 v
+VanillaGift.com vs
+Vanilla ep £50
+VanillaGift.com a
+, x
+e
+GIFTS FOR EVERYONE
+VANILLA MASTERCARD® GIFT CARD | NO FEES AFTER PURCHASE
+© 180
+Vanilla. *50
+* DV &
+Vanilla. ""50
+Vanilla. ep £50
+VanillaGift.com ‘@
+. &
+t )
+eo > .250
+Vanilla. 250.
+*k IN
+Vanilla. 230,
+Vanilla. mp 850
+VanillaGift.com 7”
+is",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00015,19674217492,196742174922,990548966,MasterCard,1 X $50,MASTERCARD,$50,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R5:C3 | XMAS 2026 - MD-NJ - 6:S1:R5:C4 | XMAS 2026 - NATIONAL - 6:S1:R5:C3 | XMAS 2026 - NATIONAL - 6:S1:R5:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C6,4,Z:\Kendal King\Images\196742041743.jpg,196742041743.jpg,196742041743,MASTERCARD,,,"© 00
+holly jolly
+a
+te (Wn,
+Vanilla VANILLA MASTERCARD® GIFT.CARD
+©  —— —.s100
++ (Wn,
+@ — ~— 00
+¥&
+7 pn,
+v ‘anil a VANILLA MASTERCARD"" GIFT CARD",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00015,19674217492,196742174922,990548966,MasterCard,1 X $50,MASTERCARD,$50,,10,7,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S1:R5:C3 | XMAS 2026 - MD-NJ - 6:S1:R5:C4 | XMAS 2026 - NATIONAL - 6:S1:R5:C3 | XMAS 2026 - NATIONAL - 6:S1:R5:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C5 | XMAS 2026 - NATIONAL SLFCHK - 6:S1:R5:C6,5,Z:\Kendal King\Images\196742072426.jpg,196742072426.jpg,196742072426,MASTERCARD,,,"CD anfie 50
+6 1904 Prrmene Onerpe
+HAPPY
+HOLIDAYS
+A
+oe
+“oo
+Qe ew a See :
+tO, POF x
+on, ae;
+He Xen See
+MASTERCARD’ GIFT CARD
+MO FEES AFTER PURCHASE
+C > emf ‘50
+ie)
+o YP. g- ON ra sey ia
+it FP W x
+ee es
+ly P ~.
+NO FEES AFTTR PURCHASE",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00016,19674217493,196742174939,990544252,MasterCard,$20-$500,MASTERCARD,$20,,10,4,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6,XMAS 2026 - MD-NJ - 6:S1:R5:C5 | XMAS 2026 - MD-NJ - 6:S1:R5:C6 | XMAS 2026 - NATIONAL - 6:S1:R5:C5 | XMAS 2026 - NATIONAL - 6:S1:R5:C6,1,Z:\Kendal King\Images\196742041712.jpg,196742041712.jpg,196742041712,MASTERCARD,,,"@) 80
+Vanilla *50,
+VanillaGift.com
+* ‘NX
+7 v
+VanillaGift.com vs
+Vanilla ep £50
+VanillaGift.com a
+, x
+e
+GIFTS FOR EVERYONE
+VANILLA MASTERCARD® GIFT CARD | NO FEES AFTER PURCHASE
+© 180
+Vanilla. *50
+* DV &
+Vanilla. ""50
+Vanilla. ep £50
+VanillaGift.com ‘@
+. &
+t )
+eo > .250
+Vanilla. 250.
+*k IN
+Vanilla. 230,
+Vanilla. mp 850
+VanillaGift.com 7”
+is",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00016,19674217493,196742174939,990544252,MasterCard,$20-$500,MASTERCARD,$20,,10,4,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6,XMAS 2026 - MD-NJ - 6:S1:R5:C5 | XMAS 2026 - MD-NJ - 6:S1:R5:C6 | XMAS 2026 - NATIONAL - 6:S1:R5:C5 | XMAS 2026 - NATIONAL - 6:S1:R5:C6,2,Z:\Kendal King\Images\196742041743.jpg,196742041743.jpg,196742041743,MASTERCARD,,,"© 00
+holly jolly
+a
+te (Wn,
+Vanilla VANILLA MASTERCARD® GIFT.CARD
+©  —— —.s100
++ (Wn,
+@ — ~— 00
+¥&
+7 pn,
+v ‘anil a VANILLA MASTERCARD"" GIFT CARD",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00016,19674217493,196742174939,990544252,MasterCard,$20-$500,MASTERCARD,$20,,10,4,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6,XMAS 2026 - MD-NJ - 6:S1:R5:C5 | XMAS 2026 - MD-NJ - 6:S1:R5:C6 | XMAS 2026 - NATIONAL - 6:S1:R5:C5 | XMAS 2026 - NATIONAL - 6:S1:R5:C6,3,Z:\Kendal King\Images\196742072426.jpg,196742072426.jpg,196742072426,MASTERCARD,,,"CD anfie 50
+6 1904 Prrmene Onerpe
+HAPPY
+HOLIDAYS
+A
+oe
+“oo
+Qe ew a See :
+tO, POF x
+on, ae;
+He Xen See
+MASTERCARD’ GIFT CARD
+MO FEES AFTER PURCHASE
+C > emf ‘50
+ie)
+o YP. g- ON ra sey ia
+it FP W x
+ee es
+ly P ~.
+NO FEES AFTTR PURCHASE",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00016,19674217493,196742174939,990544252,MasterCard,$20-$500,MASTERCARD,$20,,10,4,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6,XMAS 2026 - MD-NJ - 6:S1:R5:C5 | XMAS 2026 - MD-NJ - 6:S1:R5:C6 | XMAS 2026 - NATIONAL - 6:S1:R5:C5 | XMAS 2026 - NATIONAL - 6:S1:R5:C6,4,Z:\Kendal King\Images\196742072440.jpg,196742072440.jpg,196742072440,MASTERCARD,,,".“ GREETINGS |.
++. @ Oe toe
+ee iY Sr.
+see “p
+a
+ms Loasan S ae
+« * * -@
+“ GREETINGS |.
+«. @ Og tee
+e @ Ve
+MASTERCARD® GIFT CARD
+* GREETINGS .
++, @e,e ee
+e @ a’ > ef",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00016,19674217493,196742174939,990544252,MasterCard,$20-$500,MASTERCARD,$20,,10,4,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6,XMAS 2026 - MD-NJ - 6:S1:R5:C5 | XMAS 2026 - MD-NJ - 6:S1:R5:C6 | XMAS 2026 - NATIONAL - 6:S1:R5:C5 | XMAS 2026 - NATIONAL - 6:S1:R5:C6,5,Z:\Kendal King\Images\196742073850.jpg,196742073850.jpg,196742073850,MASTERCARD,,,"cq fie °2°-5°
+4 = ""5.04 Puschase Grange
+Pe |
+L Fang wae '
+‘i - i
+]
+. '
+\ my
+¢ = s
+-
+4 oo a
+ae ,
+~ ’
+‘ M
+‘
+a
+\)
+MASTERCARD® GIFT CARD
+NO FEES AFTER PURCHASE
+. +.
++ 1.4 Puschase Charge
+. .
+oe . . E e e *
+° * oy * =
+: * 4) .
+. = ng ' .
+L Phas ee '
+a | =a 7 i .
+‘ ’
+= ‘ ' *
+. A eee .
+¢ s
+‘ Se
+. ‘
+‘ GS Togs e
+‘ aoe
+f U
+s ~“—--—-<—-—- ‘
+‘ ; -
+\
+2 e ‘ j 7
+we * fs
+a bd : e #
+ot . * MASTERCARD® GIFT CARD
+. NO FEES AFTER PURCMASE
+a : a
+| enfiup °2°°°°°
+Ne _. thd. fae Lage
+. e
+. ry . . e
+. * e - .
+. . wy °
+. ~ 7? 1
+wel Le ’ °
+. ‘ =a 7 1 .
+. \ ' *
+‘ '
+. ~s .
+c “
+s SA
+e 4 ”
+¢ ~~” - °
+¢ ao?
+“ee eee !
+. x , *s
+\ J
+e . iY j .
+x f .
+° wT .
+*” * , ,
+. em My.
+* : * MASTERCASD* GIFT CARD
+ry MD FECES AFTER PURCHASE",0,40,0,0,7,47,Low,brand match; token overlap: MASTERCARD,FALSE,FALSE,
+RG00022,19674217981,196742179811,990552673,Starbucks $50 Multipack,$50 (5 X $10),STARBUCKS,5 X $10,5,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S2:R4:C3 | XMAS 2026 - NATIONAL - 6:S4:R3:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S4:R3:C6,1,Z:\Kendal King\Images\196742112405.jpg,196742112405.jpg,196742112405,STARBUCKS,5 X $10,5,"5 x10 STARBUC |
+€
+~ ©
+You'll always have the perfect gift on hand.
+Ten Cards, ten perfect gifts for someone out there
+5x0 STARBUCKS’
+se
+Ten Cards, ten perfect gifts for someone out there.
+5.0 STARBUCKS
+c J
+Tan Cards ten pertect gifts for sameane aut there",0,40,40,25,7,112,High,brand match; denomination match; pack match; token overlap: STARBUCKS,FALSE,FALSE,
+RG00022,19674217981,196742179811,990552673,Starbucks $50 Multipack,$50 (5 X $10),STARBUCKS,5 X $10,5,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S2:R4:C3 | XMAS 2026 - NATIONAL - 6:S4:R3:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S4:R3:C6,2,Z:\Kendal King\Images\196742112375.jpg,196742112375.jpg,196742112375,STARBUCKS,,,"HY, x4 STARBUCKS’
+You'll always have the perfect gift on hand.
+Four Cards, four perfect gifts for someone out there.
+10 x4 STARBUCKS:
+lo x4 STARBUCKS:",0,40,0,0,7,47,Low,brand match; token overlap: STARBUCKS,FALSE,FALSE,
+RG00022,19674217981,196742179811,990552673,Starbucks $50 Multipack,$50 (5 X $10),STARBUCKS,5 X $10,5,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S2:R4:C3 | XMAS 2026 - NATIONAL - 6:S4:R3:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S4:R3:C6,3,Z:\Kendal King\Images\799366875789.jpg,799366875789.jpg,799366875789,STARBUCKS,,,"10 x4 STARBUCKS’
+You'll always have the perfect gift on hand.
+Four Cards, four perfect gifts for someone out there.",0,40,0,0,7,47,Low,brand match; token overlap: STARBUCKS,FALSE,FALSE,
+RG00022,19674217981,196742179811,990552673,Starbucks $50 Multipack,$50 (5 X $10),STARBUCKS,5 X $10,5,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S2:R4:C3 | XMAS 2026 - NATIONAL - 6:S4:R3:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S4:R3:C6,4,Z:\Kendal King\Images\OLD - Not Named UPC Only\Starbucks $40MP 4x10 - 799366875789 - Copy.jpg,Starbucks $40MP 4x10 - 799366875789 - Copy.jpg,799366875789,STARBUCKS,,,"10 x4 STARBUCKS’
+You'll always have the perfect gift on hand.
+Four Cards, four perfect gifts for someone out there.",0,40,0,0,7,47,Low,brand match; token overlap: STARBUCKS,FALSE,FALSE,
+RG00022,19674217981,196742179811,990552673,Starbucks $50 Multipack,$50 (5 X $10),STARBUCKS,5 X $10,5,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S2:R4:C3 | XMAS 2026 - NATIONAL - 6:S4:R3:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S4:R3:C6,5,Z:\Kendal King\Images\OLD - Not Named UPC Only\Starbucks $40MP 4x10 - 799366875789.jpg,Starbucks $40MP 4x10 - 799366875789.jpg,799366875789,STARBUCKS,,,"10 x4 STARBUCKS’
+You'll always have the perfect gift on hand.
+Four Cards, four perfect gifts for someone out there.",0,40,0,0,7,47,Low,brand match; token overlap: STARBUCKS,FALSE,FALSE,
+RG00023,19674211223,196742112238,990452867,Starbucks $50 Multipack,$50 (5 x $10),STARBUCKS,5 X $10,5,10,3,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S2:R4:C4 | XMAS 2026 - MD-NJ - 6:S2:R4:C5 | XMAS 2026 - MD-NJ - 6:S2:R4:C6,1,Z:\Kendal King\Images\196742112405.jpg,196742112405.jpg,196742112405,STARBUCKS,5 X $10,5,"5 x10 STARBUC |
+€
+~ ©
+You'll always have the perfect gift on hand.
+Ten Cards, ten perfect gifts for someone out there
+5x0 STARBUCKS’
+se
+Ten Cards, ten perfect gifts for someone out there.
+5.0 STARBUCKS
+c J
+Tan Cards ten pertect gifts for sameane aut there",0,40,40,25,7,112,High,brand match; denomination match; pack match; token overlap: STARBUCKS,FALSE,FALSE,
+RG00023,19674211223,196742112238,990452867,Starbucks $50 Multipack,$50 (5 x $10),STARBUCKS,5 X $10,5,10,3,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S2:R4:C4 | XMAS 2026 - MD-NJ - 6:S2:R4:C5 | XMAS 2026 - MD-NJ - 6:S2:R4:C6,2,Z:\Kendal King\Images\196742112375.jpg,196742112375.jpg,196742112375,STARBUCKS,,,"HY, x4 STARBUCKS’
+You'll always have the perfect gift on hand.
+Four Cards, four perfect gifts for someone out there.
+10 x4 STARBUCKS:
+lo x4 STARBUCKS:",0,40,0,0,7,47,Low,brand match; token overlap: STARBUCKS,FALSE,FALSE,
+RG00023,19674211223,196742112238,990452867,Starbucks $50 Multipack,$50 (5 x $10),STARBUCKS,5 X $10,5,10,3,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S2:R4:C4 | XMAS 2026 - MD-NJ - 6:S2:R4:C5 | XMAS 2026 - MD-NJ - 6:S2:R4:C6,3,Z:\Kendal King\Images\799366875789.jpg,799366875789.jpg,799366875789,STARBUCKS,,,"10 x4 STARBUCKS’
+You'll always have the perfect gift on hand.
+Four Cards, four perfect gifts for someone out there.",0,40,0,0,7,47,Low,brand match; token overlap: STARBUCKS,FALSE,FALSE,
+RG00023,19674211223,196742112238,990452867,Starbucks $50 Multipack,$50 (5 x $10),STARBUCKS,5 X $10,5,10,3,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S2:R4:C4 | XMAS 2026 - MD-NJ - 6:S2:R4:C5 | XMAS 2026 - MD-NJ - 6:S2:R4:C6,4,Z:\Kendal King\Images\OLD - Not Named UPC Only\Starbucks $40MP 4x10 - 799366875789 - Copy.jpg,Starbucks $40MP 4x10 - 799366875789 - Copy.jpg,799366875789,STARBUCKS,,,"10 x4 STARBUCKS’
+You'll always have the perfect gift on hand.
+Four Cards, four perfect gifts for someone out there.",0,40,0,0,7,47,Low,brand match; token overlap: STARBUCKS,FALSE,FALSE,
+RG00023,19674211223,196742112238,990452867,Starbucks $50 Multipack,$50 (5 x $10),STARBUCKS,5 X $10,5,10,3,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S2:R4:C4 | XMAS 2026 - MD-NJ - 6:S2:R4:C5 | XMAS 2026 - MD-NJ - 6:S2:R4:C6,5,Z:\Kendal King\Images\OLD - Not Named UPC Only\Starbucks $40MP 4x10 - 799366875789.jpg,Starbucks $40MP 4x10 - 799366875789.jpg,799366875789,STARBUCKS,,,"10 x4 STARBUCKS’
+You'll always have the perfect gift on hand.
+Four Cards, four perfect gifts for someone out there.",0,40,0,0,7,47,Low,brand match; token overlap: STARBUCKS,FALSE,FALSE,
+RG00030,19674210916,196742109160,990507001,Disney $75 Multipack,$75 (3 X $25),DISNEY,3 X $25,3,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R1:C1 | XMAS 2026 - NATIONAL - 6:S3:R1:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R1:C1,1,Z:\Kendal King\Images\100 0019674204538.jpg,100 0019674204538.jpg,0019674204538,DISNEY,,,"exfien °100
+a»
+‘Deep
+. Stream more
+— phwbat you love
+exten °100
+oN
+‘Drenep a
+Stream more
+of what you love
+ania»
+‘Disney +
+of wnat you love",0,40,0,0,7,47,Low,brand match; token overlap: DISNEY,FALSE,FALSE,
+RG00030,19674210916,196742109160,990507001,Disney $75 Multipack,$75 (3 X $25),DISNEY,3 X $25,3,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R1:C1 | XMAS 2026 - NATIONAL - 6:S3:R1:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R1:C1,2,Z:\Kendal King\Images\196742025842.jpg,196742025842.jpg,196742025842,DISNEY,,,"Bete *150
+@
+‘Disney
+GIFT CARD
+=H
+\” Sariee",0,40,0,0,7,47,Low,brand match; token overlap: DISNEY,FALSE,FALSE,
+RG00030,19674210916,196742109160,990507001,Disney $75 Multipack,$75 (3 X $25),DISNEY,3 X $25,3,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R1:C1 | XMAS 2026 - NATIONAL - 6:S3:R1:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R1:C1,3,Z:\Kendal King\Images\196742025859.jpg,196742025859.jpg,196742025859,DISNEY,,,"‘<Dyienz
+oirr SNE
+~~ 235
+1 Sa ee
+I Se ost *75
+“Prine
+GIFT aNEp
+rey bs)
+3 R ~ ae
+1 2aee
+Sra *75
+@
+‘Disney
+OUurFTY CARO
+2%
+7 eeu h.
+(7,
+F ary",0,40,0,0,7,47,Low,brand match; token overlap: DISNEY,FALSE,FALSE,
+RG00030,19674210916,196742109160,990507001,Disney $75 Multipack,$75 (3 X $25),DISNEY,3 X $25,3,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R1:C1 | XMAS 2026 - NATIONAL - 6:S3:R1:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R1:C1,4,Z:\Kendal King\Images\196742071061.jpg,196742071061.jpg,196742071061,DISNEY,,,"SN
+Dyeney a
+Stream more
+of what you love
+“> 25-5200
+(rime
+Direney +
+| Stream more
+525-5200
+CSN
+‘Disney +",0,40,0,0,7,47,Low,brand match; token overlap: DISNEY,FALSE,FALSE,
+RG00030,19674210916,196742109160,990507001,Disney $75 Multipack,$75 (3 X $25),DISNEY,3 X $25,3,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R1:C1 | XMAS 2026 - NATIONAL - 6:S3:R1:C1 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R1:C1,5,Z:\Kendal King\Images\196742109092.jpg,196742109092.jpg,196742109092,DISNEY,,,"exffen *100
+aia
+‘Dreney 4
+Stream more
+of what you love
+exfien *100
+cm
+‘Dreney a
+a»
+‘Disney
+| Stream more
+| of what you love",0,40,0,0,7,47,Low,brand match; token overlap: DISNEY,FALSE,FALSE,
+RG00035,19674209553,196742095531,990418403,Roblox,1 X $100,ROBLOX,$100,,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R1:C6 | XMAS 2026 - NATIONAL - 6:S3:R1:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R1:C6,1,Z:\Kendal King\Images\OLD - Not Named UPC Only\Roblox $50_UPC 799366926214jpg.jpg,Roblox $50_UPC 799366926214jpg.jpg,799366926214,ROBLOX,,,"INCLUDES
+fe, quia >5O
+7
+Nae
+\y 5 5
+yy es
+RO a, Bay:
+aaa <x
+Perey 2,
+Play Millions of Games
+on Roblox
+J quites *5O
+\ ¢ » ‘
+fy Ww Ne
+, i \»s a |
+| INCLUDES
+ee, ies *5QO
+|
+| REBLEX
+|} \ ¢F .
+| Yes
+| NAN ,
+| Play Millions of Games
+| on Roblox",0,40,0,0,27,67,Medium,brand match; token overlap: ROBLOX; distinctive phrase match,FALSE,FALSE,
+RG00035,19674209553,196742095531,990418403,Roblox,1 X $100,ROBLOX,$100,,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R1:C6 | XMAS 2026 - NATIONAL - 6:S3:R1:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R1:C6,2,Z:\Kendal King\Images\OLD - Not Named UPC Only\Roblox_VGC ($10-$100) - 799366926313.jpg,Roblox_VGC ($10-$100) - 799366926313.jpg,799366926313,ROBLOX,,,"INCLUDES
+$ =>
+FREE quem *10-*100
+Yt?
+4, SS a \ ’
+Play Millions of Games
+on Roblox
+| INCLUDES
+| ae
+~~. 7s
+| Play Millions of Games
+| on Roblox
+| INCLUDES $ 5
+|
+| ReEBLEX.
+e",0,40,0,0,14,54,Low,"brand match; token overlap: $100, ROBLOX",FALSE,FALSE,
+RG00035,19674209553,196742095531,990418403,Roblox,1 X $100,ROBLOX,$100,,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R1:C6 | XMAS 2026 - NATIONAL - 6:S3:R1:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R1:C6,3,Z:\Kendal King\Images\799366873716.jpg,799366873716.jpg,799366873716,ROBLOX,,,"atte ‘30
+ROBLOX
+™ on 50
+""m0
+aacane
+n on 50
+a nO
+""0
+Saatane
+——_—_  —*
+; RQBLOX |",0,40,0,0,7,47,Low,brand match; token overlap: ROBLOX,FALSE,FALSE,
+RG00035,19674209553,196742095531,990418403,Roblox,1 X $100,ROBLOX,$100,,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R1:C6 | XMAS 2026 - NATIONAL - 6:S3:R1:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R1:C6,4,Z:\Kendal King\Images\799366873716.png,799366873716.png,799366873716,ROBLOX,,,"ate ‘50
+ROBLOX
+— =?
+Saatare
+ate *S0
+nie 50
+‘ ~~ 50
+nO
+Se :
+» RQBLOX |",0,40,0,0,7,47,Low,brand match; token overlap: ROBLOX,FALSE,FALSE,
+RG00035,19674209553,196742095531,990418403,Roblox,1 X $100,ROBLOX,$100,,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R1:C6 | XMAS 2026 - NATIONAL - 6:S3:R1:C6 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R1:C6,5,Z:\Kendal King\Images\799366926313.jpg,799366926313.jpg,799366926313,ROBLOX,,,"INCLUDES
+$ =>
+FREE quem *10-*100
+Yt?
+4, SS a \ ’
+Play Millions of Games
+on Roblox
+| INCLUDES
+| ae
+~~. 7s
+| Play Millions of Games
+| on Roblox
+| INCLUDES $ 5
+|
+| ReEBLEX.
+e",0,40,0,0,7,47,Low,brand match; token overlap: ROBLOX,FALSE,FALSE,
+RG00038,19674217375,196742173758,990561180,Sony PlayStation,1 X $50 + Gift,PLAYSTATION,$50,,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R2:C3 | XMAS 2026 - NATIONAL - 6:S3:R2:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R2:C3,1,Z:\Kendal King\Images\OLD - Not Named UPC Only\Sony Playstation $50 - GWP packaging - 196742032420 - Copy.jpg,Sony Playstation $50 - GWP packaging - 196742032420 - Copy.jpg,196742032420,PLAYSTATION,$50,,"GIFT CARD $50
+“ USD
+V FREE GIFT CARD HOLDER
+P $50
+USD
+<i>
+TAN
+Redeem for anything on PlayStation” Store:
+games, add-ons, subscriptions and more
+PlayStation®Plus subscription auto-renews until cancelled. See reverse for details.
+: USD
+AO x
+oxo
+IN
+GIFT CARD S 50
+; USD
+PlayStation*Plus subscription auto-renews until cancelled. See reverse for details.",0,40,40,0,21,101,High,"brand match; denomination match; token overlap: $50, PLAYSTATION, SONY",FALSE,FALSE,
+RG00038,19674217375,196742173758,990561180,Sony PlayStation,1 X $50 + Gift,PLAYSTATION,$50,,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R2:C3 | XMAS 2026 - NATIONAL - 6:S3:R2:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R2:C3,2,Z:\Kendal King\Images\OLD - Not Named UPC Only\Sony_PlayStation_50_Chit_030422.jpg,Sony_PlayStation_50_Chit_030422.jpg,030422,PLAYSTATION,$50,,"carb ©») ~+«+880
+CARD J
+- ®
+Redeem for anything on
+PlayStation""Store: games, add-ons,
+subscriptions and more
+PlayStation®Plus subscription auto-renews until cancelled. See reverse for details.
+GIFT aa $50
+CARD )
+>,
+PlayStation.
+oe -.
+GIFT ‘aa $50",0,40,40,0,21,101,High,"brand match; denomination match; token overlap: $50, PLAYSTATION, SONY",FALSE,FALSE,
+RG00038,19674217375,196742173758,990561180,Sony PlayStation,1 X $50 + Gift,PLAYSTATION,$50,,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R2:C3 | XMAS 2026 - NATIONAL - 6:S3:R2:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R2:C3,3,Z:\Kendal King\Images\OLD - Not Named UPC Only\Sony_PlayStation_Store_$50 - 799366276395 - Copy.jpg,Sony_PlayStation_Store_$50 - 799366276395 - Copy.jpg,799366276395,PLAYSTATION,$50,,"euitia»
+PlayStation.Store
+All the Entertainment.
+All the Adventure. Always Open.
+Redeem for anything on PlayStation™ Store:
+games, add-ons, subscriptions and more.
+a GIFT CARD
+$50.5
+b —
+a ‘
+Redeem for anything on PlayStation” Store:",0,40,40,0,21,101,High,"brand match; denomination match; token overlap: $50, PLAYSTATION, SONY",FALSE,FALSE,
+RG00038,19674217375,196742173758,990561180,Sony PlayStation,1 X $50 + Gift,PLAYSTATION,$50,,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R2:C3 | XMAS 2026 - NATIONAL - 6:S3:R2:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R2:C3,4,Z:\Kendal King\Images\OLD - Not Named UPC Only\Sony_PlayStation_Store_$50 - 799366276395.jpg,Sony_PlayStation_Store_$50 - 799366276395.jpg,799366276395,PLAYSTATION,$50,,"euitia»
+PlayStation.Store
+All the Entertainment.
+All the Adventure. Always Open.
+Redeem for anything on PlayStation™ Store:
+games, add-ons, subscriptions and more.
+a GIFT CARD
+$50.5
+b —
+a ‘
+Redeem for anything on PlayStation” Store:",0,40,40,0,21,101,High,"brand match; denomination match; token overlap: $50, PLAYSTATION, SONY",FALSE,FALSE,
+RG00038,19674217375,196742173758,990561180,Sony PlayStation,1 X $50 + Gift,PLAYSTATION,$50,,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R2:C3 | XMAS 2026 - NATIONAL - 6:S3:R2:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R2:C3,5,Z:\Kendal King\Images\196742032420 - Copy.jpg,196742032420 - Copy.jpg,196742032420,PLAYSTATION,$50,,"GIFT CARD $50
+“ USD
+V FREE GIFT CARD HOLDER
+P $50
+USD
+<i>
+TAN
+Redeem for anything on PlayStation” Store:
+games, add-ons, subscriptions and more
+PlayStation®Plus subscription auto-renews until cancelled. See reverse for details.
+: USD
+AO x
+oxo
+IN
+GIFT CARD S 50
+; USD
+PlayStation*Plus subscription auto-renews until cancelled. See reverse for details.",0,40,40,0,14,94,High,"brand match; denomination match; token overlap: $50, PLAYSTATION",FALSE,FALSE,
+RG00039,19674210278,196742102789,990420757,Sony PlayStation,1 X $50,PLAYSTATION,$50,,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S3:R2:C4,1,Z:\Kendal King\Images\OLD - Not Named UPC Only\Sony Playstation $50 - GWP packaging - 196742032420 - Copy.jpg,Sony Playstation $50 - GWP packaging - 196742032420 - Copy.jpg,196742032420,PLAYSTATION,$50,,"GIFT CARD $50
+“ USD
+V FREE GIFT CARD HOLDER
+P $50
+USD
+<i>
+TAN
+Redeem for anything on PlayStation” Store:
+games, add-ons, subscriptions and more
+PlayStation®Plus subscription auto-renews until cancelled. See reverse for details.
+: USD
+AO x
+oxo
+IN
+GIFT CARD S 50
+; USD
+PlayStation*Plus subscription auto-renews until cancelled. See reverse for details.",0,40,40,0,21,101,High,"brand match; denomination match; token overlap: $50, PLAYSTATION, SONY",FALSE,FALSE,
+RG00039,19674210278,196742102789,990420757,Sony PlayStation,1 X $50,PLAYSTATION,$50,,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S3:R2:C4,2,Z:\Kendal King\Images\OLD - Not Named UPC Only\Sony_PlayStation_50_Chit_030422.jpg,Sony_PlayStation_50_Chit_030422.jpg,030422,PLAYSTATION,$50,,"carb ©») ~+«+880
+CARD J
+- ®
+Redeem for anything on
+PlayStation""Store: games, add-ons,
+subscriptions and more
+PlayStation®Plus subscription auto-renews until cancelled. See reverse for details.
+GIFT aa $50
+CARD )
+>,
+PlayStation.
+oe -.
+GIFT ‘aa $50",0,40,40,0,21,101,High,"brand match; denomination match; token overlap: $50, PLAYSTATION, SONY",FALSE,FALSE,
+RG00039,19674210278,196742102789,990420757,Sony PlayStation,1 X $50,PLAYSTATION,$50,,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S3:R2:C4,3,Z:\Kendal King\Images\OLD - Not Named UPC Only\Sony_PlayStation_Store_$50 - 799366276395 - Copy.jpg,Sony_PlayStation_Store_$50 - 799366276395 - Copy.jpg,799366276395,PLAYSTATION,$50,,"euitia»
+PlayStation.Store
+All the Entertainment.
+All the Adventure. Always Open.
+Redeem for anything on PlayStation™ Store:
+games, add-ons, subscriptions and more.
+a GIFT CARD
+$50.5
+b —
+a ‘
+Redeem for anything on PlayStation” Store:",0,40,40,0,21,101,High,"brand match; denomination match; token overlap: $50, PLAYSTATION, SONY",FALSE,FALSE,
+RG00039,19674210278,196742102789,990420757,Sony PlayStation,1 X $50,PLAYSTATION,$50,,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S3:R2:C4,4,Z:\Kendal King\Images\OLD - Not Named UPC Only\Sony_PlayStation_Store_$50 - 799366276395.jpg,Sony_PlayStation_Store_$50 - 799366276395.jpg,799366276395,PLAYSTATION,$50,,"euitia»
+PlayStation.Store
+All the Entertainment.
+All the Adventure. Always Open.
+Redeem for anything on PlayStation™ Store:
+games, add-ons, subscriptions and more.
+a GIFT CARD
+$50.5
+b —
+a ‘
+Redeem for anything on PlayStation” Store:",0,40,40,0,21,101,High,"brand match; denomination match; token overlap: $50, PLAYSTATION, SONY",FALSE,FALSE,
+RG00039,19674210278,196742102789,990420757,Sony PlayStation,1 X $50,PLAYSTATION,$50,,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S3:R2:C4,5,Z:\Kendal King\Images\196742032420 - Copy.jpg,196742032420 - Copy.jpg,196742032420,PLAYSTATION,$50,,"GIFT CARD $50
+“ USD
+V FREE GIFT CARD HOLDER
+P $50
+USD
+<i>
+TAN
+Redeem for anything on PlayStation” Store:
+games, add-ons, subscriptions and more
+PlayStation®Plus subscription auto-renews until cancelled. See reverse for details.
+: USD
+AO x
+oxo
+IN
+GIFT CARD S 50
+; USD
+PlayStation*Plus subscription auto-renews until cancelled. See reverse for details.",0,40,40,0,14,94,High,"brand match; denomination match; token overlap: $50, PLAYSTATION",FALSE,FALSE,
+RG00042,19674211683,196742116830,990418407,Nintendo $100 Multipack,$100 (5 X $20),NINTENDO,5 X $20,5,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S3:R3:C1,1,Z:\Kendal King\Images\OLD - Not Named UPC Only\Nintendo eShop $20_UPC 799366866053.png,Nintendo eShop $20_UPC 799366866053.png,799366866053,NINTENDO,,,".
+Nintendo eShop
+For us@ On
+Nintendo systems*
+nee
+For use on $
+‘intends sys’ems’",0,40,0,0,14,54,Low,"brand match; token overlap: $20, NINTENDO",FALSE,FALSE,
+RG00042,19674211683,196742116830,990418407,Nintendo $100 Multipack,$100 (5 X $20),NINTENDO,5 X $20,5,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S3:R3:C1,2,Z:\Kendal King\Images\196742023473.JPG,196742023473.JPG,196742023473,NINTENDO,,,"Individual Membership
+Nintendo Switch Online
+Ti —— ae)
++
+Expansion Pack
+v =)
+For NEW members; cannot be added to an existing
+Nintendo Switch Online membership
+oz roo
+ai ae Cons | ose S
+ee ~ %
+ai eta Ca Seren",0,40,0,0,7,47,Low,brand match; token overlap: NINTENDO,FALSE,FALSE,
+RG00042,19674211683,196742116830,990418407,Nintendo $100 Multipack,$100 (5 X $20),NINTENDO,5 X $20,5,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S3:R3:C1,3,Z:\Kendal King\Images\196742066005.jpg,196742066005.jpg,196742066005,NINTENDO,,,"(5
+. Zs
+w a -
+PON gs
+4 q 6 ‘4
+y 4 @
+eyo). oo
+‘Oo Te
+) 69
+For use on >]
+Nintendo Switch™
+Pd a 4",0,40,0,0,7,47,Low,brand match; token overlap: NINTENDO,FALSE,FALSE,
+RG00042,19674211683,196742116830,990418407,Nintendo $100 Multipack,$100 (5 X $20),NINTENDO,5 X $20,5,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S3:R3:C1,4,Z:\Kendal King\Images\196742102215.jpg,196742102215.jpg,196742102215,NINTENDO,,,"Nintendo @Shop
+(IBONLINE
+Nintendo Switch Online
+12 Month
+Membership
+exnfies “19°
+(IB ONLINE
+enfien ‘19°’
+Nintendo éShop
+1 2 Month",0,40,0,0,7,47,Low,brand match; token overlap: NINTENDO,FALSE,FALSE,
+RG00042,19674211683,196742116830,990418407,Nintendo $100 Multipack,$100 (5 X $20),NINTENDO,5 X $20,5,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S3:R3:C1,5,Z:\Kendal King\Images\799366445838.jpeg,799366445838.jpeg,799366445838,NINTENDO,,,". i=)
+Nintendo eShop
+Nintondo systems*
+ZF
+Se
+\
+(oo
+Nintendo €Shop
+Nintondo systems”
+ERA. ity lg
+Ln
+ae
+. n
+y¥|
+Le. 2
+a
+Pe 4
+ae, a
+‘eG e .
+Nintendo csi,
+Nintendo systoms’ $] 0",0,40,0,0,7,47,Low,brand match; token overlap: NINTENDO,FALSE,FALSE,
+RG00052,19674215907,196742159073,990505768,Gap Options,1 X $50,GAP,$50,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R5:C1 | XMAS 2026 - MD-NJ - 6:S3:R5:C2 | XMAS 2026 - NATIONAL - 6:S3:R5:C2 | XMAS 2026 - NATIONAL - 6:S3:R5:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R5:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R5:C3,1,Z:\Kendal King\Images\033878704701.JPG,033878704701.JPG,033878704701,THE,$50,,"THE COFFEE BEAN &TEA LEAF’
+» SAVE
+) *50 Value
+: FOR ONLY
+EXTREME VALUE
+& THE COFFEE BEAN & TEA LEAF’
+ll “| SAVE
+_ Se) 20
+$50 Value
+Mil
+— SAVE
+=> 2)
+a
+LL $39. 98
+c/o .
+&) GET TWO $25 GIFT CARDS
+TEAS’
+| AM",0,-60,40,0,7,-13,Low,brand conflict; denomination match; token overlap: $50,FALSE,FALSE,
+RG00052,19674215907,196742159073,990505768,Gap Options,1 X $50,GAP,$50,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R5:C1 | XMAS 2026 - MD-NJ - 6:S3:R5:C2 | XMAS 2026 - NATIONAL - 6:S3:R5:C2 | XMAS 2026 - NATIONAL - 6:S3:R5:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R5:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R5:C3,2,Z:\Kendal King\Images\196742004656.JPG,196742004656.JPG,196742004656,EXTREME,$50,,"EXTREME $50
+VALUE
+ory 25)
+x ‘ ~» =
+Ls, Feogt |
+tt. 1) Pa e every bite a better burger
+Ye |
+Tere |
+; os s Es
+SS |
+Bs Se, Bee
+= BURGER
+et Pin a |
+(Sts, =i
+pe. Sone? ay ay od every bite a better burger
+e |
+at °25)'
+ESD = evga 2 every bite a better burger
+.. ey j |
+PES ee TS HK KH HS
+Aes B. ry ei
+PODS ak hig so a Oe .
+scsi : io Mee F every bite a better burger
+Fe I a
+Madi °25'
+arene aoe hice ‘ every bite o better burger
+L. ~ : |
+tee 5-57 FH TH HH HR HH
+ors . ry e.
+ON om pa ME .
+ae a Me Yr every bite o better burger
+fa a ee ae ee ee ee ee ee ee ee ee et",0,-60,40,0,7,-13,Low,brand conflict; denomination match; token overlap: $50,FALSE,FALSE,
+RG00052,19674215907,196742159073,990505768,Gap Options,1 X $50,GAP,$50,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R5:C1 | XMAS 2026 - MD-NJ - 6:S3:R5:C2 | XMAS 2026 - NATIONAL - 6:S3:R5:C2 | XMAS 2026 - NATIONAL - 6:S3:R5:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R5:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R5:C3,3,Z:\Kendal King\Images\196742007114.jpg,196742007114.jpg,196742007114,Z,$50,,"z 197
+ag Pe, tr Ve Weds pe og he ae""
+Oe a ee
+ALL AMERICAN fees
+& SPORTS THEATER
+- eet
+; 7
+iz io
+fe ae OC ee
+$50
+>
+ALL AMERICAN
+¥ a Pie.
+Ui Sel ig ees. Ae “Z tae
+aes: POEe eo Sle fe AB ry ¢:
+- ‘wi
+STEASe A ate
+Tope, S Parag bo
+Re i BE
+eS i ae a
+*50 > i
+ya 4; 4, .
+Noth Oe om
+ae A ced te LP",0,-60,40,0,7,-13,Low,brand conflict; denomination match; token overlap: $50,FALSE,FALSE,
+RG00052,19674215907,196742159073,990505768,Gap Options,1 X $50,GAP,$50,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R5:C1 | XMAS 2026 - MD-NJ - 6:S3:R5:C2 | XMAS 2026 - NATIONAL - 6:S3:R5:C2 | XMAS 2026 - NATIONAL - 6:S3:R5:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R5:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R5:C3,4,Z:\Kendal King\Images\196742007367.JPG,196742007367.JPG,196742007367,A,$50,,"™
+a
+aa
+EXTREME  —*—— $50
+VALUE —
+\
+| >)
+{ Gea fo3.
+owt a ky heigl) my eS fea
+, ~~ a” a -
+Peat diy Og L oe
+(GEau 95)
+olorndtn sete BW
+q ~
+EXTREME $50
+VALUE
+sountaln Bigg
+(EAU D5)
+So’
+Slovan sete BO
+My ee
+cS eG Prope) aM
+Qe E_—
+‘ x > si is
+prountaln Pigg
+ee, $25
+“Stevan Seyte CPD
+Pes. got i a ‘ ae # y
+ys xa se OO
+- ae ate pe aioe Aly tyme
+, ae ——_
+eo e n
+EXTREME $ 50
+mountain Big,
+- ae i a $
+™ re a we A S nt
+a OX ae att ""
+sronntale: Pies
+Storie Sigh BO *
+OT RE a Se 7 aad ae a7 at
+en, —— gle pl .",0,-60,40,0,7,-13,Low,brand conflict; denomination match; token overlap: $50,FALSE,FALSE,
+RG00052,19674215907,196742159073,990505768,Gap Options,1 X $50,GAP,$50,,10,6,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R5:C1 | XMAS 2026 - MD-NJ - 6:S3:R5:C2 | XMAS 2026 - NATIONAL - 6:S3:R5:C2 | XMAS 2026 - NATIONAL - 6:S3:R5:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R5:C2 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R5:C3,5,Z:\Kendal King\Images\196742007404.jpg,196742007404.jpg,196742007404,BRUNCH,$50,,"BRUNCH
+& BOOZE
++ ae.
+RK? i Fa - > SESS
+"" i _
+EXTREME quis $50
+VALUE
+SCUITS
+»
+RUNCH
+J}
+V}
+“Ee, $50
+EXTREME eufiie $ 50
+BISCUITS
+Se Wee",0,-60,40,0,7,-13,Low,brand conflict; denomination match; token overlap: $50,FALSE,FALSE,
+RG00053,19674213197,196742131970,990442330,Under Armour W/ Bonus,1 x $50 + $10 BONUS,UNDER,$50,,20,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R5:C3 | XMAS 2026 - NATIONAL - 6:S3:R5:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R5:C4,1,Z:\Kendal King\Images\799366759669.jpg,799366759669.jpg,799366759669,RATS,$50,,"rats Quem $50
++ $4.95 ACTIVATION FEE
+$10 BONUS INCGLUDED*
+NO CREDIT CARD REQUIRED FOR ACTIVATION
+rac8t Quem $50
+a
+roa
+THE KING OF SPORTSBOOKS
+pe
+va",0,-60,40,0,21,1,Low,"brand conflict; denomination match; token overlap: $10, $50, BONUS",FALSE,FALSE,
+RG00053,19674213197,196742131970,990442330,Under Armour W/ Bonus,1 x $50 + $10 BONUS,UNDER,$50,,20,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R5:C3 | XMAS 2026 - NATIONAL - 6:S3:R5:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R5:C4,2,Z:\Kendal King\Images\OLD - Not Named UPC Only\BetMGM $50 - 799366759669.jpg,BetMGM $50 - 799366759669.jpg,799366759669,RATS,$50,,"rats Quem $50
++ $4.95 ACTIVATION FEE
+$10 BONUS INCGLUDED*
+NO CREDIT CARD REQUIRED FOR ACTIVATION
+rac8t Quem $50
+a
+roa
+THE KING OF SPORTSBOOKS
+pe
+va",0,-60,40,0,21,1,Low,"brand conflict; denomination match; token overlap: $10, $50, BONUS",FALSE,FALSE,
+RG00053,19674213197,196742131970,990442330,Under Armour W/ Bonus,1 x $50 + $10 BONUS,UNDER,$50,,20,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R5:C3 | XMAS 2026 - NATIONAL - 6:S3:R5:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R5:C4,3,Z:\Kendal King\Images\OLD - Not Named UPC Only\Cheesecake Factory $50 (buy $50; get $10 bonus code) - 196742039252.jpg,Cheesecake Factory $50 (buy $50; get $10 bonus code) - 196742039252.jpg,196742039252,$50,$50,,"$50
+ecak
+eee
+heesecak
+me ONUS
+aa)
+BONUS",0,-60,40,0,21,1,Low,"brand conflict; denomination match; token overlap: $10, $50, BONUS",FALSE,FALSE,
+RG00053,19674213197,196742131970,990442330,Under Armour W/ Bonus,1 x $50 + $10 BONUS,UNDER,$50,,20,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R5:C3 | XMAS 2026 - NATIONAL - 6:S3:R5:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R5:C4,4,Z:\Kendal King\Images\OLD - Not Named UPC Only\DSW $50MP + $10 Bonus - 799366521327.jpg,DSW $50MP + $10 Bonus - 799366521327.jpg,799366521327,450,$50,,"<*> 450
+$60 VALUE!
+DESIGNER SHOE WAREHOUSE®
+exes:
+“>> 450
+—*s> $50
+DESIGNER SHOE WAREHOUSE”
+Ce",0,-60,40,0,21,1,Low,"brand conflict; denomination match; token overlap: $10, $50, BONUS",FALSE,FALSE,
+RG00053,19674213197,196742131970,990442330,Under Armour W/ Bonus,1 x $50 + $10 BONUS,UNDER,$50,,20,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S3:R5:C3 | XMAS 2026 - NATIONAL - 6:S3:R5:C4 | XMAS 2026 - NATIONAL SLFCHK - 6:S3:R5:C4,5,Z:\Kendal King\Images\196742039252.jpg,196742039252.jpg,196742039252,$50,$50,,"$50
+ecak
+eee
+heesecak
+me ONUS
+aa)
+BONUS",0,-60,40,0,14,-6,Low,"brand conflict; denomination match; token overlap: $50, BONUS",FALSE,FALSE,
+RG00058,19674216329,196742163292,990560866,Outback + Bonus,1 X $50,OUTBACK,$50,,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S4:R3:C3 | XMAS 2026 - NATIONAL - 6:S2:R3:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S2:R3:C3,1,Z:\Kendal King\Images\196742132922.jpg,196742132922.jpg,196742132922,OUTBACK,$50,,"EXTREME
+VALUE =—ii $50
+_
+OUTBACK 1
+aaa”. « rey oH
+Be ab StZz7735 LEN
+c
+VALUE $50
+| OUTBACK , eae
+{ STEAKHOUSES “sd oe ™
+we FS Jf ee” A 4 i a
+or a **2 ‘ 3s |
+a
+$50
+— ~
+OUTBACK
+STEAKHOUSE®
+NO RULES. JUST RIGHT.”
+EXTREME $50
+VALUE
+t - Pree ;
+H “i af » Wall Tan
+We
+ll
+NO RULES. JUST RIGHT.®",0,40,40,0,14,94,High,"brand match; denomination match; token overlap: $50, OUTBACK",FALSE,FALSE,
+RG00058,19674216329,196742163292,990560866,Outback + Bonus,1 X $50,OUTBACK,$50,,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S4:R3:C3 | XMAS 2026 - NATIONAL - 6:S2:R3:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S2:R3:C3,2,Z:\Kendal King\Images\799366244332.jpg,799366244332.jpg,799366244332,OUTBACK,$50,,"$50 a
+i
+_ ‘OUTBACK
+e THE GIFT OF
+OUTBACK |
+GIVE THE GIFT OF |
+=OTEAK=
+| |
+HAPPY hts |
+$50 a OFF
+a
+| @UTBACK",0,40,40,0,14,94,High,"brand match; denomination match; token overlap: $50, OUTBACK",FALSE,FALSE,
+RG00058,19674216329,196742163292,990560866,Outback + Bonus,1 X $50,OUTBACK,$50,,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S4:R3:C3 | XMAS 2026 - NATIONAL - 6:S2:R3:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S2:R3:C3,3,Z:\Kendal King\Images\799366521914.jpg,799366521914.jpg,799366521914,OUTBACK,$50,,"exes $50
++ FREE BLOOMIN’ ONION®
+| nn
+| KNOW WHAT GOES GREAT WITH
+- SSTEAKZa
+ENJOY A FREE
+] = P= © < 4 OUTBACK
+OUTBACK |
+STEAKHOUSE |
+KNOW WHAT GOES GREAT WITH |
+SSTEAK?2 ©
+wey.) ENJOY A FREE
+hang (as) loom ONON = CO
+ao ae mC
+STEAKHOUSE
+KNOW WHAT GOES GREAT WITH
+SSTEAK?2 —
+wer.) ENJOY A FREE :
+Fad (<=) Bil faa s.
+-_ > 2, ome '",0,40,40,0,14,94,High,"brand match; denomination match; token overlap: $50, OUTBACK",FALSE,FALSE,
+RG00058,19674216329,196742163292,990560866,Outback + Bonus,1 X $50,OUTBACK,$50,,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S4:R3:C3 | XMAS 2026 - NATIONAL - 6:S2:R3:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S2:R3:C3,4,Z:\Kendal King\Images\OLD - Not Named UPC Only\Outback $50 (Kangaroo art) - 799366244332.jpg,Outback $50 (Kangaroo art) - 799366244332.jpg,799366244332,OUTBACK,$50,,"$50 a
+i
+_ ‘OUTBACK
+e THE GIFT OF
+OUTBACK |
+GIVE THE GIFT OF |
+=OTEAK=
+| |
+HAPPY hts |
+$50 a OFF
+a
+| @UTBACK",0,40,40,0,14,94,High,"brand match; denomination match; token overlap: $50, OUTBACK",FALSE,FALSE,
+RG00058,19674216329,196742163292,990560866,Outback + Bonus,1 X $50,OUTBACK,$50,,10,3,XMAS 2026 - MD-NJ - 6 | XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - MD-NJ - 6:S4:R3:C3 | XMAS 2026 - NATIONAL - 6:S2:R3:C3 | XMAS 2026 - NATIONAL SLFCHK - 6:S2:R3:C3,5,Z:\Kendal King\Images\OLD - Not Named UPC Only\Outback $50MP w Bloomin Onion - 799366521914.jpg,Outback $50MP w Bloomin Onion - 799366521914.jpg,799366521914,OUTBACK,$50,,"exes $50
++ FREE BLOOMIN’ ONION®
+| nn
+| KNOW WHAT GOES GREAT WITH
+- SSTEAKZa
+ENJOY A FREE
+] = P= © < 4 OUTBACK
+OUTBACK |
+STEAKHOUSE |
+KNOW WHAT GOES GREAT WITH |
+SSTEAK?2 ©
+wey.) ENJOY A FREE
+hang (as) loom ONON = CO
+ao ae mC
+STEAKHOUSE
+KNOW WHAT GOES GREAT WITH
+SSTEAK?2 —
+wer.) ENJOY A FREE :
+Fad (<=) Bil faa s.
+-_ > 2, ome '",0,40,40,0,14,94,High,"brand match; denomination match; token overlap: $50, OUTBACK",FALSE,FALSE,
+RG00067,19674210943,196742109436,990418473,Domino's $75 Multipack,$75 (3 X $25),DOMINO,3 X $25,3,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S4:R4:C4,1,Z:\Kendal King\Images\196742101591.jpg,196742101591.jpg,196742101591,FANDANGO,3 X $25,3,"FANDANGO me S75
+aiet ""MOVIES
+$25
+(3 FANDANGO oS wet $75
+3x $25 CARDS
+THE
+ert OF MOVIES
+—au $25
+—a $25
+FANDANGO
+1 Card. 1000s of theaters nationwide.
+4 FANDANGO R$75
+aier ” MOVIES
+et $25
+—ti $25
+1 Cord. 1000s of theaters nafionwide.",0,-60,40,25,14,19,Low,"brand conflict; denomination match; pack match; token overlap: $25, $75",FALSE,FALSE,
+RG00067,19674210943,196742109436,990418473,Domino's $75 Multipack,$75 (3 X $25),DOMINO,3 X $25,3,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S4:R4:C4,2,Z:\Kendal King\Images\OLD - Not Named UPC Only\PAPPA'S $75 MP_UPC 799366452737.png,PAPPA'S $75 MP_UPC 799366452737.png,799366452737,SN,,3,"SN,
+¥) oc! ——.
+I Sy
+oe =
+ee) ""see
+Ww tee wt PP,’
+( -
+Al's
+3. Oo ep LL",0,-60,0,25,7,-28,Low,brand conflict; pack match; token overlap: $75,FALSE,FALSE,
+RG00067,19674210943,196742109436,990418473,Domino's $75 Multipack,$75 (3 X $25),DOMINO,3 X $25,3,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S4:R4:C4,3,Z:\Kendal King\Images\OLD - Not Named UPC Only\PAPPAS $75 MP_UPC 799366452737.png,PAPPAS $75 MP_UPC 799366452737.png,799366452737,SN,,3,"SN,
+¥) oc! ——.
+I Sy
+oe =
+ee) ""see
+Ww tee wt PP,’
+( -
+Al's
+3. Oo ep LL",0,-60,0,25,7,-28,Low,brand conflict; pack match; token overlap: $75,FALSE,FALSE,
+RG00067,19674210943,196742109436,990418473,Domino's $75 Multipack,$75 (3 X $25),DOMINO,3 X $25,3,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S4:R4:C4,4,Z:\Kendal King\Images\106570.jpg,106570.jpg,106570,SEA,,3,"Sea,
+)
+:
+« awe
+3,
+. :
+is .
+.
+>
+. °
+hy",0,-60,0,25,0,-35,Low,brand conflict; pack match,FALSE,FALSE,
+RG00067,19674210943,196742109436,990418473,Domino's $75 Multipack,$75 (3 X $25),DOMINO,3 X $25,3,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S4:R4:C4,5,Z:\Kendal King\Images\196742030945.png,196742030945.png,196742030945,EAE,,3,"eae
++ Fandango,
+~ c
+YS FANDANGO —
+S Fandango
+3 FANDANGO",0,-60,0,25,0,-35,Low,brand conflict; pack match,FALSE,FALSE,
+RG00078,19674211009,196742110098,990420751,Cheesecake Factory,$75 (3 X $25),CHEESECAKE,3 X $25,3,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S4:R5:C8,1,Z:\Kendal King\Images\196742101591.jpg,196742101591.jpg,196742101591,FANDANGO,3 X $25,3,"FANDANGO me S75
+aiet ""MOVIES
+$25
+(3 FANDANGO oS wet $75
+3x $25 CARDS
+THE
+ert OF MOVIES
+—au $25
+—a $25
+FANDANGO
+1 Card. 1000s of theaters nationwide.
+4 FANDANGO R$75
+aier ” MOVIES
+et $25
+—ti $25
+1 Cord. 1000s of theaters nafionwide.",0,-60,40,25,14,19,Low,"brand conflict; denomination match; pack match; token overlap: $25, $75",FALSE,FALSE,
+RG00078,19674211009,196742110098,990420751,Cheesecake Factory,$75 (3 X $25),CHEESECAKE,3 X $25,3,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S4:R5:C8,2,Z:\Kendal King\Images\OLD - Not Named UPC Only\PAPPA'S $75 MP_UPC 799366452737.png,PAPPA'S $75 MP_UPC 799366452737.png,799366452737,SN,,3,"SN,
+¥) oc! ——.
+I Sy
+oe =
+ee) ""see
+Ww tee wt PP,’
+( -
+Al's
+3. Oo ep LL",0,-60,0,25,7,-28,Low,brand conflict; pack match; token overlap: $75,FALSE,FALSE,
+RG00078,19674211009,196742110098,990420751,Cheesecake Factory,$75 (3 X $25),CHEESECAKE,3 X $25,3,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S4:R5:C8,3,Z:\Kendal King\Images\OLD - Not Named UPC Only\PAPPAS $75 MP_UPC 799366452737.png,PAPPAS $75 MP_UPC 799366452737.png,799366452737,SN,,3,"SN,
+¥) oc! ——.
+I Sy
+oe =
+ee) ""see
+Ww tee wt PP,’
+( -
+Al's
+3. Oo ep LL",0,-60,0,25,7,-28,Low,brand conflict; pack match; token overlap: $75,FALSE,FALSE,
+RG00078,19674211009,196742110098,990420751,Cheesecake Factory,$75 (3 X $25),CHEESECAKE,3 X $25,3,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S4:R5:C8,4,Z:\Kendal King\Images\106570.jpg,106570.jpg,106570,SEA,,3,"Sea,
+)
+:
+« awe
+3,
+. :
+is .
+.
+>
+. °
+hy",0,-60,0,25,0,-35,Low,brand conflict; pack match,FALSE,FALSE,
+RG00078,19674211009,196742110098,990420751,Cheesecake Factory,$75 (3 X $25),CHEESECAKE,3 X $25,3,10,1,XMAS 2026 - MD-NJ - 6,XMAS 2026 - MD-NJ - 6:S4:R5:C8,5,Z:\Kendal King\Images\196742030945.png,196742030945.png,196742030945,EAE,,3,"eae
++ Fandango,
+~ c
+YS FANDANGO —
+S Fandango
+3 FANDANGO",0,-60,0,25,0,-35,Low,brand conflict; pack match,FALSE,FALSE,
+RG00086,87458600900,874586009005,984222711,181,181,181,,,727,4,XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - NATIONAL - 6:S2:R1:C8 | XMAS 2026 - NATIONAL - 6:S4:R1:C8 | XMAS 2026 - NATIONAL SLFCHK - 6:S2:R1:C8 | XMAS 2026 - NATIONAL SLFCHK - 6:S4:R1:C8,1,Z:\Kendal King\Images\196742111590.jpg,196742111590.jpg,196742111590,,,,,0,0,0,0,0,0,Low,,FALSE,FALSE,
+RG00086,87458600900,874586009005,984222711,181,181,181,,,727,4,XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - NATIONAL - 6:S2:R1:C8 | XMAS 2026 - NATIONAL - 6:S4:R1:C8 | XMAS 2026 - NATIONAL SLFCHK - 6:S2:R1:C8 | XMAS 2026 - NATIONAL SLFCHK - 6:S4:R1:C8,2,Z:\Kendal King\Images\799366103424.jpg,799366103424.jpg,799366103424,,,,,0,0,0,0,0,0,Low,,FALSE,FALSE,
+RG00086,87458600900,874586009005,984222711,181,181,181,,,727,4,XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - NATIONAL - 6:S2:R1:C8 | XMAS 2026 - NATIONAL - 6:S4:R1:C8 | XMAS 2026 - NATIONAL SLFCHK - 6:S2:R1:C8 | XMAS 2026 - NATIONAL SLFCHK - 6:S4:R1:C8,3,Z:\Kendal King\Images\799366461128.jpg,799366461128.jpg,799366461128,,,,@,0,0,0,0,0,0,Low,,FALSE,FALSE,
+RG00086,87458600900,874586009005,984222711,181,181,181,,,727,4,XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - NATIONAL - 6:S2:R1:C8 | XMAS 2026 - NATIONAL - 6:S4:R1:C8 | XMAS 2026 - NATIONAL SLFCHK - 6:S2:R1:C8 | XMAS 2026 - NATIONAL SLFCHK - 6:S4:R1:C8,4,Z:\Kendal King\Images\799366503996.jpg,799366503996.jpg,799366503996,,,,,0,0,0,0,0,0,Low,,FALSE,FALSE,
+RG00086,87458600900,874586009005,984222711,181,181,181,,,727,4,XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - NATIONAL - 6:S2:R1:C8 | XMAS 2026 - NATIONAL - 6:S4:R1:C8 | XMAS 2026 - NATIONAL SLFCHK - 6:S2:R1:C8 | XMAS 2026 - NATIONAL SLFCHK - 6:S4:R1:C8,5,Z:\Kendal King\Images\799366522362.jpg,799366522362.jpg,799366522362,,,,,0,0,0,0,0,0,Low,,FALSE,FALSE,
+RG00087,87458600901,874586009012,984222712,181,181,181,,,727,4,XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - NATIONAL - 6:S2:R1:C9 | XMAS 2026 - NATIONAL - 6:S4:R1:C9 | XMAS 2026 - NATIONAL SLFCHK - 6:S2:R1:C9 | XMAS 2026 - NATIONAL SLFCHK - 6:S4:R1:C9,1,Z:\Kendal King\Images\196742111590.jpg,196742111590.jpg,196742111590,,,,,0,0,0,0,0,0,Low,,FALSE,FALSE,
+RG00087,87458600901,874586009012,984222712,181,181,181,,,727,4,XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - NATIONAL - 6:S2:R1:C9 | XMAS 2026 - NATIONAL - 6:S4:R1:C9 | XMAS 2026 - NATIONAL SLFCHK - 6:S2:R1:C9 | XMAS 2026 - NATIONAL SLFCHK - 6:S4:R1:C9,2,Z:\Kendal King\Images\799366103424.jpg,799366103424.jpg,799366103424,,,,,0,0,0,0,0,0,Low,,FALSE,FALSE,
+RG00087,87458600901,874586009012,984222712,181,181,181,,,727,4,XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - NATIONAL - 6:S2:R1:C9 | XMAS 2026 - NATIONAL - 6:S4:R1:C9 | XMAS 2026 - NATIONAL SLFCHK - 6:S2:R1:C9 | XMAS 2026 - NATIONAL SLFCHK - 6:S4:R1:C9,3,Z:\Kendal King\Images\799366461128.jpg,799366461128.jpg,799366461128,,,,@,0,0,0,0,0,0,Low,,FALSE,FALSE,
+RG00087,87458600901,874586009012,984222712,181,181,181,,,727,4,XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - NATIONAL - 6:S2:R1:C9 | XMAS 2026 - NATIONAL - 6:S4:R1:C9 | XMAS 2026 - NATIONAL SLFCHK - 6:S2:R1:C9 | XMAS 2026 - NATIONAL SLFCHK - 6:S4:R1:C9,4,Z:\Kendal King\Images\799366503996.jpg,799366503996.jpg,799366503996,,,,,0,0,0,0,0,0,Low,,FALSE,FALSE,
+RG00087,87458600901,874586009012,984222712,181,181,181,,,727,4,XMAS 2026 - NATIONAL - 6 | XMAS 2026 - NATIONAL SLFCHK - 6,XMAS 2026 - NATIONAL - 6:S2:R1:C9 | XMAS 2026 - NATIONAL - 6:S4:R1:C9 | XMAS 2026 - NATIONAL SLFCHK - 6:S2:R1:C9 | XMAS 2026 - NATIONAL SLFCHK - 6:S4:R1:C9,5,Z:\Kendal King\Images\799366522362.jpg,799366522362.jpg,799366522362,,,,,0,0,0,0,0,0,Low,,FALSE,FALSE,
