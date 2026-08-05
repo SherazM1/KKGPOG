@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+import io
 import re
 
 import pandas as pd
@@ -27,6 +28,32 @@ from app.sams_club.render_price_strips_html import (
     _normalize_price_parts,
     compute_strip_canvas,
 )
+
+
+def _valid_price_strip_row(**overrides: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "POG": "POG1",
+        "Item Number": "ITEM1",
+        "Brand": "BRAND",
+        "Desc 1": "DESC 1",
+        "Desc 2": "DESC 2",
+        "Retail": "25.00",
+        "Side": 1,
+        "Row": 1,
+        "Column": 1,
+        "Length": "6",
+        "Data on bottom left": "Side: 1, Row: 1 - POG: POG1",
+    }
+    row.update(overrides)
+    return row
+
+
+def _workbook_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
+    payload = io.BytesIO()
+    with pd.ExcelWriter(payload) as writer:
+        for sheet_name, df in sheets.items():
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+    return payload.getvalue()
 
 
 def _row(side: int, row: int, columns: list[int]) -> SamsPriceStripRow:
@@ -249,17 +276,13 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         workbook_rows = []
         for row in range(1, 6):
             workbook_rows.append(
-                {
-                    "POG": "POG1",
-                    "Side": 1,
-                    "Row": row,
-                    "Column": 1,
-                    "Item Number": f"ITEM{row}",
-                    "Brand": "BRAND",
-                    "Desc 1": "DESC 1",
-                    "Desc 2": "DESC 2",
-                    "Retail": "25.00",
-                }
+                _valid_price_strip_row(
+                    Row=row,
+                    **{
+                        "Item Number": f"ITEM{row}",
+                        "Data on bottom left": f"Side: 1, Row: {row} - POG: POG1",
+                    },
+                )
             )
 
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as handle:
@@ -277,6 +300,98 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
             self.assertTrue(all(len(row.segments) == 6 for row in result.strip_rows))
         finally:
             workbook_path.unlink(missing_ok=True)
+
+    def test_price_strip_import_selects_exact_price_strip_data_sheet(self) -> None:
+        workbook = _workbook_bytes({"Price Strip Data": pd.DataFrame([_valid_price_strip_row()])})
+
+        result = build_sams_price_strip_rows(workbook)
+
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.debug["sheet_name"], "Price Strip Data")
+        self.assertEqual(result.included_segment_count, 1)
+
+    def test_price_strip_import_accepts_lowercase_sheet_name(self) -> None:
+        workbook = _workbook_bytes({"price strip data": pd.DataFrame([_valid_price_strip_row()])})
+
+        result = build_sams_price_strip_rows(workbook)
+
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.debug["sheet_name"], "price strip data")
+        self.assertEqual(result.debug["sheet_selection_reason"], "normalized worksheet-name match")
+
+    def test_price_strip_import_accepts_trailing_space_sheet_name(self) -> None:
+        workbook = _workbook_bytes({"Price Strip Data ": pd.DataFrame([_valid_price_strip_row()])})
+
+        result = build_sams_price_strip_rows(workbook)
+
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.debug["sheet_name"], "Price Strip Data ")
+
+    def test_price_strip_import_accepts_single_sheet1_with_valid_headers(self) -> None:
+        workbook = _workbook_bytes({"Sheet1": pd.DataFrame([_valid_price_strip_row()])})
+
+        result = build_sams_price_strip_rows(workbook)
+
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.debug["sheet_name"], "Sheet1")
+        self.assertEqual(result.debug["sheet_selection_reason"], "header schema match")
+
+    def test_price_strip_import_ignores_readme_when_valid_production_sheet_exists(self) -> None:
+        workbook = _workbook_bytes(
+            {
+                "README": pd.DataFrame([{"Notes": "Use the production worksheet."}]),
+                "Production": pd.DataFrame([_valid_price_strip_row()]),
+            }
+        )
+
+        result = build_sams_price_strip_rows(workbook)
+
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.debug["sheet_name"], "Production")
+
+    def test_price_strip_import_accepts_uppercase_desc_headers(self) -> None:
+        row = _valid_price_strip_row()
+        row["DESC 1"] = row.pop("Desc 1")
+        row["DESC 2"] = row.pop("Desc 2")
+        workbook = _workbook_bytes({"Price Strip Data": pd.DataFrame([row])})
+
+        result = build_sams_price_strip_rows(workbook)
+
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.strip_rows[0].segments[0].desc_1, "DESC 1")
+        self.assertEqual(result.strip_rows[0].segments[0].desc_2, "DESC 2")
+
+    def test_price_strip_import_reports_invalid_workbook_without_matching_headers(self) -> None:
+        workbook = _workbook_bytes(
+            {
+                "Sheet1": pd.DataFrame([{"POG": "POG1", "Side": 1}]),
+                "README": pd.DataFrame([{"Notes": "No production data here."}]),
+            }
+        )
+
+        result = build_sams_price_strip_rows(workbook)
+
+        self.assertEqual(len(result.errors), 1)
+        self.assertIn("Could not locate a usable price-strip worksheet.", result.errors[0])
+        self.assertIn("Sheets found: Sheet1, README", result.errors[0])
+        self.assertIn("Closest match: Sheet1", result.errors[0])
+        self.assertIn("Missing required columns:", result.errors[0])
+        self.assertIn("Row", result.errors[0])
+        self.assertIn("Column", result.errors[0])
+
+    def test_price_strip_import_selects_complete_schema_when_multiple_sheets_exist(self) -> None:
+        workbook = _workbook_bytes(
+            {
+                "Almost": pd.DataFrame([{key: value for key, value in _valid_price_strip_row().items() if key != "Column"}]),
+                "Production": pd.DataFrame([_valid_price_strip_row(POG="GOOD")]),
+            }
+        )
+
+        result = build_sams_price_strip_rows(workbook)
+
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.debug["sheet_name"], "Production")
+        self.assertEqual(result.strip_rows[0].pog, "GOOD")
 
     def test_full_price_group_midpoint_equals_slot_center(self) -> None:
         center_x = holiday_slot_centers_pt(holiday_geometry_for_side(1))[0]

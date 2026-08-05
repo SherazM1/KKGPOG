@@ -4,6 +4,7 @@ import io
 import os
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
@@ -20,6 +21,32 @@ _CONTENT_WARNING_FIELDS: tuple[tuple[str, str], ...] = (
     ("desc_2", "Desc 2"),
 )
 _REQUIRED_GROUP_FIELDS: tuple[str, ...] = ("pog", "side", "row", "column")
+_EXPECTED_PRODUCTION_FIELDS: tuple[str, ...] = (
+    "pog",
+    "item_number",
+    "brand",
+    "desc_1",
+    "desc_2",
+    "retail",
+    "side",
+    "row",
+    "column",
+    "length",
+    "data_on_bottom_left",
+)
+_REQUIRED_HEADER_LABELS: dict[str, str] = {
+    "pog": "POG",
+    "item_number": "Item Number",
+    "brand": "Brand",
+    "desc_1": "Desc 1",
+    "desc_2": "Desc 2",
+    "retail": "Retail",
+    "side": "Side",
+    "row": "Row",
+    "column": "Column",
+    "length": "Length",
+    "data_on_bottom_left": "Data on bottom left",
+}
 _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "pog": ("POG", "pog"),
     "item_number": ("Item Number", "item_number", "item"),
@@ -35,8 +62,54 @@ _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+@dataclass(frozen=True)
+class _WorksheetCandidate:
+    sheet_name: str
+    df: pd.DataFrame
+    mapping: dict[str, str]
+    missing_fields: tuple[str, ...]
+    headers_found: tuple[str, ...]
+    populated_rows: int
+    exact_name_match: bool
+    fuzzy_name_match: bool
+
+    @property
+    def header_match_count(self) -> int:
+        return len(_EXPECTED_PRODUCTION_FIELDS) - len(self.missing_fields)
+
+    @property
+    def has_complete_schema(self) -> bool:
+        return len(self.missing_fields) == 0
+
+    @property
+    def is_non_empty(self) -> bool:
+        return self.populated_rows > 0 or len(self.headers_found) > 0
+
+
+class _PriceStripWorksheetNotFound(ValueError):
+    def __init__(self, message: str, debug: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.debug = debug
+
+
 def _collapse_spaces(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _normalize_sheet_name(value: str) -> str:
+    cleaned = _collapse_spaces(str(value).lower())
+    cleaned = re.sub(r"[^\w\s]+", " ", cleaned)
+    cleaned = _collapse_spaces(cleaned)
+    return cleaned
+
+
+def _compact_sheet_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", _normalize_sheet_name(value))
+
+
+def _has_price_strip_data_words(sheet_name: str) -> bool:
+    compact = _compact_sheet_name(sheet_name)
+    return all(word in compact for word in ("price", "strip", "data"))
 
 
 def _canonical_header(value: str) -> str:
@@ -69,12 +142,128 @@ def _coerce_uploaded_bytes(source_file: Any) -> tuple[bytes, str]:
     raise TypeError("Unsupported workbook source type. Provide a file path, bytes, or uploaded file object.")
 
 
-def _read_price_strip_sheet(source_file: Any) -> pd.DataFrame:
+def _open_excel_file(source_file: Any) -> pd.ExcelFile:
     if isinstance(source_file, (str, os.PathLike)):
-        return pd.read_excel(str(source_file), sheet_name=_PRICE_STRIP_SHEET, dtype=object)
+        return pd.ExcelFile(str(source_file))
 
     payload, _ = _coerce_uploaded_bytes(source_file)
-    return pd.read_excel(io.BytesIO(payload), sheet_name=_PRICE_STRIP_SHEET, dtype=object)
+    return pd.ExcelFile(io.BytesIO(payload))
+
+
+def _populated_row_count(df: pd.DataFrame) -> int:
+    if df.empty:
+        return 0
+    populated_cells = df.map(lambda value: not pd.isna(value) and str(value).strip() != "")
+    return int(populated_cells.any(axis=1).sum())
+
+
+def _missing_expected_fields(mapping: dict[str, str]) -> tuple[str, ...]:
+    return tuple(field for field in _EXPECTED_PRODUCTION_FIELDS if field not in mapping)
+
+
+def _candidate_rank(candidate: _WorksheetCandidate) -> tuple[int, int, int, int]:
+    return (
+        candidate.header_match_count,
+        candidate.populated_rows,
+        int(candidate.fuzzy_name_match),
+        int(candidate.exact_name_match),
+    )
+
+
+def _best_candidate(candidates: list[_WorksheetCandidate]) -> _WorksheetCandidate:
+    return max(candidates, key=_candidate_rank)
+
+
+def _read_price_strip_sheet(source_file: Any) -> tuple[pd.DataFrame, str, dict[str, Any]]:
+    workbook = _open_excel_file(source_file)
+    try:
+        candidates: list[_WorksheetCandidate] = []
+        for sheet_name in workbook.sheet_names:
+            df = pd.read_excel(workbook, sheet_name=sheet_name, dtype=object)
+            mapping = _build_mapping([str(c) for c in df.columns])
+            candidates.append(
+                _WorksheetCandidate(
+                    sheet_name=str(sheet_name),
+                    df=df,
+                    mapping=mapping,
+                    missing_fields=_missing_expected_fields(mapping),
+                    headers_found=tuple(str(c) for c in df.columns),
+                    populated_rows=_populated_row_count(df),
+                    exact_name_match=str(sheet_name) == _PRICE_STRIP_SHEET,
+                    fuzzy_name_match=_has_price_strip_data_words(str(sheet_name)),
+                )
+            )
+
+        complete = [candidate for candidate in candidates if candidate.has_complete_schema]
+        selection_reason = ""
+        selected: _WorksheetCandidate | None = None
+
+        exact_matches = [candidate for candidate in complete if candidate.exact_name_match]
+        if exact_matches:
+            selected = _best_candidate(exact_matches)
+            selection_reason = "exact worksheet-name match"
+
+        if selected is None:
+            fuzzy_matches = [candidate for candidate in complete if candidate.fuzzy_name_match]
+            if fuzzy_matches:
+                selected = _best_candidate(fuzzy_matches)
+                selection_reason = "normalized worksheet-name match"
+
+        if selected is None and complete:
+            selected = _best_candidate(complete)
+            selection_reason = "header schema match"
+
+        if selected is None:
+            non_empty = [candidate for candidate in candidates if candidate.is_non_empty]
+            if len(non_empty) == 1 and non_empty[0].has_complete_schema:
+                selected = non_empty[0]
+                selection_reason = "single non-empty worksheet"
+
+        if selected is not None:
+            return (
+                selected.df,
+                selected.sheet_name,
+                {
+                    "sheet_name": selected.sheet_name,
+                    "sheet_selection_reason": selection_reason,
+                    "sheet_names_found": [candidate.sheet_name for candidate in candidates],
+                    "column_mapping": selected.mapping,
+                },
+            )
+
+        closest = _best_candidate(candidates) if candidates else None
+        required_headers = [_REQUIRED_HEADER_LABELS[field] for field in _EXPECTED_PRODUCTION_FIELDS]
+        missing_headers = (
+            [_REQUIRED_HEADER_LABELS[field] for field in closest.missing_fields]
+            if closest is not None
+            else required_headers
+        )
+        headers_found = list(closest.headers_found) if closest is not None else []
+        closest_name = closest.sheet_name if closest is not None else "(none)"
+        sheets_found = [candidate.sheet_name for candidate in candidates]
+        message = (
+            "Could not locate a usable price-strip worksheet. "
+            f"Sheets found: {', '.join(sheets_found) if sheets_found else '(none)'}. "
+            f"Required headers: {', '.join(required_headers)}. "
+            f"Closest match: {closest_name}. "
+            f"Headers found on closest match: {', '.join(headers_found) if headers_found else '(none)'}. "
+            f"Missing required columns: {', '.join(missing_headers)}."
+        )
+        raise _PriceStripWorksheetNotFound(
+            message,
+            {
+                "sheet_name": None,
+                "sheet_names_found": sheets_found,
+                "required_headers": required_headers,
+                "closest_match": closest_name,
+                "headers_found": headers_found,
+                "missing_required_columns": missing_headers,
+            },
+        )
+    finally:
+        close = getattr(workbook, "close", None)
+        if callable(close):
+            close()
 
 
 def _build_mapping(column_names: list[str]) -> dict[str, str]:
@@ -130,7 +319,12 @@ def build_sams_price_strip_rows(
     errors: list[str] = []
 
     try:
-        df = _read_price_strip_sheet(source_file)
+        df, selected_sheet_name, sheet_debug = _read_price_strip_sheet(source_file)
+    except _PriceStripWorksheetNotFound as exc:
+        return SamsPriceStripBuildResult(
+            errors=[str(exc)],
+            debug=exc.debug,
+        )
     except ValueError as exc:
         return SamsPriceStripBuildResult(
             errors=[f"Unable to read '{_PRICE_STRIP_SHEET}' sheet: {exc}"],
@@ -147,11 +341,11 @@ def build_sams_price_strip_rows(
     if missing_group_columns:
         return SamsPriceStripBuildResult(
             errors=[
-                "Missing required grouping columns in 'Price Strip Data': "
+                f"Missing required grouping columns in '{selected_sheet_name}': "
                 + ", ".join(missing_group_columns)
                 + ". Required: POG, Side, Row, Column."
             ],
-            debug={"sheet_name": _PRICE_STRIP_SHEET, "column_mapping": mapping},
+            debug={**sheet_debug, "column_mapping": mapping},
         )
 
     grouped_segments: dict[tuple[str, int, int], list[SamsPriceStripSegment]] = defaultdict(list)
@@ -246,8 +440,10 @@ def build_sams_price_strip_rows(
         }
 
     debug = {
-        "sheet_name": _PRICE_STRIP_SHEET,
+        "sheet_name": selected_sheet_name,
         "column_mapping": mapping,
+        "sheet_selection_reason": sheet_debug.get("sheet_selection_reason"),
+        "sheet_names_found": sheet_debug.get("sheet_names_found", []),
         "template_name": active_template,
         "detected_strip_groups": [{"pog": row.pog, "side": row.side, "row": row.row} for row in strip_rows],
         "strip_group_count": len(strip_rows),
