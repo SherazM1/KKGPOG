@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 import io
+import html as html_lib
 import re
 
 import pandas as pd
@@ -54,6 +55,14 @@ def _workbook_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
         for sheet_name, df in sheets.items():
             df.to_excel(writer, sheet_name=sheet_name, index=False)
     return payload.getvalue()
+
+
+def _holiday_description_fields(html_text: str) -> list[str]:
+    matches = re.findall(
+        r'<div class="field (?:brand-field|desc-field)" style="[^"]*">\s*([^<]*?)\s*</div>',
+        html_text,
+    )
+    return [html_lib.unescape(match.strip()) for match in matches[:3]]
 
 
 def _row(side: int, row: int, columns: list[int]) -> SamsPriceStripRow:
@@ -635,8 +644,75 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         self.assertGreaterEqual(ticket_left + desc_left, ticket_left)
         self.assertLessEqual(ticket_left + desc_left + desc_width, ticket_left + (2178.0 / 6.0) - SAMS_HOLIDAY_TEMPLATE.sku_inset_pt)
         self.assertNotIn("...", html)
+        self.assertEqual(
+            _holiday_description_fields(html),
+            ["", "GOLDEN CORRAL $30 MULTIPACK", "$75 (3 X $25) + $10 BONUS"],
+        )
         for token in ["GOLDEN", "CORRAL", "$30", "MULTIPACK", "$75", "BONUS"]:
             self.assertIn(token, html)
+
+    def test_holiday_description_fields_render_as_explicit_source_lines(self) -> None:
+        cases = [
+            (
+                "Logans",
+                "LOGAN'S MP $100",
+                "$100 (2 X $50)",
+                "GIFTCARDS",
+                ["LOGAN'S MP $100", "$100 (2 X $50)", "GIFTCARDS"],
+            ),
+            (
+                "MasterCard",
+                "MasterCard $75 Multipack",
+                "$75 (3 X $25)",
+                "Gift Cards",
+                ["MASTERCARD $75 MULTIPACK", "$75 (3 X $25)", "GIFT CARDS"],
+            ),
+            (
+                "AMC",
+                "AMC Theatres",
+                "1 X $30",
+                "Gift Card",
+                ["AMC THEATRES", "1 X $30", "GIFT CARD"],
+            ),
+            (
+                "LongDesc",
+                "Golden Corral $30 Multipack",
+                "$75 (3 X $25) + $10 Bonus",
+                "Gift Cards",
+                [
+                    "GOLDEN CORRAL $30 MULTIPACK",
+                    "$75 (3 X $25) + $10 BONUS",
+                    "GIFT CARDS",
+                ],
+            ),
+        ]
+
+        for _label, brand, desc_1, desc_2, expected_lines in cases:
+            row = SamsPriceStripRow(
+                pog="POG",
+                side=1,
+                row=1,
+                segments=[
+                    SamsPriceStripSegment(
+                        pog="POG",
+                        side=1,
+                        row=1,
+                        column=1,
+                        brand=brand,
+                        desc_1=desc_1,
+                        desc_2=desc_2,
+                        retail="24.13",
+                    )
+                ],
+            )
+            warnings: list[str] = []
+            html = _build_full_html([expand_holiday_row_to_slots(row)], warnings, SAMS_HOLIDAY_TEMPLATE_NAME, False)[0]
+
+            self.assertEqual(_holiday_description_fields(html), expected_lines)
+            self.assertNotIn(f"{expected_lines[0]} {expected_lines[1]}", html)
+            self.assertNotIn(f"{expected_lines[1]} {expected_lines[2]}", html)
+            self.assertEqual(len(re.findall(r'class="field brand-field"', html)), 1)
+            self.assertEqual(len(re.findall(r'class="field desc-field"', html)), 2)
 
     def test_holiday_long_descriptions_are_uppercase_and_not_truncated_with_ellipsis(self) -> None:
         descriptions = [
@@ -732,49 +808,13 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         self.assertAlmostEqual(float(footer_match.group(1)), SAMS_HOLIDAY_TEMPLATE.footer_inset_pt)
         self.assertAlmostEqual(float(footer_match.group(2)), SAMS_HOLIDAY_TEMPLATE.footer_font_size_pt)
 
-    def test_holiday_description_fitting_font_tiers(self) -> None:
+    def test_holiday_description_fitting_keeps_source_lines_and_scales_independently(self) -> None:
         left, width = _calculate_holiday_description_box(0.0, 2178.0 / 6.0, "24")
 
-        fits_at_14 = fit_holiday_description_text(
-            "",
-            "MasterCard $75 Multipack",
-            "",
-            0.0,
-            2178.0 / 6.0,
-            left,
-            SAMS_HOLIDAY_TEMPLATE.brand_top_pt,
-            width,
-            SAMS_HOLIDAY_TEMPLATE.description_font_size_pt,
-            63.72,
-        )
-        requires_15 = fit_holiday_description_text(
-            "",
-            "AAAAAAA AAAAAAA AAAAAAA AAAAAAA AAAAAAA AAAAAAA AAAAAAA",
-            "",
-            0.0,
-            2178.0 / 6.0,
-            left,
-            SAMS_HOLIDAY_TEMPLATE.brand_top_pt,
-            width,
-            SAMS_HOLIDAY_TEMPLATE.description_font_size_pt,
-            63.72,
-        )
-        requires_14 = fit_holiday_description_text(
-            "",
-            "AAAAA AAAAAA AAAAA AAAAAA AAAAA AAAAAA AAAAA AAAAAA AAAAA AAAAAA",
-            "",
-            0.0,
-            2178.0 / 6.0,
-            left,
-            SAMS_HOLIDAY_TEMPLATE.brand_top_pt,
-            width,
-            SAMS_HOLIDAY_TEMPLATE.description_font_size_pt,
-            63.72,
-        )
-        requires_13 = fit_holiday_description_text(
-            "",
-            "AAAAAAAA AAAAAAAA AAAAAAAA AAAAAAAA AAAAAAAA AAAAAAAA AAAAAAAA",
-            "",
+        fit = fit_holiday_description_text(
+            "MASTERCARD $75 MULTIPACK",
+            "$75 (3 X $25)",
+            "GIFT CARDS",
             0.0,
             2178.0 / 6.0,
             left,
@@ -784,13 +824,13 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
             63.72,
         )
 
-        self.assertAlmostEqual(fits_at_14.font_size, SAMS_HOLIDAY_TEMPLATE.description_font_size_pt)
-        self.assertAlmostEqual(requires_15.font_size, 15.0)
-        self.assertAlmostEqual(requires_14.font_size, 14.0)
-        self.assertAlmostEqual(requires_13.font_size, 13.0)
-        self.assertNotIn("...", " ".join(fits_at_14.lines + requires_15.lines + requires_14.lines + requires_13.lines))
+        self.assertEqual(fit.lines, ("MASTERCARD $75 MULTIPACK", "$75 (3 X $25)", "GIFT CARDS"))
+        self.assertAlmostEqual(fit.font_size, SAMS_HOLIDAY_TEMPLATE.description_font_size_pt)
+        self.assertEqual(fit.top, SAMS_HOLIDAY_TEMPLATE.brand_top_pt)
+        self.assertTrue(all(0 < scale <= 1.0 for scale in fit.line_scales))
+        self.assertLess(fit.line_scales[0], 1.0)
 
-    def test_holiday_long_single_word_splits_only_when_token_is_too_wide(self) -> None:
+    def test_holiday_long_single_word_scales_without_splitting(self) -> None:
         left, width = _calculate_holiday_description_box(0.0, 2178.0 / 6.0, "24")
         fit = fit_holiday_description_text(
             "",
@@ -805,7 +845,8 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
             63.72,
         )
 
-        self.assertEqual("".join(fit.lines).replace(" ", ""), "SUPERCALIFRAGILISTICBONUSCARD")
+        self.assertEqual(fit.lines, ("", "SUPERCALIFRAGILISTICBONUSCARD", ""))
+        self.assertLess(fit.line_scales[1], 1.0)
         self.assertNotIn("...", " ".join(fit.lines))
 
     def test_holiday_unfittable_description_raises_clear_error(self) -> None:

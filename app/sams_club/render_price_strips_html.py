@@ -570,57 +570,19 @@ class _HolidayDescriptionFit(NamedTuple):
     left: float
     top: float
     width: float
+    line_scales: tuple[float, float, float]
 
 
-def _split_oversized_word(word: str, font_size: float, max_width: float, weight: str = "regular") -> list[str]:
-    if _estimate_text_width(word, font_size, weight) <= max_width:
-        return [word]
-
-    pieces: list[str] = []
-    current = ""
-    for char in word:
-        candidate = f"{current}{char}"
-        if current and _estimate_text_width(candidate, font_size, weight) > max_width:
-            pieces.append(current)
-            current = char
-        else:
-            current = candidate
-    if current:
-        pieces.append(current)
-    return pieces
-
-
-def _wrap_holiday_description_words(
-    text_parts: list[str],
+def _fit_single_holiday_description_line(
+    text: str,
     font_size: float,
     max_width: float,
-    max_lines: int,
-) -> tuple[str, ...] | None:
-    words: list[str] = []
-    for text in text_parts:
-        for word in str(text or "").split():
-            words.extend(_split_oversized_word(word, font_size, max_width))
-
-    if not words:
-        return tuple("" for _ in range(max_lines))
-
-    lines: list[str] = []
-    current = ""
-    for word in words:
-        candidate = word if not current else f"{current} {word}"
-        if _estimate_text_width(candidate, font_size, "semibold") <= max_width:
-            current = candidate
-            continue
-        if current:
-            lines.append(current)
-        if len(lines) >= max_lines:
-            return None
-        current = word
-    if current:
-        lines.append(current)
-    if len(lines) > max_lines:
-        return None
-    return tuple(lines + [""] * (max_lines - len(lines)))
+    weight: str,
+) -> float:
+    text_width = _estimate_text_width(text, font_size, weight)
+    if text_width <= 0.0 or text_width <= max_width:
+        return 1.0
+    return max_width / text_width
 
 
 def fit_holiday_description_text(
@@ -642,43 +604,54 @@ def fit_holiday_description_text(
     slot_safe_right = slot_x + slot_width - SAMS_HOLIDAY_TEMPLATE.sku_inset_pt
 
     normal_lines = tuple(text_parts + [""] * (max_lines - len(text_parts)))[:max_lines]
-    normal_fits = all(
-        _estimate_text_width(line, font_size, "semibold" if index == 0 else "regular") <= description_width
+    line_weights = tuple("semibold" if index == 0 else "regular" for index in range(max_lines))
+    line_scales = tuple(
+        _fit_single_holiday_description_line(line, font_size, description_width, line_weights[index])
         for index, line in enumerate(normal_lines)
     )
-    if normal_fits:
-        return _HolidayDescriptionFit(normal_lines, font_size, description_left, description_top, description_width)
+    min_font_size = SAMS_HOLIDAY_TEMPLATE.description_min_font_size_pt
+    min_horizontal_scale = min_font_size / max(font_size, 1.0)
+    if all(scale >= min_horizontal_scale for scale in line_scales):
+        return _HolidayDescriptionFit(
+            normal_lines,
+            font_size,
+            description_left,
+            description_top,
+            description_width,
+            line_scales,
+        )
 
     extra_width = SAMS_HOLIDAY_TEMPLATE.long_description_extra_width_pt
     left_shift = SAMS_HOLIDAY_TEMPLATE.long_description_left_shift_pt
-    up_shift = SAMS_HOLIDAY_TEMPLATE.long_description_up_shift_pt
-    min_font_size = SAMS_HOLIDAY_TEMPLATE.description_min_font_size_pt
 
     candidates: list[tuple[float, float, float]] = [
         (description_left, description_top, description_width),
         (description_left, description_top, description_width + extra_width),
         (description_left - left_shift, description_top, description_width + extra_width),
-        (description_left - left_shift, description_top - up_shift, description_width + extra_width),
     ]
-    font_sizes = [font_size]
-    next_size = font_size - 1.0
-    while next_size >= min_font_size:
-        font_sizes.append(next_size)
-        next_size -= 1.0
 
-    for candidate_font_size in font_sizes:
-        for candidate_left, candidate_top, candidate_width in candidates:
-            safe_left = max(slot_safe_left, candidate_left)
-            max_width = max(8.0, min(candidate_width, slot_safe_right - safe_left))
-            if max_width < 8.0:
-                continue
-            wrapped = _wrap_holiday_description_words(text_parts, candidate_font_size, max_width, max_lines)
-            if wrapped is not None:
-                return _HolidayDescriptionFit(wrapped, candidate_font_size, safe_left, candidate_top, max_width)
+    for candidate_left, candidate_top, candidate_width in candidates:
+        safe_left = max(slot_safe_left, candidate_left)
+        max_width = max(8.0, min(candidate_width, slot_safe_right - safe_left))
+        if max_width < 8.0:
+            continue
+        candidate_scales = tuple(
+            _fit_single_holiday_description_line(line, font_size, max_width, line_weights[index])
+            for index, line in enumerate(normal_lines)
+        )
+        if all(scale >= min_horizontal_scale for scale in candidate_scales):
+            return _HolidayDescriptionFit(
+                normal_lines,
+                font_size,
+                safe_left,
+                candidate_top,
+                max_width,
+                candidate_scales,
+            )
 
     full_text = " ".join(part for part in text_parts if part)
     raise ValueError(
-        "Sam's Holiday description does not fit within the slot without truncation: "
+        "Sam's Holiday description line does not fit within the slot without truncation: "
         f"{full_text!r}"
     )
 
@@ -1650,6 +1623,9 @@ def _generate_ticket_html(
     item_left = max(pad_x, min(item_left, w - pad_x - item_w))
     desc_1_w = min(max(8.0, w * desc_1_width_ratio), max(8.0, w - desc_1_left))
     desc_2_w = min(max(8.0, w * desc_2_width_ratio), max(8.0, w - desc_2_left))
+    brand_scale_x = 1.0
+    desc_1_scale_x = 1.0
+    desc_2_scale_x = 1.0
 
     if center_main_amount:
         brand = (segment.brand or "").strip().upper()
@@ -1693,6 +1669,7 @@ def _generate_ticket_html(
         desc_1_top = fit.top + (SAMS_HOLIDAY_TEMPLATE.description_top_pt - SAMS_HOLIDAY_TEMPLATE.brand_top_pt)
         desc_2_top = fit.top + (SAMS_HOLIDAY_TEMPLATE.pack_range_top_pt - SAMS_HOLIDAY_TEMPLATE.brand_top_pt)
         brand_size = desc_1_size = desc_2_size = fit.font_size
+        brand_scale_x, desc_1_scale_x, desc_2_scale_x = fit.line_scales
     else:
         desc_block_left, desc_block_w = _fit_line_box_left_and_width(
             desc_block_left,
@@ -1715,7 +1692,7 @@ def _generate_ticket_html(
         <span class="cents">{html.escape(cents)}</span>
     </div>
 
-    <div class="field brand-field" style="left: {brand_left}pt; top: {brand_top}pt; width: {brand_w}pt; font-size: {brand_size}pt; font-weight: {html.escape(str(brand_weight))};">
+    <div class="field brand-field" style="left: {brand_left}pt; top: {brand_top}pt; width: {brand_w}pt; font-size: {brand_size}pt; font-weight: {html.escape(str(brand_weight))}; overflow: hidden; transform: scaleX({brand_scale_x});">
         {html.escape(brand)}
     </div>
 
@@ -1723,11 +1700,11 @@ def _generate_ticket_html(
         {html.escape(item_number)}
     </div>
 
-    <div class="field desc-field" style="left: {desc_1_left}pt; top: {desc_1_top}pt; width: {desc_1_w}pt; font-size: {desc_1_size}pt; font-weight: {html.escape(str(desc_1_weight))};">
+    <div class="field desc-field" style="left: {desc_1_left}pt; top: {desc_1_top}pt; width: {desc_1_w}pt; font-size: {desc_1_size}pt; font-weight: {html.escape(str(desc_1_weight))}; overflow: hidden; transform: scaleX({desc_1_scale_x});">
         {html.escape(desc_1)}
     </div>
 
-    <div class="field desc-field" style="left: {desc_2_left}pt; top: {desc_2_top}pt; width: {desc_2_w}pt; font-size: {desc_2_size}pt; font-weight: {html.escape(str(desc_2_weight))};">
+    <div class="field desc-field" style="left: {desc_2_left}pt; top: {desc_2_top}pt; width: {desc_2_w}pt; font-size: {desc_2_size}pt; font-weight: {html.escape(str(desc_2_weight))}; overflow: hidden; transform: scaleX({desc_2_scale_x});">
         {html.escape(desc_2)}
     </div>
 </div>
