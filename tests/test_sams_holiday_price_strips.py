@@ -808,7 +808,7 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         self.assertAlmostEqual(float(footer_match.group(1)), SAMS_HOLIDAY_TEMPLATE.footer_inset_pt)
         self.assertAlmostEqual(float(footer_match.group(2)), SAMS_HOLIDAY_TEMPLATE.footer_font_size_pt)
 
-    def test_holiday_description_fitting_keeps_source_lines_and_scales_independently(self) -> None:
+    def test_holiday_description_fitting_keeps_source_lines_and_uses_font_tiers(self) -> None:
         left, width = _calculate_holiday_description_box(0.0, 2178.0 / 6.0, "24")
 
         fit = fit_holiday_description_text(
@@ -825,12 +825,11 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         )
 
         self.assertEqual(fit.lines, ("MASTERCARD $75 MULTIPACK", "$75 (3 X $25)", "GIFT CARDS"))
-        self.assertAlmostEqual(fit.font_size, SAMS_HOLIDAY_TEMPLATE.description_font_size_pt)
+        self.assertGreaterEqual(fit.font_size, SAMS_HOLIDAY_TEMPLATE.description_min_font_size_pt)
+        self.assertLessEqual(fit.font_size, SAMS_HOLIDAY_TEMPLATE.description_font_size_pt)
         self.assertEqual(fit.top, SAMS_HOLIDAY_TEMPLATE.brand_top_pt)
-        self.assertTrue(all(0 < scale <= 1.0 for scale in fit.line_scales))
-        self.assertLess(fit.line_scales[0], 1.0)
 
-    def test_holiday_long_single_word_scales_without_splitting(self) -> None:
+    def test_holiday_long_single_word_remains_on_its_source_line(self) -> None:
         left, width = _calculate_holiday_description_box(0.0, 2178.0 / 6.0, "24")
         fit = fit_holiday_description_text(
             "",
@@ -846,7 +845,7 @@ class SamsHolidayPriceStripTests(unittest.TestCase):
         )
 
         self.assertEqual(fit.lines, ("", "SUPERCALIFRAGILISTICBONUSCARD", ""))
-        self.assertLess(fit.line_scales[1], 1.0)
+        self.assertGreaterEqual(fit.font_size, SAMS_HOLIDAY_TEMPLATE.description_min_font_size_pt)
         self.assertNotIn("...", " ".join(fit.lines))
 
     def test_holiday_unfittable_description_raises_clear_error(self) -> None:
