@@ -1111,18 +1111,11 @@ async def _render_page_to_pdf(
         await page.close()
 
 
-def _generate_strip_html(
-    row_data: SamsPriceStripRow,
-    strip_w: float,
-    strip_h: float,
-    footer_h: float,
-    warnings: list[str],
-    template_name: str | None = None,
-    calibration: bool = False,
-) -> str:
-    """
-    Generate HTML containing div-based price strip with Gibson fonts.
-    """
+SAMS_FONT_STACK = '"Gibson", Arial, sans-serif'
+
+
+def sams_font_face_css(warnings: list[str]) -> str:
+    """Shared native Gibson registration for all active Sam's strip modes."""
     root_path = Path(__file__).resolve().parents[2]
     gibson_regular_path = root_path / "assets" / "Gibson-Regular.otf"
     gibson_semibold_path = root_path / "assets" / "Gibson-SemiBold.otf"
@@ -1152,6 +1145,23 @@ def _generate_strip_html(
     font-weight: 600;
 }}
 """
+
+    return font_face_css
+
+
+def _generate_strip_html(
+    row_data: SamsPriceStripRow,
+    strip_w: float,
+    strip_h: float,
+    footer_h: float,
+    warnings: list[str],
+    template_name: str | None = None,
+    calibration: bool = False,
+) -> str:
+    """
+    Generate HTML containing div-based price strip with Gibson fonts.
+    """
+    font_face_css = sams_font_face_css(warnings)
 
     holiday_mode = is_sams_holiday_template(template_name)
     holiday_geometry: SamsHolidaySideGeometry | None = None
@@ -1265,7 +1275,7 @@ html, body {{
     padding: 0;
     overflow: hidden;
     background: white;
-    font-family: "Gibson", Arial, sans-serif;
+    font-family: {SAMS_FONT_STACK};
 }}
 
 .trim-artwork {{
@@ -1280,7 +1290,7 @@ html, body {{
 .ticket {{
     position: absolute;
     overflow: visible;
-    font-family: "Gibson", Arial, sans-serif;
+    font-family: {SAMS_FONT_STACK};
     color: black;
 }}
 
@@ -1295,7 +1305,7 @@ html, body {{
 .brand {{
     display: block;
     width: 100%;
-    font-family: "Gibson", Arial, sans-serif;
+    font-family: {SAMS_FONT_STACK};
     font-weight: 600;
     font-size: {brand_font_size_pt}pt;
     line-height: 1.0;
@@ -1309,7 +1319,7 @@ html, body {{
 .desc {{
     display: block;
     width: 100%;
-    font-family: "Gibson", Arial, sans-serif;
+    font-family: {SAMS_FONT_STACK};
     font-weight: 400;
     font-size: {desc_font_size_pt}pt;
     line-height: 1.0;
@@ -1322,7 +1332,7 @@ html, body {{
 
 .field {{
     position: absolute;
-    font-family: "Gibson", Arial, sans-serif;
+    font-family: {SAMS_FONT_STACK};
     color: black;
     white-space: nowrap;
     overflow: hidden;
@@ -1361,7 +1371,7 @@ html, body {{
     align-items: flex-start;
     white-space: nowrap;
     line-height: 1;
-    font-family: "Gibson", Arial, sans-serif;
+    font-family: {SAMS_FONT_STACK};
     font-weight: 600;
     color: black;
 }}
@@ -1410,7 +1420,7 @@ html, body {{
     position: absolute;
     left: {footer_left_pt}pt;
     bottom: {footer_bottom_in}in;
-    font-family: "Gibson", Arial, sans-serif;
+    font-family: {SAMS_FONT_STACK};
     font-weight: 400;
     font-size: {footer_font_size_pt}pt;
     line-height: 1;

@@ -174,7 +174,11 @@ def _best_candidate(candidates: list[_WorksheetCandidate]) -> _WorksheetCandidat
     return max(candidates, key=_candidate_rank)
 
 
-def _read_price_strip_sheet(source_file: Any) -> tuple[pd.DataFrame, str, dict[str, Any]]:
+def _read_price_strip_sheet(source_file: Any, template_name: str | None = None) -> tuple[pd.DataFrame, str, dict[str, Any]]:
+    from app.sams_club.price_strip_inputs import source_suffix, legacy_document_frame
+    if source_suffix(source_file) in (".docx", ".pdf"):
+        frame = legacy_document_frame(source_file, template_name)
+        return frame, "Structured document", {"sheet_selection_reason": "shared document normalization"}
     workbook = _open_excel_file(source_file)
     try:
         candidates: list[_WorksheetCandidate] = []
@@ -319,7 +323,7 @@ def build_sams_price_strip_rows(
     errors: list[str] = []
 
     try:
-        df, selected_sheet_name, sheet_debug = _read_price_strip_sheet(source_file)
+        df, selected_sheet_name, sheet_debug = _read_price_strip_sheet(source_file, template_name)
     except _PriceStripWorksheetNotFound as exc:
         return SamsPriceStripBuildResult(
             errors=[str(exc)],

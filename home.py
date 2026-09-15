@@ -147,6 +147,13 @@ def main() -> None:
     image_transfer_middle = True
     image_transfer_bonus = True
     run_image_transfer = False
+    standard_planogram_mode = "Standard Label PDF"
+    holiday_bos_file = None
+    holiday_assortment_file = None
+    holiday_image_folder = r"Z:\Kendal King\Images"
+    holiday_show_geometry_debug = False
+    holiday_nre_configuration = "4x78"
+    analyze_all_holiday_nre = False
 
     with st.sidebar:
         st.header("Configuration")
@@ -165,9 +172,9 @@ def main() -> None:
                 key="sams_main_source_file",
             )
             sams_excel_file = st.file_uploader(
-                "Sam's Pricing Workbook (.xlsx)",
-                type=["xlsx"],
-                help="Used by the Sam's price strip workflow from the 'Price Strip Data' sheet.",
+                "Sam's Price Strip Source (.xlsx, .docx, .pdf)",
+                type=["xlsx", "docx", "pdf"],
+                help="Workbooks use the existing Price Strip Data schema. DOCX/PDF accept labeled fields or tables for the selected mode.",
                 key="sams_excel_file",
             )
             sams_image_zip_file = st.file_uploader(
@@ -197,7 +204,7 @@ def main() -> None:
             )
             sams_price_strip_template = st.selectbox(
                 "Sam's Price Strip Template",
-                ["Standard", "Sam's Holiday"],
+                ["Standard", "Sam's Holiday", "Price Pocket"],
                 index=0,
                 key="sams_price_strip_template",
             )
@@ -227,9 +234,58 @@ def main() -> None:
             )
         else:
             st.divider()
-            matrix_file = st.file_uploader("Matrix Excel (.xlsx)", type=["xlsx"])
-            labels_pdf = st.file_uploader("Labels PDF", type=["pdf"])
-            if display_type != DISPLAY_FULL_PALLET:
+            if display_type == DISPLAY_STANDARD:
+                standard_planogram_mode = st.selectbox(
+                    "Planogram Mode",
+                    ["Standard Label PDF", "Holiday Quarter Pallet", "Holiday NRE"],
+                    index=0,
+                    key="standard_planogram_mode",
+                )
+
+            if display_type == DISPLAY_STANDARD and standard_planogram_mode in {"Holiday Quarter Pallet", "Holiday NRE"}:
+                if standard_planogram_mode == "Holiday NRE":
+                    holiday_nre_configuration = st.selectbox(
+                        "NRE Configuration",
+                        ["4x78", "3x78", "3x60", "4x60"],
+                        index=0,
+                        key="holiday_nre_configuration",
+                    )
+                holiday_bos_file = st.file_uploader(
+                    "BOS Planogram Workbook (.xlsx)",
+                    type=["xlsx"],
+                    key=f"{standard_planogram_mode}_bos_workbook",
+                )
+                holiday_assortment_file = st.file_uploader(
+                    "Holiday Assortment Workbook (.xlsx)",
+                    type=["xlsx"],
+                    key=f"{standard_planogram_mode}_assortment_workbook",
+                )
+                holiday_image_folder = st.text_input(
+                    "Local Image Folder",
+                    value=r"Z:\Kendal King\Images",
+                    key=f"{standard_planogram_mode}_local_image_folder",
+                )
+                holiday_show_geometry_debug = st.checkbox(
+                    "Show geometry debug",
+                    value=False,
+                    key=f"{standard_planogram_mode}_show_geometry_debug",
+                )
+                if standard_planogram_mode == "Holiday NRE":
+                    analyze_all_holiday_nre = st.button(
+                        "Analyze All NRE Configurations",
+                        use_container_width=True,
+                        key="analyze_all_holiday_nre",
+                    )
+                generate = st.button(
+                    "Build Holiday QP QA" if standard_planogram_mode == "Holiday Quarter Pallet" else "Build Holiday NRE QA",
+                    type="primary",
+                    use_container_width=True,
+                )
+            else:
+                matrix_file = st.file_uploader("Matrix Excel (.xlsx)", type=["xlsx"])
+                labels_pdf = st.file_uploader("Labels PDF", type=["pdf"])
+
+            if display_type != DISPLAY_FULL_PALLET and standard_planogram_mode == "Standard Label PDF":
                 images_pdf = st.file_uploader(
                     "Card Images PDF / UPC Image ZIPs (optional)",
                     type=["pdf", "zip", "jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff"],
@@ -273,10 +329,11 @@ def main() -> None:
                     key="run_full_pallet_image_transfer",
                 )
 
-            st.divider()
-            title_prefix = st.text_input("PDF title prefix", "POG")
-            out_name = st.text_input("Output filename", "pog_export.pdf")
-            generate = st.button("Generate POG PDF", type="primary", use_container_width=True)
+            if standard_planogram_mode == "Standard Label PDF" or display_type == DISPLAY_FULL_PALLET:
+                st.divider()
+                title_prefix = st.text_input("PDF title prefix", "POG")
+                out_name = st.text_input("Output filename", "pog_export.pdf")
+                generate = st.button("Generate POG PDF", type="primary", use_container_width=True)
 
     if display_type == DISPLAY_SAMS_CLUB:
         st.subheader("Sam's Club Planogram Display")
@@ -680,9 +737,51 @@ def main() -> None:
 
         st.markdown("---")
         st.markdown("### Price Strips")
+        # Tie preview/download state to the source and mode so stale PDFs cannot appear.
+        import hashlib
+        source_key = (sams_price_strip_template, sams_price_strip_calibration,
+                      sams_excel_file.name if sams_excel_file else None,
+                      hashlib.sha256(sams_excel_file.getvalue()).hexdigest() if sams_excel_file else None)
+        if st.session_state.get("sams_strip_source_key") != source_key:
+            st.session_state["sams_strip_source_key"] = source_key
+            st.session_state["sams_price_strip_build_result"] = None
+            st.session_state["sams_price_strip_pdf_result"] = None
+        if sams_price_strip_template == "Price Pocket":
+            if not sams_excel_file:
+                st.info("Upload XLSX, DOCX or PDF with Name, Price, Item and UPC. Quantity defaults to 1; Type defaults to GIFT CARD.")
+                return
+            from dataclasses import asdict
+            from app.sams_club.price_strip_inputs import parse_source
+            from app.sams_club.price_pocket import pocket_records, render_price_pocket_pdf
+            try:
+                records = pocket_records(parse_source(sams_excel_file))
+                st.dataframe([asdict(record) for record in records], use_container_width=True)
+                if generate_sams_price_strips:
+                    st.session_state["sams_price_strip_pdf_result"] = None
+                    st.session_state["sams_price_strip_pdf_result"] = render_price_pocket_pdf(records)
+                pocket_pdf = st.session_state.get("sams_price_strip_pdf_result")
+                if pocket_pdf:
+                    st.success(f"Rendered {pocket_pdf.rendered_segments} Price Pocket strips, 8.5 × 4 inches each.")
+                    for warning in pocket_pdf.warnings:
+                        st.warning(warning)
+                    st.download_button("Download Sam's Price Strips PDF", pocket_pdf.pdf_bytes,
+                                       file_name="sams_price_pocket.pdf", mime="application/pdf",
+                                       key="download_sams_price_strips_pdf")
+            except Exception as exc:
+                st.session_state["sams_price_strip_pdf_result"] = None
+                st.error(f"Price Pocket: {exc}")
+            return
         if not sams_excel_file:
-            st.info("Upload Sam's Pricing Workbook (.xlsx) to generate price strips from 'Price Strip Data'.")
+            st.info("Upload a Sam's price strip source (.xlsx, .docx or .pdf).")
         else:
+            if st.session_state.get("sams_price_strip_build_result") is None:
+                st.session_state["sams_price_strip_build_result"] = _build_sams_price_strip_rows_compat(
+                    sams_excel_file, template_name=sams_price_strip_template)
+            preview_build = st.session_state["sams_price_strip_build_result"]
+            if not preview_build.errors:
+                from dataclasses import asdict
+                st.dataframe([asdict(segment) for row in preview_build.strip_rows for segment in row.segments],
+                             use_container_width=True)
             if generate_sams_price_strips:
                 with st.spinner("Building Sam's price strip groups..."):
                     strip_build = _build_sams_price_strip_rows_compat(
@@ -695,12 +794,16 @@ def main() -> None:
                 else:
                     with st.spinner("Rendering Sam's price strips PDF..."):
                         render_sams_price_strips_pdf = _load_sams_price_strip_renderer(sams_price_strip_template)
-                        st.session_state["sams_price_strip_pdf_result"] = render_sams_price_strips_pdf(
-                            strip_build.strip_rows,
-                            generated_by="Kendal King",
-                            template_name=sams_price_strip_template,
-                            calibration=sams_price_strip_calibration,
-                        )
+                        st.session_state["sams_price_strip_pdf_result"] = None
+                        try:
+                            st.session_state["sams_price_strip_pdf_result"] = render_sams_price_strips_pdf(
+                                strip_build.strip_rows,
+                                generated_by="Kendal King",
+                                template_name=sams_price_strip_template,
+                                calibration=sams_price_strip_calibration,
+                            )
+                        except Exception as exc:
+                            st.error(f"Price strip rendering failed: {exc}")
 
             strip_build = st.session_state.get("sams_price_strip_build_result")
             if strip_build is not None:
@@ -710,7 +813,7 @@ def main() -> None:
                 else:
                     st.success(
                         f"Detected {strip_build.debug.get('strip_group_count', 0)} strip group(s) "
-                        f"from {strip_build.extracted_record_count} workbook record(s)."
+                        f"from {strip_build.extracted_record_count} source record(s)."
                     )
                     st.write("Detected strip groups:", strip_build.debug.get("detected_strip_groups", []))
                     st.write("Template:", strip_build.debug.get("template_name", ""))
@@ -744,6 +847,327 @@ def main() -> None:
                             use_container_width=True,
                             key="download_sams_price_strips_pdf",
                         )
+        return
+
+    if display_type == DISPLAY_STANDARD and standard_planogram_mode == "Holiday NRE":
+        st.subheader("Holiday NRE QA")
+        if not (holiday_bos_file and holiday_assortment_file):
+            st.info("Upload BOS Planogram Workbook + Holiday Assortment Workbook to build the Holiday NRE QA preview.")
+            return
+
+        try:
+            from app.holiday_planograms.service import analyze_holiday_nre_configurations, build_holiday_nre_qa
+            from app.holiday_planograms.render_nre import render_holiday_nre
+        except ModuleNotFoundError as e:
+            st.error(f"Holiday NRE dependency missing: {e.name}. Please install project requirements.")
+            return
+
+        if analyze_all_holiday_nre:
+            with st.spinner("Analyzing all Holiday NRE configurations..."):
+                st.session_state["holiday_nre_all_configurations"] = analyze_holiday_nre_configurations(
+                    holiday_bos_file,
+                    holiday_assortment_file,
+                )
+
+        all_configurations = st.session_state.get("holiday_nre_all_configurations")
+        if all_configurations:
+            st.markdown("### All NRE Configurations")
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Configuration": row.configuration,
+                            "Selected Sheet": row.sheet_name,
+                            "Selected Embedded Image": row.reference_image_name,
+                            "Image Dimensions": f"{row.reference_width}x{row.reference_height}",
+                            "Panel Count": row.panel_count,
+                            "Rows": row.row_count,
+                            "Columns": row.column_count,
+                            "Grid Positions": row.grid_positions,
+                            "Physical Detected": row.physical_detected,
+                            "Merchandise": row.merchandise_slots,
+                            "Filler": row.filler_slots,
+                            "Ambiguous": row.ambiguous_slots,
+                            "D5 NRE Facings": row.expected_nre_facings,
+                            "Difference": row.difference,
+                            "Warnings": "; ".join(row.warnings),
+                            "Errors": "; ".join(row.errors),
+                        }
+                        for row in all_configurations
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        result_key = f"holiday_nre_result_{holiday_nre_configuration}"
+        if generate or result_key not in st.session_state:
+            if not generate:
+                st.info("Click 'Build Holiday NRE QA' to analyze the selected Holiday NRE configuration.")
+                return
+            with st.spinner("Building Holiday NRE QA model..."):
+                st.session_state[result_key] = build_holiday_nre_qa(
+                    holiday_bos_file,
+                    holiday_assortment_file,
+                    holiday_nre_configuration,
+                    holiday_image_folder,
+                )
+                st.session_state[f"holiday_nre_render_result_{holiday_nre_configuration}"] = None
+        result = st.session_state[result_key]
+
+        if result.errors:
+            for error in result.errors:
+                st.error(error)
+            return
+
+        summary = result.summary
+        ref_col, config_col, geo_col, d5_col, match_col, image_col = st.columns(6)
+        ref_col.metric("Reference Found", "Yes" if result.reference else "No")
+        config_col.metric("Configuration", summary.get("configuration", holiday_nre_configuration))
+        geo_col.metric("Merchandise Slots", summary.get("merchandise_slots", 0))
+        d5_col.metric("D5 NRE Facings", summary.get("d5_nre_facings", 0))
+        match_col.metric("Resolved Placements", summary.get("resolved_placements", 0))
+        image_col.metric("Images", f"{summary.get('unique_products_with_images', 0)} / {summary.get('d5_nre_products', 0)}")
+
+        st.markdown("### Summary")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"Area": "Reference", "Metric": "BOS NRE sheet", "Value": summary.get("bos_sheet", "")},
+                    {"Area": "Reference", "Metric": "Selected configuration", "Value": summary.get("configuration", "")},
+                    {"Area": "Reference", "Metric": "Reference found", "Value": summary.get("reference_found", False)},
+                    {"Area": "Reference", "Metric": "Embedded image", "Value": summary.get("reference_image_name", "")},
+                    {
+                        "Area": "Reference",
+                        "Metric": "Planogram image",
+                        "Value": f"{summary.get('reference_image_width', 0)}x{summary.get('reference_image_height', 0)}",
+                    },
+                    {"Area": "Geometry", "Metric": "Panels", "Value": summary.get("panel_count", 0)},
+                    {"Area": "Geometry", "Metric": "Rows per panel", "Value": ", ".join(map(str, summary.get("rows_per_panel", [])))},
+                    {"Area": "Geometry", "Metric": "Columns per panel", "Value": ", ".join(map(str, summary.get("columns_per_panel", [])))},
+                    {"Area": "Geometry", "Metric": "Physical cells detected", "Value": summary.get("physical_cells_detected", 0)},
+                    {"Area": "Geometry", "Metric": "Theoretical grid positions", "Value": summary.get("theoretical_grid_positions", 0)},
+                    {"Area": "Geometry", "Metric": "Merchandise slots", "Value": summary.get("merchandise_slots", 0)},
+                    {"Area": "Geometry", "Metric": "Filler slots", "Value": summary.get("filler_slots", 0)},
+                    {"Area": "Geometry", "Metric": "Ambiguous slots", "Value": summary.get("ambiguous_slots", 0)},
+                    {"Area": "Geometry", "Metric": "Merchandise difference", "Value": summary.get("merchandise_difference", 0)},
+                    {"Area": "D5 Assortment", "Metric": "Sheet", "Value": summary.get("d5_sheet", "")},
+                    {"Area": "D5 Assortment", "Metric": "NRE products", "Value": summary.get("d5_nre_products", 0)},
+                    {"Area": "D5 Assortment", "Metric": "NRE facings", "Value": summary.get("d5_nre_facings", 0)},
+                    {"Area": "Placement", "Metric": "Resolved placements", "Value": summary.get("resolved_placements", 0)},
+                    {"Area": "Placement", "Metric": "Unresolved placements", "Value": summary.get("unresolved_placements", 0)},
+                    {"Area": "Placement", "Metric": "Non-product placements", "Value": summary.get("non_product_placements", 0)},
+                    {"Area": "Placement", "Metric": "Ambiguous placements", "Value": summary.get("ambiguous_placements", 0)},
+                    {"Area": "Placement", "Metric": "Ambiguous reference text", "Value": summary.get("ambiguous_reference_text_placements", 0)},
+                    {"Area": "Product QA", "Metric": "Facing mismatches", "Value": summary.get("facing_mismatches", 0)},
+                    {"Area": "Images", "Metric": "Local folder", "Value": summary.get("image_folder", "")},
+                    {"Area": "Images", "Metric": "Folder exists", "Value": summary.get("image_folder_exists", False)},
+                    {"Area": "Images", "Metric": "Files indexed", "Value": summary.get("image_files_indexed", 0)},
+                    {"Area": "Images", "Metric": "Source breakdown", "Value": str(summary.get("image_source_breakdown", {}))},
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        if result.warnings:
+            st.warning("Holiday NRE QA generated warnings.")
+            with st.expander("Warnings"):
+                for warning in result.warnings:
+                    st.write(warning)
+
+        st.markdown("### Physical Placements")
+        st.dataframe(pd.DataFrame(result.placement_qa_rows), use_container_width=True, height=420)
+
+        st.markdown("### Product QA")
+        st.dataframe(pd.DataFrame(result.product_qa_rows), use_container_width=True, height=360)
+
+        if holiday_show_geometry_debug and result.geometry and result.geometry.debug_image_bytes:
+            st.markdown("### Geometry Debug")
+            st.image(result.geometry.debug_image_bytes, caption=f"Holiday NRE {result.configuration} detected slot rectangles")
+
+        st.markdown("### Render")
+        render_key = f"holiday_nre_render_result_{holiday_nre_configuration}"
+        render_nre = st.button("Render Holiday NRE", type="primary", use_container_width=True, key="render_holiday_nre")
+        if render_nre:
+            try:
+                with st.spinner("Rendering Holiday NRE..."):
+                    st.session_state[render_key] = render_holiday_nre(result.placements, result.configuration)
+            except Exception as e:
+                st.error(f"Unable to render Holiday NRE: {e}")
+                return
+
+        render_result = st.session_state.get(render_key)
+        if render_result is not None:
+            r1, r2, r3, r4, r5 = st.columns(5)
+            r1.metric("Pages Rendered", render_result.panels_rendered)
+            r2.metric("Slots Rendered", render_result.slots_rendered)
+            r3.metric("Image Cards", render_result.image_slots)
+            r4.metric("Placeholder Cards", render_result.placeholder_slots)
+            r5.metric("Filler Blocks", render_result.skipped_slots)
+
+            st.image(render_result.preview_png_bytes, caption=f"Holiday NRE {result.configuration} render preview")
+            st.download_button(
+                "Download Holiday NRE PDF",
+                render_result.pdf_bytes,
+                file_name=f"holiday_nre_{result.configuration.lower()}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key="download_holiday_nre_pdf",
+            )
+
+            if render_result.missing_image_rows:
+                missing_df = pd.DataFrame(render_result.missing_image_rows)
+                st.markdown("### Missing Image Report")
+                st.dataframe(missing_df, use_container_width=True, height=300)
+                st.download_button(
+                    "Download Missing Image Report CSV",
+                    missing_df.to_csv(index=False).encode("utf-8"),
+                    file_name=f"holiday_nre_{result.configuration.lower()}_missing_images.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="download_holiday_nre_missing_images",
+                )
+        return
+
+    if display_type == DISPLAY_STANDARD and standard_planogram_mode == "Holiday Quarter Pallet":
+        st.subheader("Holiday Quarter Pallet QA")
+        if not (holiday_bos_file and holiday_assortment_file):
+            st.info("Upload BOS Planogram Workbook + Holiday Assortment Workbook to build the Holiday QP QA preview.")
+            return
+
+        try:
+            from app.holiday_planograms.service import build_holiday_qp_qa
+            from app.holiday_planograms.render_qp import render_holiday_qp
+        except ModuleNotFoundError as e:
+            st.error(f"Holiday Quarter Pallet dependency missing: {e.name}. Please install project requirements.")
+            return
+
+        if generate or "holiday_qp_result" not in st.session_state:
+            if not generate:
+                st.info("Click 'Build Holiday QP QA' to resolve the Holiday Quarter Pallet placement model.")
+                return
+            with st.spinner("Building Holiday Quarter Pallet QA model..."):
+                st.session_state["holiday_qp_result"] = build_holiday_qp_qa(
+                    holiday_bos_file,
+                    holiday_assortment_file,
+                    holiday_image_folder,
+                )
+                st.session_state["holiday_qp_render_result"] = None
+        result = st.session_state["holiday_qp_result"]
+
+        if result.errors:
+            for error in result.errors:
+                st.error(error)
+            return
+
+        summary = result.summary
+        ref_col, geo_col, bos_col, d5_col, match_col, image_col = st.columns(6)
+        ref_col.metric("Reference Image", "Found" if result.reference_image else "Missing")
+        geo_col.metric("Active Slots", summary.get("active_slots", 0))
+        bos_col.metric("BOS Facings", summary.get("bos_facings", 0))
+        d5_col.metric("D5 QP Facings", summary.get("d5_qp_facings", 0))
+        match_col.metric("Matched Products", f"{summary.get('matched_products', 0)} / {summary.get('bos_products', 0)}")
+        image_col.metric("Images", f"{summary.get('placements_with_images', 0)} / {len(result.placements)}")
+
+        st.markdown("### Summary")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"Area": "Reference", "Metric": "BOS QP sheet", "Value": summary.get("bos_sheet", "")},
+                    {
+                        "Area": "Reference",
+                        "Metric": "Planogram image",
+                        "Value": f"{summary.get('reference_image_width', 0)}x{summary.get('reference_image_height', 0)}",
+                    },
+                    {"Area": "Geometry", "Metric": "Panels", "Value": summary.get("panel_count", 0)},
+                    {"Area": "Geometry", "Metric": "Rows per panel", "Value": ", ".join(map(str, summary.get("rows_per_panel", [])))},
+                    {"Area": "Geometry", "Metric": "Columns per panel", "Value": ", ".join(map(str, summary.get("columns_per_panel", [])))},
+                    {"Area": "Geometry", "Metric": "Active slots", "Value": summary.get("active_slots", 0)},
+                    {"Area": "BOS Table", "Metric": "Products", "Value": summary.get("bos_products", 0)},
+                    {"Area": "BOS Table", "Metric": "Facings", "Value": summary.get("bos_facings", 0)},
+                    {"Area": "D5 Assortment", "Metric": "Sheet", "Value": summary.get("d5_sheet", "")},
+                    {"Area": "D5 Assortment", "Metric": "Total products", "Value": summary.get("d5_total_products", 0)},
+                    {"Area": "D5 Assortment", "Metric": "QP products", "Value": summary.get("d5_qp_products", 0)},
+                    {"Area": "Product Matching", "Metric": "Item-number matches", "Value": summary.get("item_number_matches", 0)},
+                    {"Area": "Product Matching", "Metric": "UPC matches", "Value": summary.get("upc_matches", 0)},
+                    {"Area": "Product Matching", "Metric": "Fallback matches", "Value": summary.get("fallback_matches", 0)},
+                    {"Area": "Images", "Metric": "Local folder", "Value": summary.get("image_folder", "")},
+                    {"Area": "Images", "Metric": "Folder exists", "Value": summary.get("image_folder_exists", False)},
+                    {"Area": "Images", "Metric": "Files indexed", "Value": summary.get("image_files_indexed", 0)},
+                    {"Area": "Images", "Metric": "Source breakdown", "Value": str(summary.get("image_source_breakdown", {}))},
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        if result.warnings:
+            st.warning("Holiday QP QA generated warnings.")
+            with st.expander("Warnings"):
+                for warning in result.warnings:
+                    st.write(warning)
+
+        st.markdown("### Physical Placements")
+        st.dataframe(pd.DataFrame(result.placement_qa_rows), use_container_width=True, height=420)
+
+        st.markdown("### Product QA")
+        st.dataframe(pd.DataFrame(result.product_qa_rows), use_container_width=True, height=360)
+
+        if holiday_show_geometry_debug and result.geometry and result.geometry.debug_image_bytes:
+            st.markdown("### Geometry Debug")
+            st.image(result.geometry.debug_image_bytes, caption="Detected panels and active slot rectangles")
+
+        st.markdown("### Render")
+        render_qp = st.button("Render Holiday QP", type="primary", use_container_width=True, key="render_holiday_qp")
+        if render_qp:
+            try:
+                with st.spinner("Rendering Holiday Quarter Pallet..."):
+                    st.session_state["holiday_qp_render_result"] = render_holiday_qp(result.placements)
+            except Exception as e:
+                st.error(f"Unable to render Holiday Quarter Pallet: {e}")
+                return
+
+        render_result = st.session_state.get("holiday_qp_render_result")
+        if render_result is not None:
+            r1, r2, r3, r4, r5 = st.columns(5)
+            r1.metric("Panels Rendered", render_result.panels_rendered)
+            r2.metric("Slots Rendered", render_result.slots_rendered)
+            r3.metric("Image Slots", render_result.image_slots)
+            r4.metric("Placeholder Slots", render_result.placeholder_slots)
+            r5.metric("Skipped Slots", render_result.skipped_slots)
+
+            image_missing_products = len(render_result.missing_image_rows)
+            st.caption(
+                f"Missing images: {image_missing_products} unique product(s), "
+                f"{render_result.placeholder_slots} placeholder-backed placement(s)."
+            )
+            st.image(render_result.preview_png_bytes, caption="Holiday Quarter Pallet render preview")
+            st.download_button(
+                "Download Holiday QP PDF",
+                render_result.pdf_bytes,
+                file_name="holiday_quarter_pallet.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key="download_holiday_qp_pdf",
+            )
+
+            if render_result.missing_image_rows:
+                missing_df = pd.DataFrame(render_result.missing_image_rows)
+                st.markdown("### Missing Image Report")
+                st.dataframe(missing_df, use_container_width=True, height=300)
+                st.download_button(
+                    "Download Missing Image Report CSV",
+                    missing_df.to_csv(index=False).encode("utf-8"),
+                    file_name="holiday_qp_missing_images.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="download_holiday_qp_missing_images",
+                )
+            if render_result.warnings:
+                with st.expander("Render warnings"):
+                    for warning in render_result.warnings:
+                        st.write(warning)
         return
 
     if display_type == DISPLAY_FULL_PALLET and run_image_transfer:
