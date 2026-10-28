@@ -321,6 +321,8 @@ def build_sams_price_strip_rows(
 ) -> SamsPriceStripBuildResult:
     warnings: list[str] = []
     errors: list[str] = []
+    from app.sams_club.price_strip_inputs import source_suffix
+    document_source = source_suffix(source_file) in (".docx", ".pdf")
 
     try:
         df, selected_sheet_name, sheet_debug = _read_price_strip_sheet(source_file, template_name)
@@ -331,12 +333,12 @@ def build_sams_price_strip_rows(
         )
     except ValueError as exc:
         return SamsPriceStripBuildResult(
-            errors=[f"Unable to read '{_PRICE_STRIP_SHEET}' sheet: {exc}"],
+            errors=[f"Unable to read price strip document: {exc}" if document_source else f"Unable to read '{_PRICE_STRIP_SHEET}' sheet: {exc}"],
             debug={"sheet_name": _PRICE_STRIP_SHEET},
         )
     except Exception as exc:
         return SamsPriceStripBuildResult(
-            errors=[f"Price strip workbook read failed: {exc}"],
+            errors=[f"Price strip document read failed: {exc}" if document_source else f"Price strip workbook read failed: {exc}"],
             debug={"sheet_name": _PRICE_STRIP_SHEET},
         )
 
@@ -382,7 +384,7 @@ def build_sams_price_strip_rows(
         }
 
         for logical_key, label in _CONTENT_WARNING_FIELDS:
-            if values[logical_key] == "":
+            if values[logical_key] == "" and not (document_source and logical_key in ("brand", "desc_2")):
                 message = f"Record {idx}: missing {label} (POG={pog}, Side={side}, Row={row_value}, Column={column})."
                 warnings.append(message)
                 segment_warnings.append(message)
@@ -412,6 +414,8 @@ def build_sams_price_strip_rows(
         segments = sorted(grouped_segments[key], key=lambda seg: seg.column)
         footer_candidates = [seg.data_on_bottom_left for seg in segments if seg.data_on_bottom_left.strip()]
         footer_text = footer_candidates[0] if footer_candidates else f"Side: {side}, Row: {row_value} - POG: {pog}"
+        if document_source and not footer_candidates:
+            footer_text = ""
         group_warnings: list[str] = []
 
         unique_footer_values = sorted({value.strip() for value in footer_candidates if value.strip()})

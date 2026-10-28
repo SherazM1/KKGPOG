@@ -1,7 +1,7 @@
 """Vector Price Pocket tickets, two true-size 8.5 x 4 inch strips per page."""
 from dataclasses import dataclass
 from decimal import Decimal
-import asyncio
+from app.shared.async_runtime import run_browser_job
 import html
 import re
 
@@ -113,5 +113,5 @@ def render_price_pocket_pdf(records):
         raise ValueError("Price Pocket requires the same Playwright/Chromium renderer as the existing Sam's layouts.")
     warnings = []
     content = _pocket_html(records, warnings)
-    pdf_bytes = asyncio.run(_render_pocket_async(content))
+    pdf_bytes = run_browser_job(lambda: _render_pocket_async(content))
     return SamsPriceStripPdfResult(pdf_bytes, (len(records)+1)//2, len(records), warnings)

@@ -11,7 +11,7 @@ To use this renderer, install Playwright:
 
 from __future__ import annotations
 
-import asyncio
+from app.shared.async_runtime import run_browser_job
 import base64
 import html
 import json
@@ -991,8 +991,8 @@ def render_sams_price_strips_pdf(
 
     try:
         htmls = _build_full_html(strip_rows, warnings, template_name, calibration)
-        pdf_bytes, rendered_pages, rendered_segments = asyncio.run(
-            _render_strips_async(htmls, strip_rows, warnings, template_name)
+        pdf_bytes, rendered_pages, rendered_segments = run_browser_job(
+            lambda: _render_strips_async(htmls, strip_rows, warnings, template_name)
         )
     except Exception as exc:
         warnings.append(f"HTML/Playwright renderer failed: {exc}")

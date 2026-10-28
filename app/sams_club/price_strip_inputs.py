@@ -149,22 +149,32 @@ def validate_price(value, field="price"):
 
 
 def legacy_document_frame(source, template_name=None):
-    from app.sams_club.extract_price_strips import _EXPECTED_PRODUCTION_FIELDS
-    from app.sams_club.holiday_price_strips import is_sams_holiday_template
+    from app.sams_club.holiday_price_strips import is_sams_holiday_template, SAMS_HOLIDAY_TEMPLATE
     from app.sams_club.render_price_strips import parse_strip_length
     records = parse_source(source)
     errors = []
     positions = set()
     lengths = {}
+    holiday = is_sams_holiday_template(template_name)
+    slots = SAMS_HOLIDAY_TEMPLATE.thin_side.slot_count if holiday else 1
     for i, record in enumerate(records, 1):
         # Explicit equivalent document fields may supply the existing description lines.
         if "name" in record and "desc_1" not in record:
             record["desc_1"] = record["name"]
         if "type" in record and "desc_2" not in record:
             record["desc_2"] = record["type"]
-        missing = [f for f in _EXPECTED_PRODUCTION_FIELDS if f not in record or (f in ("pog", "side", "row", "column", "item_number", "retail", "brand", "desc_1") and not record[f])]
+        # Documents describe products, not workbook cells. Geometry is optional.
+        missing = [f for f in ("desc_1", "item_number", "retail") if not record.get(f)]
         if missing:
-            errors.append(f"Record {i}: missing required fields: {', '.join(missing)}")
+            errors.append(f"Record {i}: missing product fields: {', '.join(missing)}")
+        defaults = {
+            "pog": "Document", "side": "1", "row": str((i - 1) // slots + 1),
+            "column": str((i - 1) % slots + 1), "brand": "", "desc_2": "",
+            "length": "" if holiday else "11 x 2.45", "data_on_bottom_left": "",
+        }
+        for field, value in defaults.items():
+            if not record.get(field):
+                record[field] = value
         for field in ("side", "row", "column"):
             if field in record and not re.fullmatch(r"[1-9]\d*", record[field]):
                 errors.append(f"Record {i}: {field} must be a positive integer.")
@@ -172,10 +182,10 @@ def legacy_document_frame(source, template_name=None):
         if position in positions:
             errors.append(f"Record {i}: duplicate POG/Side/Row/Column position.")
         positions.add(position)
-        if not is_sams_holiday_template(template_name):
+        if not holiday and record.get("length"):
             length = parse_strip_length(record.get("length", ""))
             if length is None:
-                errors.append(f"Record {i}: missing or invalid length; provide width x height in inches.")
+                errors.append(f"Record {i}: invalid length; provide width x height in inches or omit it to use the layout default.")
             group = position[:3]
             if group in lengths and lengths[group] != length:
                 errors.append(f"Record {i}: conflicting length for the same strip row.")

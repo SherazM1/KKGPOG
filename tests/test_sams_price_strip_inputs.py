@@ -128,7 +128,7 @@ class InputTests(unittest.TestCase):
         self.assertEqual(parsed[0]["desc_2"], "")
 
     def test_document_geometry_errors_do_not_guess(self):
-        row = {"POG": "TEST", "Side": "1.5", "Row": "1", "Column": "1", "Item Number": "001", "Brand": "B", "Desc 1": "D", "Desc 2": "", "Retail": "60", "Length": "", "Data on bottom left": ""}
+        row = {"POG": "TEST", "Side": "1.5", "Row": "1", "Column": "1", "Item Number": "001", "Brand": "B", "Desc 1": "D", "Desc 2": "", "Retail": "60", "Length": "bad", "Data on bottom left": ""}
         result = build_sams_price_strip_rows(docx("\n".join(f"{k}: {v}" for k, v in row.items())), "Standard")
         self.assertIn("side must be a positive integer", result.errors[0])
         self.assertIn("invalid length", result.errors[0])
@@ -146,10 +146,17 @@ class InputTests(unittest.TestCase):
                 self.assertEqual(_build_full_html(result.strip_rows, [], mode, False), _build_full_html(native.strip_rows, [], mode, False))
             for upload in (docx(BASELINE), pdf(BASELINE)):
                 result = build_sams_price_strip_rows(upload, template_name=mode)
-                self.assertTrue(result.errors)
-                self.assertIn("pog", result.errors[0])
-                self.assertIn("column", result.errors[0])
-                self.assertFalse(result.strip_rows)
+                self.assertFalse(result.errors, result.errors)
+                actual = [segment for row in result.strip_rows for segment in row.segments if not segment.is_empty]
+                self.assertEqual(len(actual), 2)
+                self.assertEqual([s.item_number for s in actual], ["984323644", "984323645"])
+                self.assertEqual(actual[0].desc_1, "Sams GOM COC $60 Club 2026")
+                self.assertTrue(all(not row.footer_text for row in result.strip_rows))
+                self.assertTrue(_build_full_html(result.strip_rows, [], mode, False))
+            for upload in (docx("NAME: Missing price and item"), pdf("NAME: Missing price and item")):
+                result = build_sams_price_strip_rows(upload, template_name=mode)
+                self.assertIn("missing product fields: item_number, retail", result.errors[0])
+                self.assertNotIn("sheet", result.errors[0])
 
     def test_pdf_vector_content_geometry_and_baseline_artifact(self):
         records = pocket_records(parse_text(BASELINE))
