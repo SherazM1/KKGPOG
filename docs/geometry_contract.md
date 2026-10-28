@@ -1,5 +1,9 @@
 # Fixture geometry contract — Piece 2
 
+Piece 3 adds optional ID-based regions without migrating the original defaults.
+See [region_contract.md](region_contract.md) for membership, envelopes, presentation
+hints, the Side A proof, and the compact read-only viewer.
+
 ## Three separate coordinate domains
 
 `app.templates` describes where content may go on a fixture. It contains no

@@ -137,7 +137,7 @@ class TemplateContractTests(unittest.TestCase):
 
 class DefaultTemplateTests(unittest.TestCase):
     def test_builtins_are_uncalibrated_valid_and_have_explicit_lock_policy(self):
-        qp, nre = get_templates()
+        qp, nre = get_template("holiday_qp_2026"), get_template("holiday_nre")
         for template in (qp, nre):
             with self.subTest(template=template.id):
                 self.assertEqual(template.unit, GeometryUnit.NORMALIZED)
@@ -189,7 +189,8 @@ class DefaultTemplateTests(unittest.TestCase):
         self.assertEqual(get_template("holiday_nre").unit, GeometryUnit.NORMALIZED)
 
     def test_registry_lookup_is_explicit_and_cannot_mutate_catalog(self):
-        self.assertEqual([template.id for template in get_templates()], ["holiday_qp_2026", "holiday_nre"])
+        self.assertEqual([template.id for template in get_templates()],
+                         ["holiday_qp_2026", "holiday_nre", "holiday_2026_side_a"])
         self.assertEqual(len(get_facings("holiday_qp_2026")), 4)
         first, second = get_template("holiday_nre"), get_template("holiday_nre")
         self.assertEqual(first, second)

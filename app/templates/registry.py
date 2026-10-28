@@ -1,9 +1,10 @@
 """Small built-in catalog. No persistence or production renderer imports."""
 from app.templates.defaults import holiday_nre, holiday_qp_2026
+from app.templates.holiday_side_a import holiday_2026_side_a
 from app.templates.models import DisplayTemplate, Facing
 
 
-_BUILDERS = (holiday_qp_2026, holiday_nre)
+_BUILDERS = (holiday_qp_2026, holiday_nre, holiday_2026_side_a)
 
 
 def get_templates() -> tuple[DisplayTemplate, ...]:

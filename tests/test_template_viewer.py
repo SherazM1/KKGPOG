@@ -28,7 +28,7 @@ class TemplateViewerTests(unittest.TestCase):
             self.assert_clean(app)
             self.assertEqual(len(app.get("imgs")), 1)
             self.assertTrue(all(f".{facing}." in value for value in app.dataframe[0].value["Slot ID"]))
-        self.assertEqual(len(app.button), 0)
+        self.assertEqual([button.label for button in app.button], ["Create New Template"])
         self.assertEqual(len(app.get("file_uploader")), 0)
         self.assertEqual(len(app.get("download_button")), 0)
         self.assertEqual(app.expander[0].label, "Advanced / Geometry details")
@@ -45,7 +45,7 @@ class TemplateViewerTests(unittest.TestCase):
         self.assertEqual(len(table["Section"].unique()), 10)
         self.assertTrue(any("locked" in caption.value for caption in app.caption))
         self.assertEqual(app.session_state["sams_pdf_result"], b"existing PDF")
-        self.assertEqual(len(app.button), 0)
+        self.assertEqual([button.label for button in app.button], ["Create New Template"])
         self.assertEqual(len(app.get("imgs")), 1)
 
     def test_existing_routes_remain_and_viewer_selection_survives_navigation(self):
