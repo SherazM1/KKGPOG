@@ -2,22 +2,39 @@
 
 ## Operator flow
 
-Open **Templates → Create New Template**. Set a name, family/display type label,
-version and unit, then **Start blank draft**. Built-in definitions remain in the
+Open **Templates → Create New Template**. Enter a name, then **Start blank draft**.
+Family, version and units are optional under **Advanced template settings**.
+The default is an unmeasured layout sketch. Built-in definitions remain in the
 read-only catalog. Starting a new draft replaces only the current session draft;
 returning to the catalog without starting it leaves the existing draft intact.
 
-- **Facings:** add one or many, rename, resize, reorder or remove them. Inches
-  start with zero dimensions and require positive measured values before adding
-  the facing. Normalized facings start at 1 × 1 and are explicitly uncalibrated.
-- **Regions:** add, rename, choose a role and the existing presentation hint,
-  reorder or remove. Region bounds are derived from member slots for the preview;
-  no new local coordinate transform or presentation layout is introduced.
-- **Positions:** add a small suggested rectangle, create a grid, or select an
-  existing position to edit its width, height, placement, order and region.
-  Distances are measured from the facing's top-left in the chosen unit.
-  Placement coordinates are under expanders; IDs appear only in Advanced details.
-  Each form has an explicit Apply/Add/Create action that updates the preview.
+- **Sides:** add by name. Sketch sides default to 1 × 1 normalized units internally.
+  Rename/delete are ordinary Side options; dimensions/order live under Advanced
+  side settings. Inches still require positive measured dimensions there.
+- **Sections:** add with only a name. Defaults are Product role and no presentation
+  hint. Role, hint and manual order remain under Advanced section settings.
+- **Boxes:** Add Box places a box automatically in the selected section. Create
+  Grid normally asks only for rows/columns. Boxes are selected within the current
+  section. Duplicate/Delete and Move left/right/up/down or Wider/Narrower/Taller/
+  Shorter buttons handle basic arrangement without coordinate entry.
+- **Review / Done:** section colors, box numbers and validation are visible beside
+  the workspace. Done returns to the catalog and retains the session draft; it
+  does not permanently save or publish anything.
+
+The normal name → side → section → 3 × 4 grid flow needs no Advanced controls.
+Operator labels are Side/Section/Box; backend Facing/Region/Slot classes are unchanged.
+
+## Advanced controls
+
+Advanced template settings contain family/version/units. Advanced side settings
+contain physical dimensions and ordering. Advanced section settings contain roles,
+presentation hints and ordering. Advanced grid settings contain X/Y, total size
+and gaps; check **Use custom grid settings** to apply them instead of automatic
+sizing. Advanced box geometry contains X/Y, width/height, order and manual section
+assignment. IDs and reset/clear actions are under Advanced draft details.
+
+New boxes always join the selected section. Creation order is preserved through
+moves/resizes to avoid silently renumbering boxes. Manual ordering stays Advanced.
 
 The unit is fixed at creation. Choosing another unit requires a new draft; there
 is no relabeling or silent conversion of existing measurements. A physical draft
@@ -47,8 +64,13 @@ Nothing is written to disk or a database. Browser/session loss can lose the draf
 
 ## Grid creation
 
-Rows, columns, start distances, overall width/height and horizontal/vertical gaps
-define the initial cell rectangles:
+Rows and columns are the only normal inputs. UI adapters choose an open rectangle
+inside the selected section's explicit bounds, or the side if it has no bounds.
+Spacing scales with row/column count. Other boxes are avoided; lack of free room
+produces a message instead of silently adding overlaps. Advanced overrides retain
+the existing backend grid behavior and validation.
+
+Start distances, overall width/height and horizontal/vertical gaps define cells:
 
 `cell_width = (overall_width - (columns - 1) × horizontal_gap) / columns`
 
@@ -70,11 +92,15 @@ may temporarily be invalid, including overlapping positions or a zero-width
 facing, and can be corrected through the same forms. Required text/unsupported
 enum values and malformed grid inputs are rejected before an operation commits.
 
-Messages use facing/region names and position numbers instead of long IDs.
-The selected facing uses the existing compact, region-aware SVG preview when the
-whole draft passes validation; otherwise issues and a recovery message replace
-the preview. Empty regions gain envelopes as positions are added. Advanced
-details expose stable IDs and coordinates. No production output is generated.
+Messages use side/section names and box numbers instead of long IDs.
+The selected Side uses a compact interactive SVG canvas. Click a box to select,
+drag to move, or drag its handles to resize. Selection synchronizes the Section
+and Box controls; Duplicate/Delete act on the selected box. Spatial validation
+errors remain visible and editable. Structural errors require fallback controls.
+Empty sections gain envelopes as boxes are added. Advanced details expose stable
+IDs and coordinates, and a collapsed static preview remains available for valid
+drafts. See [interactive_canvas.md](interactive_canvas.md) for event handling,
+coordinate conversion and limitations. No production output is generated.
 
 Deletion actions use callbacks so the draft changes before dependent widgets
 render. Per-selection form keys ensure one slot or region cannot inherit another
@@ -82,11 +108,10 @@ selection's geometry or hint values.
 
 ## Intentional boundaries and next step
 
-No drag/drop, mouse resize, snapping, alignment tools, undo/redo, reference upload,
+No snapping, alignment tools, undo/redo, reference upload,
 PDF overlay, detection, cloning, persistence, product assignment, assortment
 population, image matching, price-strip generation or production PDF generation.
 The existing production renderers and built-in geometry definitions are isolated.
 
-The next small pass should add explicit draft serialization plus versioned
-save/load with a round-trip validation check. Preserve units, IDs, membership and
-order, keep built-ins protected, and leave renderer integration for a later pass.
+The next small interaction pass can add undo/redo for manual geometry edits.
+Production integration and durable persistence remain separate work.

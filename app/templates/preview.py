@@ -25,10 +25,12 @@ def _envelope(facing, region):
                   max(slot.y + slot.height for slot in members) - y)
 
 
-def geometry_svg(template: DisplayTemplate, facing_id: str) -> str:
+def geometry_svg(template: DisplayTemplate, facing_id: str, *, allow_layout_errors=False) -> str:
     validation = validate_template(template)
-    if not validation.valid:
-        raise ValueError("Cannot preview invalid geometry: " + "; ".join(issue.message for issue in validation.errors))
+    spatial_errors = {"product_overlap", "slot_bounds", "slot_region_bounds"}
+    blocked = [issue for issue in validation.errors if not allow_layout_errors or issue.code not in spatial_errors]
+    if blocked:
+        raise ValueError("Cannot preview invalid geometry: " + "; ".join(issue.message for issue in blocked))
     facing = next((facing for facing in template.facings if facing.id == facing_id), None)
     if facing is None:
         raise KeyError(f"Unknown facing: {facing_id}")
