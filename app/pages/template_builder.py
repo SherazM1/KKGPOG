@@ -1,5 +1,8 @@
 """Guided session-only geometry builder; never writes templates or invokes production."""
 import re
+from dataclasses import replace
+from functools import partial
+from hashlib import sha256
 from xml.etree import ElementTree as ET
 
 import streamlit as st
@@ -19,27 +22,37 @@ NEW_KEY = "template_builder:new"
 SELECTION_KEY = "template_builder:selection"
 
 
-def _apply(action, pick=None, rerun=True):
+def side_selection_key(facing_id):
+    return f"{SELECTION_KEY}:{facing_id}"
+
+
+def _apply(action, pick=None, rerun=True, *, facing_id=None):
     before = st.session_state[DRAFT_KEY]
     try:
         updated = action(before)
     except (ValueError, KeyError) as exc:
         st.error(str(exc).strip("'"))
         return
-    selection = dict(st.session_state.get(SELECTION_KEY, {}))
+    key = side_selection_key(facing_id) if facing_id else SELECTION_KEY
+    selection = dict(st.session_state.get(key, {}))
     if pick == "facing":
-        selection = {"facing": updated.template.facings[-1].id}
+        facing_id = updated.template.facings[-1].id
+        key = side_selection_key(facing_id)
+        selection = {"facing": facing_id}
     elif pick:
-        facing = edits.get_facing(updated, selection["facing"])
+        facing = edits.get_facing(updated, facing_id)
         selection[pick] = (facing.regions if pick == "region" else facing.slots)[-1].id
+        if pick == "region":
+            selection.pop("slot", None)
     st.session_state[DRAFT_KEY] = updated
-    st.session_state[SELECTION_KEY] = selection
+    st.session_state[key] = selection
     if rerun:
         st.rerun()
 
 
-def _choose(label, items, prefix, kind, format_func):
-    selection = dict(st.session_state.get(SELECTION_KEY, {}))
+def _choose(label, items, prefix, kind, format_func, *, facing_id):
+    key = side_selection_key(facing_id)
+    selection = dict(st.session_state.get(key, {}))
     ids = [item.id for item in items]
     current = selection.get(kind)
     selected = st.selectbox(label, ids, index=ids.index(current) if current in ids else 0,
@@ -47,7 +60,7 @@ def _choose(label, items, prefix, kind, format_func):
     if kind == "facing" and current != selected:
         selection = {}
     selection[kind] = selected
-    st.session_state[SELECTION_KEY] = selection
+    st.session_state[key] = selection
     return next(item for item in items if item.id == selected)
 
 
@@ -95,9 +108,9 @@ def _basics():
         st.rerun()
 
 
-def _facings(draft, prefix):
-    with st.expander("2. Sides", expanded=not draft.template.facings):
-        with st.form(f"{prefix}:add_facing"):
+def _add_side(draft):
+    with st.expander("Add a side", expanded=not draft.template.facings):
+        with st.form(f"builder:{draft.template.id}:add_facing:{len(draft.template.facings)}"):
             name = st.text_input("New side name", f"Side {len(draft.template.facings) + 1}")
             default = 0.0 if draft.template.unit == GeometryUnit.INCHES else 1.0
             with st.expander("Advanced side settings"):
@@ -108,57 +121,88 @@ def _facings(draft, prefix):
             added = st.form_submit_button("Add Side")
         if added:
             _apply(lambda current: edits.add_facing(current, name, width, height), "facing")
-        if not draft.template.facings:
-            return None
-        facings = draft.template.ordered_facings()
-        names = {item.id: item.name for item in facings}
-        facing = _choose("Side", facings, prefix, "facing", names.get)
-        with st.expander("Side options"):
-            with st.form(f"{prefix}:{facing.id}:edit_facing"):
-                name = st.text_input("Side name", facing.name)
-                with st.expander("Advanced side settings"):
-                    order = st.number_input("Side order", min_value=0, value=max(0, facing.order), step=1)
-                    width = st.number_input("Side width", min_value=0.0, value=max(0.0, float(facing.width)), format="%.4f")
-                    height = st.number_input("Side height", min_value=0.0, value=max(0.0, float(facing.height)), format="%.4f")
-                applied = st.form_submit_button("Apply side changes")
-            if applied:
-                _apply(lambda current: edits.update_facing(current, facing.id, name=name, width=width, height=height, order=order))
-            st.caption("Deleting this side also deletes its sections and boxes from the draft.")
-            st.button("Delete Side", key=f"{prefix}:remove_facing", on_click=_apply,
-                      args=(lambda current: edits.remove_facing(current, facing.id),), kwargs={"rerun": False})
-        return facing
+
+
+def _side_options(facing, prefix):
+    apply = partial(_apply, facing_id=facing.id)
+    with st.expander("Duplicate Side"):
+        with st.form(f"{prefix}:duplicate_side"):
+            st.text_input("Copy side name", f"{facing.name} Copy", key=f"{prefix}:copy_name")
+            def duplicate():
+                apply(lambda current: edits.duplicate_facing(current, facing.id,
+                    st.session_state[f"{prefix}:copy_name"]), "facing", rerun=False)
+            st.form_submit_button("Duplicate Side", on_click=duplicate)
+    with st.expander("Side options"):
+        with st.form(f"{prefix}:edit_facing"):
+            st.text_input("Side name", facing.name, key=f"{prefix}:side_name")
+            with st.expander("Advanced side settings"):
+                st.number_input("Side order", min_value=0, value=max(0, facing.order), step=1, key=f"{prefix}:side_order")
+                st.number_input("Side width", min_value=0.0, value=max(0.0, float(facing.width)), format="%.4f", key=f"{prefix}:side_width")
+                st.number_input("Side height", min_value=0.0, value=max(0.0, float(facing.height)), format="%.4f", key=f"{prefix}:side_height")
+            def update():
+                values = {field: st.session_state[f"{prefix}:side_{field}"] for field in ("name", "width", "height", "order")}
+                apply(lambda current: edits.update_facing(current, facing.id, **values), rerun=False)
+            st.form_submit_button("Apply side changes", on_click=update)
+        st.caption("Deleting this side also deletes its sections and boxes from the draft.")
+        st.button("Delete Side", key=f"{prefix}:remove_facing", on_click=apply,
+                  args=(lambda current: edits.remove_facing(current, facing.id),), kwargs={"rerun": False})
+
+
+def _select_region(facing_id, region_id):
+    key = side_selection_key(facing_id)
+    st.session_state[key] = dict(facing=facing_id, region=region_id)
+    st.session_state[SELECTION_EPOCH_KEY] = st.session_state.get(SELECTION_EPOCH_KEY, 0) + 1
 
 
 def _regions(draft, facing, prefix):
-    with st.expander("3. Sections", expanded=not facing.regions):
+    apply = partial(_apply, facing_id=facing.id)
+    key = side_selection_key(facing.id)
+    selection = dict(st.session_state.get(key, {"facing": facing.id}))
+    regions = facing.ordered_regions()
+    selected_id = selection.get("region")
+    if selected_id not in {region.id for region in regions}:
+        selected_id = regions[0].id if regions else None
+        selection = dict(facing=facing.id, region=selected_id)
+    selected_region = next((region for region in regions if region.id == selected_id), None)
+    if selected_region is None or selection.get("slot") not in selected_region.slot_ids:
+        selection.pop("slot", None)
+    st.markdown("**Sections**")
+    with st.container(horizontal=True):
+        for item in regions:
+            st.button(item.name, key=f"{prefix}:section_chip:{item.id}",
+                      type="primary" if item.id == selected_id else "secondary",
+                      on_click=_select_region, args=(facing.id, item.id))
+    st.session_state[key] = selection
+    with st.popover("Add a section"):
         with st.form(f"{prefix}:add_region"):
             name = st.text_input("New section name", "Main Cards")
             with st.expander("Advanced section settings"):
                 role, hint = _role_hint(f"{prefix}:add_region")
             added = st.form_submit_button("Add Section")
         if added:
-            _apply(lambda current: edits.add_region(current, facing.id, name, role, hint), "region")
-        if not facing.regions:
-            return None
-        regions = facing.ordered_regions()
-        names = {item.id: item.name for item in regions}
-        region = _choose("Section", regions, prefix, "region", names.get)
-        with st.expander("Section options"):
-            with st.form(f"{prefix}:{region.id}:edit_region"):
-                name = st.text_input("Section name", region.name)
-                with st.expander("Advanced section settings"):
-                    order = st.number_input("Section order", min_value=0, value=max(0, region.order), step=1)
-                    role, hint = _role_hint(f"{prefix}:{region.id}:edit_region", region.role, region.presentation_hint)
-                applied = st.form_submit_button("Apply section changes")
-            if applied:
-                _apply(lambda current: edits.update_region(current, facing.id, region.id, name=name, role=role, hint=hint, order=order))
-            st.caption("Deleting this section also deletes boxes that belong only to it.")
-            st.button("Delete Section", key=f"{prefix}:remove_region", on_click=_apply,
-                      args=(lambda current: edits.remove_region(current, facing.id, region.id),), kwargs={"rerun": False})
-        return region
+            apply(lambda current: edits.add_region(current, facing.id, name, role, hint), "region")
+    if not regions:
+        st.caption("Add a section to this side, then add boxes or create a grid.")
+        return None
+    region = next(item for item in regions if item.id == selected_id)
+    st.caption(f"Selected Section: {region.name}")
+    with st.expander("Section options"):
+        with st.form(f"{prefix}:{region.id}:edit_region"):
+            name = st.text_input("Section name", region.name)
+            with st.expander("Advanced section settings"):
+                order = st.number_input("Section order", min_value=0, value=max(0, region.order), step=1)
+                role, hint = _role_hint(f"{prefix}:{region.id}:edit_region", region.role, region.presentation_hint)
+            applied = st.form_submit_button("Apply section changes")
+        if applied:
+            apply(lambda current: edits.update_region(current, facing.id, region.id, name=name, role=role, hint=hint, order=order))
+        st.caption("Deleting this section also deletes boxes that belong only to it.")
+        st.button("Delete Section", key=f"{prefix}:remove_region", on_click=apply,
+                  args=(lambda current: edits.remove_region(current, facing.id, region.id),), kwargs={"rerun": False})
+    return region
 
 
 def _grid(draft, facing, region, prefix):
+    apply = partial(_apply, facing_id=facing.id)
     with st.expander("Create a grid", expanded=not region.slot_ids):
         with st.form(f"{prefix}:grid"):
             left, right = st.columns(2)
@@ -181,30 +225,31 @@ def _grid(draft, facing, region, prefix):
             created = st.form_submit_button("Create Grid")
         if created:
             settings = dict(x=x, y=y, width=width, height=height, horizontal_gap=horizontal_gap, vertical_gap=vertical_gap)
-            _apply(lambda current: edits.create_grid(current, facing.id, region.id, rows=rows, columns=columns,
+            apply(lambda current: edits.create_grid(current, facing.id, region.id, rows=rows, columns=columns,
                 **(settings if custom else actions.grid_defaults(edits.get_facing(current, facing.id), region.id, rows, columns))), "slot")
 
 
 def _edit_box(draft, facing, region, prefix):
+    apply = partial(_apply, facing_id=facing.id)
     # Let validation explain bad references instead of crashing the controls.
     slots = tuple(slot for slot in facing.ordered_slots() if slot.id in region.slot_ids)
     if not slots:
         st.caption("No boxes in this section yet. Add a box or create a grid.")
         return
     labels = {slot.id: f"Box {slot.order}" for slot in slots}
-    selected = _choose("Box", slots, prefix, "slot", labels.get)
+    selected = _choose("Box", slots, prefix, "slot", labels.get, facing_id=facing.id)
     duplicate, delete = st.columns(2)
-    duplicate.button("Duplicate Box", key=f"{prefix}:duplicate_box", on_click=_apply,
+    duplicate.button("Duplicate Box", key=f"{prefix}:duplicate_box", on_click=apply,
                      args=(lambda current: actions.duplicate_box(current, facing.id, region.id, selected.id), "slot"),
                      kwargs={"rerun": False})
-    delete.button("Delete Box", key=f"{prefix}:remove_slot", on_click=_apply,
+    delete.button("Delete Box", key=f"{prefix}:remove_slot", on_click=apply,
                   args=(lambda current: edits.remove_slot(current, facing.id, selected.id),), kwargs={"rerun": False})
-    with st.expander("Move or resize", expanded=True):
+    with st.expander("Move or resize"):
         for row in ((("Move left", "left"), ("Move right", "right"), ("Move up", "up"), ("Move down", "down")),
                     (("Wider", "wider"), ("Narrower", "narrower"), ("Taller", "taller"), ("Shorter", "shorter"))):
             buttons = st.columns(4)
             for button, (label, action) in zip(buttons, row):
-                button.button(label, key=f"{prefix}:{selected.id}:{action}", on_click=_apply,
+                button.button(label, key=f"{prefix}:{selected.id}:{action}", on_click=apply,
                     args=(lambda current, action=action: actions.adjust_box(current, facing.id, region.id, selected.id, action),),
                     kwargs={"rerun": False})
     with st.expander("Advanced box geometry"):
@@ -219,20 +264,19 @@ def _edit_box(draft, facing, region, prefix):
             def update():
                 values = {field: st.session_state[f"{geometry_key}:{field}"] for field in ("x", "y", "width", "height", "order")}
                 target = st.session_state[f"{geometry_key}:region"]
-                _apply(lambda current: edits.update_slot(current, facing.id, selected.id, region_id=target, **values), rerun=False)
+                apply(lambda current: edits.update_slot(current, facing.id, selected.id, region_id=target, **values), rerun=False)
             st.form_submit_button("Apply box changes", on_click=update)
 
 
 def _positions(draft, facing, region, prefix):
+    apply = partial(_apply, facing_id=facing.id)
     if facing.width <= 0 or facing.height <= 0:
         st.info("Set a positive side width and height in Advanced side settings before adding boxes.")
         return
-    with st.expander("4. Boxes", expanded=True):
-        st.caption(f"Working in section: {region.name}. New boxes are added here automatically.")
-        st.button("Add Box", type="primary", key=f"{prefix}:add_box", on_click=_apply,
-                  args=(lambda current: actions.add_box(current, facing.id, region.id), "slot"), kwargs={"rerun": False})
-        _grid(draft, facing, region, prefix)
-        _edit_box(draft, facing, region, prefix)
+    st.button("Add Box", type="primary", key=f"{prefix}:add_box", on_click=apply,
+              args=(lambda current: actions.add_box(current, facing.id, region.id), "slot"), kwargs={"rerun": False})
+    _grid(draft, facing, region, prefix)
+    _edit_box(draft, facing, region, prefix)
 
 
 def _operator_svg(template, facing, *, allow_layout_errors=False):
@@ -255,52 +299,81 @@ def _operator_svg(template, facing, *, allow_layout_errors=False):
     return ET.tostring(root, encoding="unicode")
 
 
-def _preview(draft, facing):
-    st.subheader("5. Review")
-    if not draft.template.facings:
-        st.info("Add a side, then a section and boxes.")
-        return
-    validation = edits.validate_draft(draft)
-    names = {item.id: item.name for item in draft.template.facings}
-    for item in draft.template.facings:
+def _readable_issue(issue, template):
+    names = {item.id: item.name for item in template.facings}
+    for item in template.facings:
         names.update({region.id: region.name for region in item.regions})
         names.update({slot.id: f"box {slot.order}" for slot in item.slots})
-    for issue in validation.issues:
-        message = issue.message
-        for item_id in sorted(names, key=len, reverse=True):
-            message = message.replace(item_id, names[item_id])
-        for old, new in (("slot", "box"), ("region", "section"), ("facing", "side")):
-            message = re.sub(rf"\b{old}s?\b", lambda match: new + ("es" if new == "box" and match[0].lower().endswith("s") else "s" if match[0].lower().endswith("s") else ""), message, flags=re.IGNORECASE)
-        message = message.replace("presentation hint", "grouping preference")
-        (st.error if issue.severity == "error" else st.warning)(message)
+    message = issue.message
+    for item_id in sorted(names, key=len, reverse=True):
+        message = message.replace(item_id, names[item_id])
+    for old, new in (("slot", "box"), ("region", "section"), ("facing", "side")):
+        message = re.sub(rf"\b{old}s?\b", lambda match: new + ("es" if new == "box" and match[0].lower().endswith("s") else "s" if match[0].lower().endswith("s") else ""), message, flags=re.IGNORECASE)
+    return message.replace("presentation hint", "grouping preference")
+
+
+def _side_template(draft, facing):
+    # One invalid Side must not hide another Side's canvas.
+    return replace(draft.template, facings=(facing,))
+
+
+def _preview(draft, facing):
+    template = _side_template(draft, facing)
+    validation = edits.validate_draft(replace(draft, template=template))
+    spatial = {"product_overlap", "slot_bounds", "slot_region_bounds"}
+    overlaps = {sid for issue in validation.errors if issue.code == "product_overlap" for sid in issue.slot_ids}
+    outside = {sid for issue in validation.errors if issue.code in ("slot_bounds", "slot_region_bounds") for sid in issue.slot_ids}
+    if overlaps:
+        st.error(f"{len(overlaps)} boxes overlap. Drag or resize them to separate them.")
+    if outside:
+        st.error(f"{len(outside)} box{'es are' if len(outside) != 1 else ' is'} outside this side or its section (beyond its bounds).")
+    for issue in validation.errors:
+        if issue.code not in spatial:
+            st.error(_readable_issue(issue, template))
     if validation.valid:
-        st.success("Layout checks passed.")
-        if facing:
-            st.caption(f"{facing.name} | Sections: {len(facing.regions)} | Boxes: {len(facing.slots)}")
-            with st.expander("Advanced static preview"):
-                st.image(_operator_svg(draft.template, facing), width="content")
-            st.caption("Section colors and box numbers help you review the layout. Empty sections gain outlines when boxes are added.")
+        st.caption("Layout checks passed.")
+    if validation.issues:
+        with st.expander("Advanced validation details"):
+            for issue in validation.issues:
+                st.caption(f"{issue.code}: {issue.message}")
+    st.caption(f"{facing.name} | Sections: {len(facing.regions)} | Boxes: {len(facing.slots)}")
+    try:
+        svg = _operator_svg(template, facing, allow_layout_errors=True)
+    except ValueError:
+        st.caption("Use Advanced settings to repair invalid dimensions or section references before canvas editing.")
     else:
-        st.caption("Fix the layout checks using the canvas, move/resize buttons or Advanced settings.")
-    if facing:
-        try:
-            svg = _operator_svg(draft.template, facing, allow_layout_errors=True)
-        except ValueError:
-            st.caption("Use Advanced settings to repair invalid dimensions or section references before canvas editing.")
-        else:
-            st.caption("Click a box to select it. Drag to move; drag its handles to resize. Duplicate and Delete act on the selected box.")
-            render_canvas(svg, draft, facing, draft_key=DRAFT_KEY, selection_key=SELECTION_KEY)
+        render_canvas(svg, draft, facing, draft_key=DRAFT_KEY, selection_key=side_selection_key(facing.id))
+        st.caption("Click a box to select. Drag to move; use its handles to resize.")
+
+
+def _review(draft):
+    validation = edits.validate_draft(draft)
+    if validation.valid:
+        st.caption("All sides pass layout checks.")
+    elif draft.template.facings:
+        st.warning(f"{len(validation.errors)} layout checks need attention. Check the affected Side cards.")
+    with st.expander("Review All Sides"):
+        for facing in draft.template.ordered_facings():
+            st.markdown(f"**{facing.name}**")
+            try:
+                st.image(_operator_svg(_side_template(draft, facing), facing), width="content")
+            except ValueError:
+                st.caption("Resolve this side's layout checks to show its static review.")
+        for issue in validation.issues:
+            if issue.facing_id is None or issue.code.startswith("duplicate_"):
+                st.caption(_readable_issue(issue, draft.template))
     def done():
         st.session_state[MODE_KEY] = "viewer"
     st.button("Done", type="primary", disabled=not validation.valid, on_click=done)
     st.caption("Done returns to Templates. Your draft stays in this session; it is not permanently saved.")
 
 
-def _draft_details(draft, facing):
+def _draft_details(draft):
     with st.expander("Advanced draft details"):
         st.write({"Template ID": draft.template.id, "Unit": draft.template.unit.value,
                   "Revision": draft.revision, "Validation errors": len(edits.validate_draft(draft).errors)})
-        if facing:
+        for facing in draft.template.ordered_facings():
+            st.caption(facing.name)
             st.dataframe([{"ID": slot.id, "Order": slot.order, "X": slot.x, "Y": slot.y,
                            "Width": slot.width, "Height": slot.height,
                            "Sections": ", ".join(region.name for region in facing.regions_for_slot(slot.id))}
@@ -335,14 +408,22 @@ def render():
         st.info("Layout sketch: sizes and proportions are not approved physical measurements.")
     else:
         st.info("Measurements are in inches. Use the actual side dimensions in Advanced side settings.")
-    prefix = f"builder:{template.id}:{draft.revision}"
-    controls, preview = st.columns([1.1, 1])
-    with controls:
-        facing = _facings(draft, prefix)
-        if facing:
-            region = _regions(draft, facing, f"{prefix}:{facing.id}")
-            if region:
-                _positions(draft, facing, region, f"{prefix}:{facing.id}")
-    with preview:
-        _preview(draft, facing)
-    _draft_details(draft, facing)
+    _add_side(draft)
+    for facing in template.ordered_facings():
+        # Changes to another Side do not discard this card's pending form values.
+        stamp = sha256(repr(facing).encode("utf-8")).hexdigest()[:12]
+        prefix = f"builder:{template.id}:{facing.id}:{stamp}"
+        with st.container(border=True, key=f"side_workspace:{facing.id}"):
+            st.subheader(facing.name)
+            canvas, controls = st.columns([1, 1.1])
+            with controls:
+                region = _regions(draft, facing, prefix)
+                if region:
+                    _positions(draft, facing, region, f"{prefix}:{region.id}")
+            with canvas:
+                _preview(draft, facing)
+            _side_options(facing, prefix)
+    if not template.facings:
+        st.info("Add a side, then a section and boxes.")
+    _review(draft)
+    _draft_details(draft)

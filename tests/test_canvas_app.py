@@ -5,7 +5,7 @@ from pathlib import Path
 from streamlit.testing.v1 import AppTest
 
 from app.pages._canvas_events import consume_event, CanvasTransform
-from app.pages.template_builder import DRAFT_KEY, MODE_KEY, SELECTION_KEY
+from app.pages.template_builder import DRAFT_KEY, MODE_KEY, side_selection_key
 from app.templates import draft as edits
 from app.templates.preview import geometry_svg
 
@@ -24,7 +24,8 @@ class CanvasAppTests(unittest.TestCase):
         app.session_state['active_workflow'] = 'Templates'
         app.session_state[MODE_KEY] = 'builder'
         app.session_state[DRAFT_KEY] = d
-        app.session_state[SELECTION_KEY] = dict(facing=fid, region=face.regions[0].id, slot=face.slots[0].id)
+        selection_key = side_selection_key(fid)
+        app.session_state[selection_key] = dict(facing=fid, region=face.regions[0].id, slot=face.slots[0].id)
         app.run()
         self.assertFalse(app.exception)
         self.assertEqual(len(app.get('component_instance')), 1)
@@ -32,13 +33,14 @@ class CanvasAppTests(unittest.TestCase):
         app.session_state[key] = dict(event_id='select:2', kind='select', template_id=d.template.id,
             facing_id=fid, revision=d.revision, slot_id=face.slots[1].id)
         state = app.session_state.filtered_state
-        consume_event(state, component_key=key, draft_key=DRAFT_KEY, selection_key=SELECTION_KEY,
+        consume_event(state, component_key=key, draft_key=DRAFT_KEY, selection_key=selection_key,
                       facing_id=fid, transform=CanvasTransform.from_svg(geometry_svg(d.template, fid), face))
         for name, value in state.items():
             if name.startswith(('template_builder:', 'template_canvas:')):
                 app.session_state[name] = value
         app.run()
-        self.assertEqual(next(w for w in app.selectbox if w.label == 'Section').value, face.regions[1].id)
+        self.assertEqual(app.session_state[selection_key]['region'], face.regions[1].id)
+        self.assertEqual(next(w for w in app.button if w.label == 'Bonus').proto.type, 'primary')
         self.assertEqual(next(w for w in app.selectbox if w.label == 'Box').value, face.slots[1].id)
         for label in ('Move down', 'Duplicate Box', 'Delete Box'):
             next(b for b in app.button if b.label == label).click().run()

@@ -8,17 +8,24 @@ The default is an unmeasured layout sketch. Built-in definitions remain in the
 read-only catalog. Starting a new draft replaces only the current session draft;
 returning to the catalog without starting it leaves the existing draft intact.
 
-- **Sides:** add by name. Sketch sides default to 1 × 1 normalized units internally.
+- **Sides:** add by name. Each Side stays visible in its own bordered workspace,
+  with its name, compact live canvas and local controls. There is no global Side
+  selector. Sketch sides default to 1 × 1 normalized units internally.
   Rename/delete are ordinary Side options; dimensions/order live under Advanced
   side settings. Inches still require positive measured dimensions there.
-- **Sections:** add with only a name. Defaults are Product role and no presentation
+- **Sections:** use **Add a section** inside the intended Side card. Select a
+  Section using its visible button; the selected button is highlighted. Each Side
+  remembers its own Section/Box selection. Defaults are Product role and no presentation
   hint. Role, hint and manual order remain under Advanced section settings.
 - **Boxes:** Add Box places a box automatically in the selected section. Create
   Grid normally asks only for rows/columns. Boxes are selected within the current
   section. Duplicate/Delete and Move left/right/up/down or Wider/Narrower/Taller/
   Shorter buttons handle basic arrangement without coordinate entry.
-- **Review / Done:** section colors, box numbers and validation are visible beside
-  the workspace. Done returns to the catalog and retains the session draft; it
+- **Duplicate Side:** expand this action in the Side card, confirm or change the
+  proposed name, then create an independent copy with fresh hierarchy IDs.
+- **Review / Done:** section colors, box numbers and validation are visible inside
+  each workspace. **Review All Sides** is a collapsed static review lower on the
+  page. Done returns to the catalog and retains the session draft; it
   does not permanently save or publish anything.
 
 The normal name → side → section → 3 × 4 grid flow needs no Advanced controls.
@@ -93,13 +100,13 @@ facing, and can be corrected through the same forms. Required text/unsupported
 enum values and malformed grid inputs are rejected before an operation commits.
 
 Messages use side/section names and box numbers instead of long IDs.
-The selected Side uses a compact interactive SVG canvas. Click a box to select,
+Each Side uses a compact interactive SVG canvas. Click a box to select,
 drag to move, or drag its handles to resize. Selection synchronizes the Section
 and Box controls; Duplicate/Delete act on the selected box. Spatial validation
 errors remain visible and editable. Structural errors require fallback controls.
 Empty sections gain envelopes as boxes are added. Advanced details expose stable
 IDs and coordinates, and a collapsed static preview remains available for valid
-drafts. See [interactive_canvas.md](interactive_canvas.md) for event handling,
+drafts under Review All Sides. See [interactive_canvas.md](interactive_canvas.md) for event handling,
 coordinate conversion and limitations. No production output is generated.
 
 Deletion actions use callbacks so the draft changes before dependent widgets

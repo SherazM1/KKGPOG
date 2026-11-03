@@ -113,5 +113,5 @@ class OperatorUXTests(unittest.TestCase):
         self.assertEqual([len(region.slot_ids) for region in face.regions], [1, 1])
         box_options = next(item for item in app.selectbox if item.label == "Box").options
         self.assertEqual(box_options, ["Box 2"])
-        next(item for item in app.selectbox if item.label == "Section").select(first_section.id).run()
+        self.click(app, first_section.name)
         self.assertEqual(next(item for item in app.selectbox if item.label == "Box").options, ["Box 1"])

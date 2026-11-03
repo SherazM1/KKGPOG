@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from collections.abc import Mapping
+from copy import deepcopy
 from math import isfinite
 from uuid import uuid4
 
@@ -86,6 +88,55 @@ def update_facing(draft, facing_id, *, name, width, height, order):
     return _changed(draft, replace(facing, name=_name(name, "facing name"),
                                   width=_number(width, "Facing width"),
                                   height=_number(height, "Facing height"), order=order))
+
+
+def duplicate_facing(draft, facing_id, name):
+    """Copy one hierarchy into this session draft, remapping every owned ID."""
+    source = get_facing(draft, facing_id)
+    name = _name(name, "side name")
+    next_id = draft.next_id
+    used = {item.id for face in draft.template.facings for item in (face, *face.regions, *face.slots)}
+
+    def allocate(kind):
+        nonlocal next_id
+        while True:
+            value = f"{draft.template.id}.{kind}{next_id:04d}"
+            next_id += 1
+            if value not in used:
+                used.add(value)
+                return value
+
+    def copied(value):
+        # MappingProxyType deliberately cannot be deepcopy'd; rebuild mappings
+        # recursively so even nested user metadata cannot couple the two sides.
+        if isinstance(value, Mapping):
+            return {key: copied(item) for key, item in value.items()}
+        if isinstance(value, tuple):
+            return tuple(copied(item) for item in value)
+        if isinstance(value, list):
+            return [copied(item) for item in value]
+        return deepcopy(value)
+
+    face_id = allocate("facing")
+    region_ids = {region.id: allocate("region") for region in source.regions}
+    slot_ids = {slot.id: allocate("slot") for slot in source.slots}
+    section_ids = dict(region_ids)
+    for slot in source.slots:
+        if slot.section_id is not None and slot.section_id not in section_ids:
+            section_ids[slot.section_id] = allocate("section")
+    if any(member not in slot_ids for region in source.regions for member in region.slot_ids):
+        raise ValueError("Repair this side's missing box references before duplicating it.")
+    slots = tuple(replace(slot, id=slot_ids[slot.id], metadata=copied(slot.metadata),
+                          section_id=section_ids.get(slot.section_id)) for slot in source.slots)
+    regions = tuple(replace(region, id=region_ids[region.id],
+                            slot_ids=tuple(slot_ids[member] for member in region.slot_ids),
+                            bounds=replace(region.bounds) if region.bounds else None,
+                            metadata=copied(region.metadata)) for region in source.regions)
+    face = replace(source, id=face_id, name=name, slots=slots, regions=regions,
+                   metadata=copied(source.metadata),
+                   order=max(item.order for item in draft.template.facings) + 1)
+    return replace(draft, template=replace(draft.template, facings=(*draft.template.facings, face)),
+                   next_id=next_id, revision=draft.revision + 1)
 
 
 def remove_facing(draft, facing_id):

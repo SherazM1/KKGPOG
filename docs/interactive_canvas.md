@@ -1,6 +1,6 @@
 # Manual builder interactive canvas (Piece 4D)
 
-The builder canvas selects any box on the active Side. Selection highlights the
+Each Side workspace has its own builder canvas, which selects boxes on that Side. Selection highlights the
 box, shows its number and Section, and synchronizes the existing Section/Box
 controls. Duplicate Box and Delete Box act on that selection. Drag a box to move
 it inside the Side; drag any of eight handles to resize it. Grid cells remain
@@ -9,7 +9,7 @@ independent. Move/resize buttons and Advanced geometry remain available.
 `app/components/template_canvas/` is a local Streamlit v1 component using plain
 JavaScript and SVG, with no frontend framework, build step, CDN or added package.
 The shared SVG keeps its 560 × 520 maximum size. The static preview is collapsed
-under Advanced. The catalog viewer remains read-only.
+under Review All Sides. The catalog viewer remains read-only.
 
 ## State and conversion
 
@@ -21,8 +21,9 @@ template, grid, Section assignment or pixel-based geometry model.
 `_template_canvas.py` registers a callback before the next controls render.
 `_canvas_events.py` checks event identity and revision, translates coordinates,
 and calls the existing immutable draft update API. It writes the result to the
-same `template_builder:draft` session key. Selection uses the existing selection
-key; a widget epoch lets a canvas click override an older selectbox value.
+same `template_builder:draft` session key. Selection is namespaced per Side at
+`template_builder:selection:<facing_id>`; a widget epoch lets a canvas click
+override an older local Box selectbox value. No global Side selector is required.
 Events are consumed once and acknowledged; stale/foreign/malformed events retain
 the current draft and show a warning. The server's regenerated SVG is authoritative.
 

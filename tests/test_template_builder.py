@@ -50,10 +50,12 @@ class TemplateBuilderTests(unittest.TestCase):
         draft = app.session_state[DRAFT_KEY]
         self.assertEqual(len(draft.template.facings), 2)
         self.assertNotEqual(first.id, draft.template.facings[1].id)
-        self.field(app, "text_input", "Side name").set_value("Back side")
-        self.field(app, "number_input", "Side width").set_value(2.0)
-        self.field(app, "number_input", "Side order").set_value(7)
-        self.click(app, "Apply side changes")
+        # Both workspaces are visible; explicitly edit the second card.
+        [item for item in app.text_input if item.label == "Side name"][1].set_value("Back side")
+        [item for item in app.number_input if item.label == "Side width"][1].set_value(2.0)
+        [item for item in app.number_input if item.label == "Side order"][1].set_value(7)
+        [item for item in app.button if item.label == "Apply side changes"][1].click().run()
+        self.clean(app)
         edited = app.session_state[DRAFT_KEY].template.facings[1]
         self.assertEqual((edited.name, edited.width, edited.order), ("Back side", 2.0, 7))
 
@@ -82,7 +84,8 @@ class TemplateBuilderTests(unittest.TestCase):
         self.click(app, "Add Section")
         facing = app.session_state[DRAFT_KEY].template.facings[0]
         target = facing.regions[-1]
-        self.field(app, "selectbox", "Section").select(facing.regions[0].id).run()
+        self.click(app, facing.regions[0].name)
+        self.field(app, "selectbox", "Box").select(before.slots[-1].id).run()
         next(item for item in app.number_input if item.key and item.key.endswith(":edit_slot:x")).set_value(.1)
         next(item for item in app.number_input if item.key and item.key.endswith(":edit_slot:y")).set_value(.7)
         next(item for item in app.number_input if item.key and item.key.endswith(":edit_slot:width")).set_value(.1)
@@ -143,7 +146,7 @@ class TemplateBuilderTests(unittest.TestCase):
         self.click(app, "Add Section")
         facing = app.session_state[DRAFT_KEY].template.facings[0]
         for region in facing.regions:
-            self.field(app, "selectbox", "Section").select(region.id).run()
+            self.click(app, region.name)
             self.clean(app)
             selected = next(item.value for item in app.selectbox if item.key and item.key.endswith(":edit_region:hint"))
             self.assertEqual(selected, region.presentation_hint)
