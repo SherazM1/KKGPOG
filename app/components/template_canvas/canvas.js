@@ -1,85 +1,95 @@
-/* Temporary pointer feedback only; every committed scene comes from TemplateDraft. */
+/* Pointer feedback only. Every committed scene comes from TemplateDraft. */
 (() => {
-  const host = document.getElementById('canvas'), status = document.getElementById('status');
-  const client = Math.random().toString(36).slice(2); let sequence = 0;
-  let args, svg, selected, gesture, pending, handles;
-  const post = (type, extra = {}) => parent.postMessage({isStreamlitMessage:true, type, ...extra}, '*');
-  const rect = node => Object.fromEntries(['x','y','width','height'].map(k => [k, Number(node.getAttribute(k))]));
-  const point = event => new DOMPoint(event.clientX, event.clientY).matrixTransform(svg.getScreenCTM().inverse());
-  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  function highlight(id) {
-    selected = id;
-    svg.querySelectorAll('[data-slot-id]').forEach(n => n.classList.toggle('selected', n.dataset.slotId === id));
-    if (handles) handles.remove();
-    handles = document.createElementNS(svg.namespaceURI, 'g'); svg.append(handles);
-    const node = [...svg.querySelectorAll('[data-slot-id]')].find(n => n.dataset.slotId === id);
-    if (!node) {status.textContent = 'Click a box to select it. Drag to move; use handles to resize.'; return;}
-    const box = args.boxes[id], r = rect(node);
-    status.textContent = `Box ${box.number} · Section: ${box.sections.join(', ')}${pending ? ' · Updating…' : ''}`;
-    for (const [direction, x, y] of [['nw',0,0],['n',.5,0],['ne',1,0],['e',1,.5],['se',1,1],['s',.5,1],['sw',0,1],['w',0,.5]]) {
-      const h = document.createElementNS(svg.namespaceURI, 'rect');
-      Object.entries({x:r.x+x*r.width-5,y:r.y+y*r.height-5,width:10,height:10,class:'handle','data-handle':direction}).forEach(([k,v]) => h.setAttribute(k,v));
-      h.style.cursor = `${direction}-resize`; handles.append(h);
+  const host=document.getElementById('canvas'), status=document.getElementById('status');
+  const mode=document.getElementById('selection-mode');
+  const client=Math.random().toString(36).slice(2);let sequence=0;
+  let args,svg,gesture,pending,lasso,selectMode=false,selected=new Set();
+  const post=(type,extra={})=>parent.postMessage({isStreamlitMessage:true,type,...extra},'*');
+  const rect=n=>Object.fromEntries(['x','y','width','height'].map(k=>[k,Number(n.getAttribute(k))]));
+  const point=e=>new DOMPoint(e.clientX,e.clientY).matrixTransform(svg.getScreenCTM().inverse());
+  const nodes=()=>[...svg.querySelectorAll('[data-slot-id]')];
+  const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+  function highlight() {
+    nodes().forEach(n=>{const active=selected.has(n.dataset.slotId);n.classList.toggle('selected',active);n.setAttribute('aria-pressed',String(active));});
+    svg.querySelectorAll('[data-region-id]').forEach(n=>n.classList.toggle('active-section',n.dataset.regionId===args.active_section_id));
+    const ids=[...selected];
+    if(ids.length===1){const b=args.boxes[ids[0]];status.textContent=`Box ${b.number} ? Section: ${b.sections.join(', ')}`;}
+    else status.textContent=ids.length?`${ids.length} boxes selected. Drag a selected box to move the group.`:'Drag empty space to select boxes, or use Select boxes. Box size is fixed.';
+    if(pending)status.textContent+=' ? Updating?';
+    mode.disabled=!!pending;
+  }
+  mode.addEventListener('click',()=>{selectMode=!selectMode;mode.setAttribute('aria-pressed',String(selectMode));mode.textContent=selectMode?'Move boxes':'Select boxes';});
+  function emit(kind,extra={}) {
+    pending=`${client}:${++sequence}`;
+    post('streamlit:setComponentValue',{dataType:'json',value:{event_id:pending,kind,
+      template_id:args.template_id,facing_id:args.facing_id,revision:args.revision,...extra}});
+    highlight();
+  }
+  function paint(node,r) {
+    Object.entries(r).forEach(([k,v])=>node.setAttribute(k,v));
+    const label=node.nextElementSibling;
+    if(label?.tagName.toLowerCase()==='text'){label.setAttribute('x',r.x+r.width/2);label.setAttribute('y',r.y+r.height/2);}
+  }
+  function down(e) {
+    if(pending||gesture||e.button!==0)return;
+    const node=e.target.closest('[data-slot-id]'),p=point(e);
+    e.preventDefault();
+    if(!node||selectMode||e.shiftKey){
+      gesture={kind:'lasso',start:p,pointer:e.pointerId,before:new Set(selected),base:e.shiftKey?new Set(selected):new Set()};
+      lasso=document.createElementNS(svg.namespaceURI,'rect');lasso.setAttribute('class','selection-rectangle');svg.append(lasso);
+    }else{
+      if(e.ctrlKey||e.metaKey){
+        if(selected.has(node.dataset.slotId))selected.delete(node.dataset.slotId);else selected.add(node.dataset.slotId);
+        emit('select_many',{slot_ids:[...selected]});return;
+      }
+      if(!selected.has(node.dataset.slotId))selected=new Set([node.dataset.slotId]);
+      gesture={kind:'move',start:p,pointer:e.pointerId,before:new Set(selected),originals:nodes().filter(n=>selected.has(n.dataset.slotId)).map(n=>({node:n,r:rect(n)})),dx:0,dy:0};
     }
+    highlight();svg.setPointerCapture(e.pointerId);
   }
-  function emit(kind, id, rectangle) {
-    pending = `${client}:${++sequence}`;
-    post('streamlit:setComponentValue', {dataType:'json',value:{event_id:pending,kind,slot_id:id,
-      template_id:args.template_id,facing_id:args.facing_id,revision:args.revision,...(rectangle ? {rect:rectangle} : {})}});
-    highlight(id);
-  }
-  function paint(node, r) {
-    Object.entries(r).forEach(([k,v]) => node.setAttribute(k,v));
-    const label = node.nextElementSibling;
-    if (label && label.tagName.toLowerCase() === 'text') {label.setAttribute('x',r.x+r.width/2);label.setAttribute('y',r.y+r.height/2);}
-    highlight(node.dataset.slotId);
-  }
-  function down(event) {
-    if (pending || gesture || event.button !== 0) return;
-    const handle = event.target.closest('[data-handle]');
-    const node = handle ? [...svg.querySelectorAll('[data-slot-id]')].find(n => n.dataset.slotId === selected) : event.target.closest('[data-slot-id]');
-    if (!node) return;
-    event.preventDefault(); const p = point(event);
-    gesture = {node, id:node.dataset.slotId, start:p, original:rect(node), direction:handle?.dataset.handle, pointer:event.pointerId};
-    highlight(gesture.id); svg.setPointerCapture(event.pointerId);
-  }
-  function move(event) {
-    if (!gesture || gesture.pointer !== event.pointerId) return;
-    const p = point(event), dx = p.x-gesture.start.x, dy = p.y-gesture.start.y;
-    const r = {...gesture.original}, b = rect(svg.querySelector('[data-kind="facing"]')), d = gesture.direction;
-    if (!d) {r.x=clamp(r.x+dx,b.x,b.x+Math.max(0,b.width-r.width));r.y=clamp(r.y+dy,b.y,b.y+Math.max(0,b.height-r.height));}
-    else {
-      const min = Math.min(4, b.width/100, b.height/100);
-      if (d.includes('e')) r.width=Math.max(min,r.width+dx);
-      if (d.includes('s')) r.height=Math.max(min,r.height+dy);
-      if (d.includes('w')) {r.x=Math.min(r.x+dx,r.x+r.width-min);r.width=gesture.original.x+gesture.original.width-r.x;}
-      if (d.includes('n')) {r.y=Math.min(r.y+dy,r.y+r.height-min);r.height=gesture.original.y+gesture.original.height-r.y;}
+  function move(e) {
+    if(!gesture||gesture.pointer!==e.pointerId)return;
+    const viewport=host.getBoundingClientRect();
+    if(e.clientY>viewport.bottom-20)host.scrollTop+=18;else if(e.clientY<viewport.top+20)host.scrollTop-=18;
+    if(e.clientX>viewport.right-20)host.scrollLeft+=18;else if(e.clientX<viewport.left+20)host.scrollLeft-=18;
+    const p=point(e),g=gesture;
+    if(g.kind==='lasso'){
+      const r={x:Math.min(p.x,g.start.x),y:Math.min(p.y,g.start.y),width:Math.abs(p.x-g.start.x),height:Math.abs(p.y-g.start.y)};
+      Object.entries(r).forEach(([k,v])=>lasso.setAttribute(k,v));selected=new Set(g.base);
+      nodes().forEach(n=>{const b=rect(n);if(b.x>=r.x&&b.y>=r.y&&b.x+b.width<=r.x+r.width&&b.y+b.height<=r.y+r.height)selected.add(n.dataset.slotId);});
+    }else{
+      const b=rect(svg.querySelector('[data-kind="facing"]'));
+      const x=Math.min(...g.originals.map(o=>o.r.x)),y=Math.min(...g.originals.map(o=>o.r.y));
+      const right=Math.max(...g.originals.map(o=>o.r.x+o.r.width)),bottom=Math.max(...g.originals.map(o=>o.r.y+o.r.height));
+      g.dx=clamp(p.x-g.start.x,b.x-x,b.x+b.width-right);g.dy=clamp(p.y-g.start.y,b.y-y,b.y+b.height-bottom);
+      g.originals.forEach(o=>paint(o.node,{...o.r,x:o.r.x+g.dx,y:o.r.y+g.dy}));
     }
-    paint(gesture.node,r);
+    highlight();
   }
-  function finish(event, cancel=false) {
-    if (!gesture || gesture.pointer !== event.pointerId) return;
-    const g=gesture; gesture=null;
-    if (cancel) {paint(g.node,g.original);return;}
-    const r=rect(g.node), changed=Object.keys(r).some(k=>Math.abs(r[k]-g.original[k])>0.001);
-    emit(changed ? (g.direction ? 'resize' : 'drag') : 'select',g.id,changed ? r : undefined);
+  function finish(e,cancel=false) {
+    if(!gesture||gesture.pointer!==e.pointerId)return;
+    const g=gesture;gesture=null;if(lasso){lasso.remove();lasso=null;}
+    if(cancel){selected=g.before;if(g.originals)g.originals.forEach(o=>paint(o.node,o.r));highlight();return;}
+    if(g.kind==='move'&&(Math.abs(g.dx)>0.001||Math.abs(g.dy)>0.001))emit('move_many',{slot_ids:[...selected],delta:{x:g.dx,y:g.dy}});
+    else emit('select_many',{slot_ids:[...selected]});
   }
-  window.addEventListener('message', event => {
-    if (event.source !== parent || event.data.type !== 'streamlit:render') return;
-    const next=event.data.args;
-    if (pending && next.ack_id !== pending) return;
-    pending=null;gesture=null;args=next;
+  window.addEventListener('message',e=>{
+    if(e.source!==parent||e.data?.type!=='streamlit:render')return;
+    const next=e.data.args;if(pending&&next.ack_id!==pending)return;
+    const scroll={x:host.scrollLeft,y:host.scrollTop};pending=null;gesture=null;args=next;
     const parsed=new DOMParser().parseFromString(args.svg,'image/svg+xml');
-    host.replaceChildren(document.importNode(parsed.documentElement,true));svg=host.querySelector('svg');handles=null;
-    svg.querySelectorAll('[data-slot-id]').forEach(node => {
-      node.setAttribute('tabindex','0');node.setAttribute('role','button');
-      node.setAttribute('aria-label',`Box ${args.boxes[node.dataset.slotId].number}; ${args.boxes[node.dataset.slotId].sections.join(', ')}`);
-      node.addEventListener('keydown', e=> {if (!pending && ['Enter',' '].includes(e.key)){e.preventDefault();emit('select',node.dataset.slotId);}});
+    host.replaceChildren(document.importNode(parsed.documentElement,true));svg=host.querySelector('svg');
+    svg.style.minWidth=Math.max(600,Number(svg.getAttribute('width'))*.75)+'px';
+    selected=new Set((args.selected_box_ids||[]).filter(id=>args.boxes[id]));
+    nodes().forEach(n=>{
+      const b=args.boxes[n.dataset.slotId];n.setAttribute('tabindex','0');n.setAttribute('role','button');
+      n.setAttribute('aria-label',`Box ${b.number}; ${b.sections.join(', ')}`);
+      n.addEventListener('keydown',event=>{if(!pending&&['Enter',' '].includes(event.key)){event.preventDefault();selected=new Set([n.dataset.slotId]);emit('select_many',{slot_ids:[...selected]});}});
     });
     svg.addEventListener('pointerdown',down);svg.addEventListener('pointermove',move);
     svg.addEventListener('pointerup',e=>finish(e));svg.addEventListener('pointercancel',e=>finish(e,true));
-    highlight(args.selected_box_id);
-    requestAnimationFrame(()=>post('streamlit:setFrameHeight',{height:Math.ceil(document.body.getBoundingClientRect().height)+4}));
+    svg.addEventListener('keydown',e=>{if(e.key==='Escape'&&gesture)finish({pointerId:gesture.pointer},true);});
+    highlight();requestAnimationFrame(()=>{host.scrollTop=scroll.y;host.scrollLeft=scroll.x;post('streamlit:setFrameHeight',{height:Math.ceil(document.body.getBoundingClientRect().height)+4});});
   });
   new ResizeObserver(()=>post('streamlit:setFrameHeight',{height:Math.ceil(document.body.getBoundingClientRect().height)+4})).observe(host);
   post('streamlit:componentReady',{apiVersion:1});

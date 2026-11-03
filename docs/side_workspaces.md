@@ -4,7 +4,7 @@ Every Side stays visible as a bordered workspace with a heading, its own compact
 interactive canvas, local Section buttons and Box controls. **Add a section**
 opens a small form inside that Side's context. The selected Section is highlighted
 and named. **Add Box**, **Create Grid**, **Duplicate Box**, **Delete Box**, fallback
-movement/resize buttons and Advanced geometry all target that Side's selection.
+movement buttons and technical Advanced geometry all target that Side's selection.
 There are no global Side or Section selectors. Side options contain rename,
 dimensions, order and deletion. Role, hints, membership and raw geometry remain
 under Advanced. IDs remain inspectable under Advanced draft details.
@@ -37,7 +37,7 @@ ID reference. Explicit hierarchy references are remapped. Invalid missing-box
 references reject duplication without changing the original draft. Positive
 geometry and layout validation retain their existing behavior.
 
-The original immutable hierarchy remains intact when the copy is moved, resized,
+The original immutable hierarchy remains intact when the copy is moved,
 renamed, or deleted. There is no persistence, production rendering integration or
 catalog-template cloning. Built-in templates remain read-only.
 
@@ -62,9 +62,9 @@ Then use the existing Playwright/Chromium installation:
 ```
 
 This creates a fresh browser session, builds a 3 × 4 grid, duplicates the Side,
-checks ID/geometry independence, selects/drags/resizes boxes across both canvases,
-checks eight handles and overlap recovery, and verifies Side-local Sections and
-compact sizing. It never invokes production output or saves a draft.
+checks fixed-size geometry, rectangle selection, group dragging and bulk deletion
+on a 50-box irregular Side. It also verifies Section copying/confirmed deletion,
+Side-copy independence and contained sizing. See [direct_canvas_builder.md](direct_canvas_builder.md). It never invokes production output or saves a draft.
 
 After operator testing, the next smallest UI pass is undo/redo for manual builder
 actions. It is not part of Piece 4E.

@@ -256,6 +256,62 @@ def remove_slot(draft, facing_id, slot_id):
                                   )) for region in facing.regions)))
 
 
+def remove_slots(draft, facing_id, slot_ids):
+    """Atomic bulk deletion, including all membership references."""
+    facing = get_facing(draft, facing_id)
+    selected = set(slot_ids)
+    if not selected <= {slot.id for slot in facing.slots}:
+        raise ValueError("Some selected boxes are no longer on this side.")
+    if not selected:
+        return draft
+    return _changed(draft, replace(facing,
+        slots=tuple(slot for slot in facing.slots if slot.id not in selected),
+        regions=tuple(replace(region, slot_ids=tuple(sid for sid in region.slot_ids if sid not in selected))
+                      for region in facing.regions)))
+
+
+def duplicate_region(draft, facing_id, region_id, name, *, dx=0, dy=0):
+    """Copy a Region and its members, with fresh IDs and independent metadata."""
+    from copy import deepcopy
+    facing = get_facing(draft, facing_id)
+    source = _region(facing, region_id)
+    name = _name(name, "section name")
+    dx, dy = _number(dx, "Horizontal offset"), _number(dy, "Vertical offset")
+    members = facing.slots_for_region(region_id)
+    counter = draft.next_id
+
+    def allocate(kind):
+        nonlocal counter
+        value = f"{draft.template.id}.{kind}{counter:04d}"
+        counter += 1
+        return value
+
+    def copied(value):
+        if isinstance(value, Mapping):
+            return {key: copied(item) for key, item in value.items()}
+        if isinstance(value, tuple):
+            return tuple(copied(item) for item in value)
+        if isinstance(value, list):
+            return [copied(item) for item in value]
+        return deepcopy(value)
+
+    new_id = allocate("region")
+    groups = {source.id: new_id}
+    slots = []
+    first_order = max((slot.order for slot in facing.slots), default=0) + 1
+    for index, slot in enumerate(members):
+        if slot.section_id is not None and slot.section_id not in groups:
+            groups[slot.section_id] = allocate("section")
+        slots.append(replace(slot, id=allocate("slot"), x=slot.x+dx, y=slot.y+dy,
+            order=first_order+index, section_id=groups.get(slot.section_id), metadata=copied(slot.metadata)))
+    bounds = replace(source.bounds, x=source.bounds.x+dx, y=source.bounds.y+dy) if source.bounds else None
+    region = replace(source, id=new_id, name=name, order=source.order+1,
+                     slot_ids=tuple(slot.id for slot in slots), bounds=bounds, metadata=copied(source.metadata))
+    regions = tuple(replace(item, order=item.order+1) if item.order > source.order else item for item in facing.regions)
+    face = replace(facing, regions=(*regions, region), slots=(*facing.slots, *slots))
+    return _changed(draft, face, counter-draft.next_id)
+
+
 def reset_draft(draft):
     """Clear layout, keep basics, and do not recycle previously issued IDs."""
     return replace(draft, template=replace(draft.template, facings=()), revision=draft.revision + 1)

@@ -92,11 +92,11 @@ class OperatorUXTests(unittest.TestCase):
         self.assertEqual(len(face.slots), 2)
         selected = face.slots[-1]
         self.click(app, "Move down")
-        self.click(app, "Wider")
+        self.assertFalse(any(b.label in ('Wider','Narrower','Taller','Shorter') for b in app.button))
         changed = app.session_state[DRAFT_KEY].template.facings[0].slots[-1]
         self.assertEqual((changed.id, changed.order), (selected.id, selected.order))
         self.assertGreater(changed.y, selected.y)
-        self.assertGreater(changed.width, selected.width)
+        self.assertEqual((changed.width,changed.height),(selected.width,selected.height))
         self.assertEqual(app.session_state[DRAFT_KEY].template.facings[0].slots[0], first)
         self.click(app, "Delete Box")
         self.assertEqual(len(app.session_state[DRAFT_KEY].template.facings[0].slots), 1)

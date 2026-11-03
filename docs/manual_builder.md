@@ -17,10 +17,15 @@ returning to the catalog without starting it leaves the existing draft intact.
   Section using its visible button; the selected button is highlighted. Each Side
   remembers its own Section/Box selection. Defaults are Product role and no presentation
   hint. Role, hint and manual order remain under Advanced section settings.
-- **Boxes:** Add Box places a box automatically in the selected section. Create
-  Grid normally asks only for rows/columns. Boxes are selected within the current
-  section. Duplicate/Delete and Move left/right/up/down or Wider/Narrower/Taller/
-  Shorter buttons handle basic arrangement without coordinate entry.
+- **Boxes:** Add Box creates one fixed-size box automatically. Create Grid asks
+  only for Rows and Columns and uses the same fixed size and spacing. Drag boxes
+  directly; use Select boxes or drag empty space for rectangle selection. Drag a
+  selected box to move the group, or use Delete Selected to remove the group.
+  There are no normal resize handles or resize buttons.
+- **Section workspaces:** new Sections appear below earlier ones, with their names
+  and boundaries on the canvas. Workspace growth shifts later Sections downward
+  without resizing boxes. Duplicate Section copies a whole arrangement below
+  its source; Delete Section requires confirmation.
 - **Duplicate Side:** expand this action in the Side card, confirm or change the
   proposed name, then create an independent copy with fresh hierarchy IDs.
 - **Review / Done:** section colors, box numbers and validation are visible inside
@@ -37,11 +42,11 @@ Advanced template settings contain family/version/units. Advanced side settings
 contain physical dimensions and ordering. Advanced section settings contain roles,
 presentation hints and ordering. Advanced grid settings contain X/Y, total size
 and gaps; check **Use custom grid settings** to apply them instead of automatic
-sizing. Advanced box geometry contains X/Y, width/height, order and manual section
-assignment. IDs and reset/clear actions are under Advanced draft details.
+sizing. Advanced box controls contain technical compatibility geometry, order and manual
+section assignment. These fields are for legacy repair, not normal box sizing. IDs and reset/clear actions are under Advanced draft details.
 
 New boxes always join the selected section. Creation order is preserved through
-moves/resizes to avoid silently renumbering boxes. Manual ordering stays Advanced.
+moves to avoid silently renumbering boxes. Manual ordering stays Advanced.
 
 The unit is fixed at creation. Choosing another unit requires a new draft; there
 is no relabeling or silent conversion of existing measurements. A physical draft
@@ -100,11 +105,11 @@ facing, and can be corrected through the same forms. Required text/unsupported
 enum values and malformed grid inputs are rejected before an operation commits.
 
 Messages use side/section names and box numbers instead of long IDs.
-Each Side uses a compact interactive SVG canvas. Click a box to select,
-drag to move, or drag its handles to resize. Selection synchronizes the Section
+Each Side uses a contained, scrollable interactive SVG canvas. Click a box to select,
+drag to move, or drag a selection rectangle around many boxes. Selection synchronizes the Section
 and Box controls; Duplicate/Delete act on the selected box. Spatial validation
 errors remain visible and editable. Structural errors require fallback controls.
-Empty sections gain envelopes as boxes are added. Advanced details expose stable
+Sections show named workspace bands even when empty. Advanced details expose stable
 IDs and coordinates, and a collapsed static preview remains available for valid
 drafts under Review All Sides. See [interactive_canvas.md](interactive_canvas.md) for event handling,
 coordinate conversion and limitations. No production output is generated.
@@ -122,3 +127,6 @@ The existing production renderers and built-in geometry definitions are isolated
 
 The next small interaction pass can add undo/redo for manual geometry edits.
 Production integration and durable persistence remain separate work.
+
+See [direct_canvas_builder.md](direct_canvas_builder.md) for fixed sizing, automatic
+placement, bulk actions, measured-side limits and the complex-side browser check.

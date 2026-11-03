@@ -22,11 +22,12 @@ def render_canvas(svg, draft, facing, *, draft_key, selection_key):
 
     def changed():
         consume_event(st.session_state, component_key=key, draft_key=draft_key,
-                      selection_key=selection_key, facing_id=facing.id, transform=transform)
+                      selection_key=selection_key, facing_id=facing.id, transform=transform, allow_resize=False)
 
     _component(
         svg=svg, template_id=draft.template.id, facing_id=facing.id, revision=draft.revision,
         selected_box_id=selection.get("slot"), active_section_id=selection.get("region"),
+        selected_box_ids=list(selection.get('slots', (selection['slot'],) if selection.get('slot') else ())),
         boxes={slot.id: {"number": slot.order, "sections": [region.name for region in facing.regions_for_slot(slot.id)]}
                for slot in facing.slots},
         ack_id=st.session_state.get(f"{key}:ack"), default=None, key=key, on_change=changed,

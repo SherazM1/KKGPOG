@@ -56,12 +56,13 @@ class CanvasEdit:
     accepted: bool = False
     changed: bool = False
     error: str | None = None
+    slot_ids: tuple[str, ...] = ()
 
 
-def apply_event(draft, facing_id, event, transform, active_region_id=None):
+def apply_event(draft, facing_id, event, transform, active_region_id=None, *, allow_resize=True):
     """Translate one gesture; never accept replacement models, IDs or membership."""
     try:
-        if not isinstance(event, Mapping) or event.get("kind") not in ("select", "drag", "resize"):
+        if not isinstance(event, Mapping) or event.get("kind") not in ("select", "drag", "resize", "select_many", "move_many"):
             raise ValueError("This canvas action is not supported.")
         if not isinstance(event.get("event_id"), str) or not event["event_id"]:
             raise ValueError("The canvas edit is missing its event ID.")
@@ -71,6 +72,34 @@ def apply_event(draft, facing_id, event, transform, active_region_id=None):
         if isinstance(revision, bool) or not isinstance(revision, int) or revision != draft.revision:
             raise ValueError("The layout changed before this edit arrived. Please try again.")
         facing = edits.get_facing(draft, facing_id)
+        if event['kind'] == 'resize' and not allow_resize:
+            raise ValueError('Box size is fixed in the canvas builder.')
+        if event['kind'] in ('select_many','move_many'):
+            ids = event.get('slot_ids')
+            if not isinstance(ids,list) or any(not isinstance(sid,str) for sid in ids) or len(ids)!=len(set(ids)):
+                raise ValueError('Select boxes using their current canvas selection.')
+            by_id = {slot.id:slot for slot in facing.slots}
+            if not set(ids) <= set(by_id):
+                raise ValueError('Some selected boxes are no longer on this side.')
+            regions = facing.regions_for_slot(ids[0]) if ids else ()
+            if ids and any(not facing.regions_for_slot(sid) for sid in ids):
+                raise ValueError('Assign selected boxes to Sections before canvas editing.')
+            region_id = (active_region_id if any(r.id==active_region_id for r in regions)
+                         else regions[0].id if regions else active_region_id)
+            updated = draft
+            if event['kind']=='move_many':
+                delta=event.get('delta')
+                if not ids or not isinstance(delta,Mapping) or set(delta)!={'x','y'}:
+                    raise ValueError('A group move needs selected boxes and a movement offset.')
+                dx,dy = _number(delta['x'])/transform.scale, _number(delta['y'])/transform.scale
+                if dx or dy:
+                    slots=tuple(replace(slot,x=_number(slot.x+dx),y=_number(slot.y+dy))
+                                if slot.id in set(ids) else slot for slot in facing.slots)
+                    face=replace(facing,slots=slots)
+                    updated=replace(draft,revision=draft.revision+1,template=replace(draft.template,facings=tuple(
+                        face if f.id==facing_id else f for f in draft.template.facings)))
+            return CanvasEdit(updated,ids[0] if ids else None,region_id,accepted=True,
+                              changed=updated is not draft,slot_ids=tuple(ids))
         slot = next((slot for slot in facing.slots if slot.id == event.get("slot_id")), None)
         if slot is None:
             raise ValueError("This box is no longer on the active side.")
@@ -98,7 +127,7 @@ def apply_event(draft, facing_id, event, transform, active_region_id=None):
         return CanvasEdit(draft, error=str(exc).strip("'"))
 
 
-def consume_event(state, *, component_key, draft_key, selection_key, facing_id, transform):
+def consume_event(state, *, component_key, draft_key, selection_key, facing_id, transform, allow_resize=True):
     """Component callback: apply once before controls render; acknowledge even rejection."""
     event = state.get(component_key)
     token = hashlib.sha256(json.dumps(event, sort_keys=True).encode("utf-8")).hexdigest()
@@ -113,12 +142,14 @@ def consume_event(state, *, component_key, draft_key, selection_key, facing_id, 
     if selection.get("facing") not in (None, facing_id):
         state[f"{component_key}:notice"] = "The active side changed. Please try your edit on the current side."
         return
-    result = apply_event(draft, facing_id, event, transform, selection.get("region"))
+    result = apply_event(draft, facing_id, event, transform, selection.get("region"), allow_resize=allow_resize)
     if result.error:
         state[f"{component_key}:notice"] = result.error
         return
     state[draft_key] = result.draft
     next_selection = dict(facing=facing_id, region=result.region_id, slot=result.slot_id)
+    if event['kind'] in ('select_many','move_many'):
+        next_selection['slots'] = result.slot_ids
     if selection != next_selection:
         state[SELECTION_EPOCH_KEY] = state.get(SELECTION_EPOCH_KEY, 0) + 1
     state[selection_key] = next_selection

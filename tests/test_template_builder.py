@@ -87,7 +87,7 @@ class TemplateBuilderTests(unittest.TestCase):
         self.click(app, facing.regions[0].name)
         self.field(app, "selectbox", "Box").select(before.slots[-1].id).run()
         next(item for item in app.number_input if item.key and item.key.endswith(":edit_slot:x")).set_value(.1)
-        next(item for item in app.number_input if item.key and item.key.endswith(":edit_slot:y")).set_value(.7)
+        next(item for item in app.number_input if item.key and item.key.endswith(":edit_slot:y")).set_value(.6)
         next(item for item in app.number_input if item.key and item.key.endswith(":edit_slot:width")).set_value(.1)
         next(item for item in app.number_input if item.key and item.key.endswith(":edit_slot:height")).set_value(.1)
         self.field(app, "number_input", "Box order").set_value(9)
@@ -97,7 +97,7 @@ class TemplateBuilderTests(unittest.TestCase):
         self.assertEqual(facing.slots[:-1], before.slots[:-1])
         selected = facing.slots[-1]
         self.assertEqual((selected.id, selected.x, selected.y, selected.width, selected.height, selected.order),
-                         (before.slots[-1].id, .1, .7, .1, .1, 9))
+                         (before.slots[-1].id, .1, .6, .1, .1, 9))
         self.assertEqual(facing.regions_for_slot(selected.id)[0].id, target.id)
         self.assertEqual(len(app.error), 0)
 
@@ -203,7 +203,7 @@ class TemplateBuilderTests(unittest.TestCase):
     def test_remove_region_and_facing_are_draft_only(self):
         app = self.layout()
         self.click(app, "Create Grid")
-        self.click(app, "Delete Section")
+        self.click(app, "Confirm Delete Section")
         facing = app.session_state[DRAFT_KEY].template.facings[0]
         self.assertEqual(facing.regions, ())
         self.assertEqual(facing.slots, ())
