@@ -1,27 +1,36 @@
 """Guided session-only geometry builder; never writes templates or invokes production."""
 import re
 from dataclasses import replace
+from datetime import datetime
 from functools import partial
 from hashlib import sha256
 from xml.etree import ElementTree as ET
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 
 from app.pages import _builder_actions as actions
 from app.pages import _direct_builder as direct
 from app.pages._direct_canvas import canvas_svg
-from app.pages._canvas_events import SELECTION_EPOCH_KEY
+from app.pages._canvas_events import ACTIVE_SIDE_KEY, SELECTION_EPOCH_KEY
 from app.pages._template_canvas import render_canvas
 
 from app.templates import draft as edits
 from app.templates.models import GeometryUnit, PresentationHint, SlotRole
 from app.templates.preview import geometry_svg
+from app.templates.print_style import (DEFAULT_HEADER_COLOR, PDF_IDENTIFIER_FIELDS,
+                                       normalize_text_fields, section_header_color,
+                                       section_preserves_spacing)
 
 
 DRAFT_KEY = "template_builder:draft"
 MODE_KEY = "template_builder:mode"
 NEW_KEY = "template_builder:new"
 SELECTION_KEY = "template_builder:selection"
+PDF_KEY = "template_builder:pdf_export"
+PDF_READY_KEY = "template_builder:pdf_ready"
+PDF_FIELDS_KEY = "template_builder:pdf_text_fields"
+PDF_LAYOUT_VERSION = 25
 
 
 def side_selection_key(facing_id):
@@ -39,8 +48,15 @@ def _apply(action, pick=None, rerun=True, *, facing_id=None):
     selection = dict(st.session_state.get(key, {}))
     if pick == "facing":
         facing_id = updated.template.facings[-1].id
+        st.session_state[ACTIVE_SIDE_KEY] = facing_id
         key = side_selection_key(facing_id)
         selection = {"facing": facing_id}
+    elif pick == "clear_boxes":
+        selection.pop("slot", None)
+        selection.pop("slots", None)
+        st.session_state[SELECTION_EPOCH_KEY] = (
+            st.session_state.get(SELECTION_EPOCH_KEY, 0) + 1
+        )
     elif pick:
         facing = edits.get_facing(updated, facing_id)
         selection[pick] = (facing.regions if pick == "region" else facing.slots)[-1].id
@@ -54,6 +70,17 @@ def _apply(action, pick=None, rerun=True, *, facing_id=None):
         selection['slots'] = tuple(sid for sid in selection['slots'] if sid in valid)
     st.session_state[DRAFT_KEY] = updated
     st.session_state[key] = selection
+    sides = updated.template.ordered_facings()
+    if not sides:
+        st.session_state.pop(ACTIVE_SIDE_KEY, None)
+    elif st.session_state.get(ACTIVE_SIDE_KEY) not in {side.id for side in sides}:
+        previous_ids = [side.id for side in before.template.ordered_facings()]
+        previous = st.session_state.get(ACTIVE_SIDE_KEY)
+        index = previous_ids.index(previous) if previous in previous_ids else 0
+        st.session_state[ACTIVE_SIDE_KEY] = sides[min(index, len(sides) - 1)].id
+    if not before.template.facings and updated.template.facings:
+        # Change the sidebar preference once, leaving its manual toggle usable.
+        st.session_state["app:sidebar_state"] = "collapsed"
     if rerun:
         st.rerun()
 
@@ -63,13 +90,32 @@ def _choose(label, items, prefix, kind, format_func, *, facing_id):
     selection = dict(st.session_state.get(key, {}))
     ids = [item.id for item in items]
     current = selection.get(kind)
-    selected = st.selectbox(label, ids, index=ids.index(current) if current in ids else 0,
-                            format_func=format_func, key=f"{prefix}:select_{kind}:{st.session_state.get(SELECTION_EPOCH_KEY, 0)}")
-    if current is not None and current != selected:
-        selection.pop('slots',None)
-    selection[kind] = selected
-    st.session_state[key] = selection
-    return next(item for item in items if item.id == selected)
+    
+    index = ids.index(current) if current in ids else 0
+    picker_key = f"{prefix}:select_{kind}:{st.session_state.get(SELECTION_EPOCH_KEY, 0)}"
+
+    def choose_box():
+        chosen = st.session_state[picker_key]
+        updated_selection = dict(st.session_state.get(key, {}))
+        updated_selection[kind] = chosen
+        if kind == "slot":
+            updated_selection["slots"] = (chosen,) if chosen else ()
+        else:
+            updated_selection.pop("slots", None)
+        st.session_state[key] = updated_selection
+
+    selected = st.selectbox(
+        label,
+        ids,
+        index=index,
+        placeholder=f"Select a {label.lower()}",
+        format_func=format_func,
+        key=picker_key,
+        on_change=choose_box,
+    )
+    # Default the editor to the first box without selecting it on the canvas.
+    # Explicit dropdown changes and canvas clicks still select a box normally.
+    return next((item for item in items if item.id == selected), None)
 
 
 def _role_hint(prefix, role=SlotRole.PRODUCT, hint=None):
@@ -96,7 +142,7 @@ def _basics():
     st.markdown("### 1. Name your template")
     if st.session_state.get(DRAFT_KEY) is not None:
         st.info("Starting a new draft replaces the current session draft.")
-    with st.form("template_builder:basics"):
+    with st.form("template_builder:basics", border=False):
         name = st.text_input("Template name", "Untitled Display")
         with st.expander("Advanced template settings"):
             family = st.text_input("Family / display type", "Custom")
@@ -113,35 +159,57 @@ def _basics():
             return
         st.session_state[NEW_KEY] = False
         st.session_state[SELECTION_KEY] = {}
+        st.session_state.pop(ACTIVE_SIDE_KEY, None)
         st.rerun()
 
 
+def _side_letter(number):
+    label = ""
+    while number:
+        number, remainder = divmod(number - 1, 26)
+        label = chr(65 + remainder) + label
+    return label
+
+
+def _next_side_name(draft):
+    used = {side.name.strip().casefold() for side in draft.template.facings}
+    number = 1
+    while f"side {_side_letter(number)}".casefold() in used:
+        number += 1
+    return f"Side {_side_letter(number)}"
+
+
 def _add_side(draft):
-    with st.expander("Add a side", expanded=not draft.template.facings):
-        with st.form(f"builder:{draft.template.id}:add_facing:{len(draft.template.facings)}"):
-            name = st.text_input("New side name", f"Side {len(draft.template.facings) + 1}")
+    prefix = f"builder:{draft.template.id}:add_facing_letters:{len(draft.template.facings)}"
+    with st.container():
+        st.markdown("**Add a side**")
+        with st.form(prefix, border=False):
+            st.text_input("New side name", _next_side_name(draft), key=f"{prefix}:name")
             default = 0.0 if draft.template.unit == GeometryUnit.INCHES else 1.0
             with st.expander("Advanced side settings"):
-                width = st.number_input("New side width", min_value=0.0, value=default, format="%.4f")
-                height = st.number_input("New side height", min_value=0.0, value=default, format="%.4f")
+                st.number_input("New side width", min_value=0.0, value=default, format="%.4f", key=f"{prefix}:width")
+                st.number_input("New side height", min_value=0.0, value=default, format="%.4f", key=f"{prefix}:height")
             if draft.template.unit == GeometryUnit.INCHES:
                 st.caption("Enter measured width and height in Advanced side settings before adding this side.")
-            added = st.form_submit_button("Add Side")
-        if added:
-            _apply(lambda current: edits.add_facing(current, name, width, height), "facing")
+            def add():
+                values = {field: st.session_state[f"{prefix}:{field}"] for field in ("name", "width", "height")}
+                _apply(lambda current: edits.add_facing(current, **values), "facing", rerun=False)
+            st.form_submit_button("Add Side", on_click=add)
 
 
-def _side_options(facing, prefix):
+def _side_options(draft, facing, prefix):
     apply = partial(_apply, facing_id=facing.id)
-    with st.expander("Duplicate Side"):
-        with st.form(f"{prefix}:duplicate_side"):
+    st.markdown("**Side options**")
+    _add_side(draft)
+    with st.container():
+        with st.form(f"{prefix}:duplicate_side", border=False):
             st.text_input("Copy side name", f"{facing.name} Copy", key=f"{prefix}:copy_name")
             def duplicate():
                 apply(lambda current: edits.duplicate_facing(current, facing.id,
                     st.session_state[f"{prefix}:copy_name"]), "facing", rerun=False)
             st.form_submit_button("Duplicate Side", on_click=duplicate)
-    with st.expander("Side options"):
-        with st.form(f"{prefix}:edit_facing"):
+    with st.container():
+        with st.form(f"{prefix}:edit_facing", border=False):
             st.text_input("Side name", facing.name, key=f"{prefix}:side_name")
             with st.expander("Advanced side settings"):
                 st.number_input("Side order", min_value=0, value=max(0, facing.order), step=1, key=f"{prefix}:side_order")
@@ -181,48 +249,67 @@ def _regions(draft, facing, prefix):
                       type="primary" if item.id == selected_id else "secondary",
                       on_click=_select_region, args=(facing.id, item.id))
     st.session_state[key] = selection
-    with st.popover("Add a section"):
-        with st.form(f"{prefix}:add_region"):
+    with st.container():
+        with st.form(f"{prefix}:add_region", border=False):
             name = st.text_input("New section name", "Main Cards")
+            header_color = st.color_picker("Section header color", DEFAULT_HEADER_COLOR,
+                                           key=f"{prefix}:add_region:header_color",
+                                           help="Colors the full-width section header band in the PDF.")
+            preserve_spacing = st.checkbox("Keep vertical spacing in PDF", value=True,
+                key=f"{prefix}:add_region:preserve_spacing",
+                help="Keep your row and section gaps. Uncheck to use the gaps for taller boxes in this section.")
             with st.expander("Advanced section settings"):
                 role, hint = _role_hint(f"{prefix}:add_region")
             added = st.form_submit_button("Add Section")
         if added:
-            apply(lambda current: direct.add_section(current, facing.id, name, role, hint), "region")
+            apply(lambda current: direct.add_section(current, facing.id, name, role, hint,
+                header_color=header_color, preserve_spacing=preserve_spacing), "region")
     if not regions:
         st.caption("Add a section to this side, then add boxes or create a grid.")
         return None
     region = next(item for item in regions if item.id == selected_id)
-    st.caption(f"Selected Section: {region.name}")
-    duplicate, delete = st.columns(2)
-    with duplicate.popover('Duplicate Section'):
-        with st.form(f'{prefix}:{region.id}:duplicate_section'):
+    st.markdown(f"**Build: {region.name}**")
+    _positions(draft, facing, region, f"{prefix}:{region.id}")
+
+    st.divider()
+    st.markdown("**Manage section**")
+    with st.container():
+        with st.form(f'{prefix}:{region.id}:duplicate_section', border=False):
             copy_key = f'{prefix}:{region.id}:copy_section_name'
             st.text_input('Copy section name',f'{region.name} Copy',key=copy_key)
             def duplicate_section():
                 apply(lambda current: direct.duplicate_section(current,facing.id,region.id,
                     st.session_state[copy_key]),'region',rerun=False)
             st.form_submit_button('Create Section Copy',on_click=duplicate_section)
-    with delete.popover('Delete Section'):
+    with st.container():
         st.caption(f'Delete {region.name} and its boxes from {facing.name}?')
         st.button('Confirm Delete Section',key=f'{prefix}:{region.id}:remove_region',on_click=apply,
                   args=(lambda current: edits.remove_region(current,facing.id,region.id),),kwargs={'rerun':False})
-    with st.expander("Section options"):
-        with st.form(f"{prefix}:{region.id}:edit_region"):
+    with st.container():
+        with st.form(f"{prefix}:{region.id}:edit_region", border=False):
             name = st.text_input("Section name", region.name)
+            header_color = st.color_picker("Section header color", section_header_color(region),
+                                           key=f"{prefix}:{region.id}:header_color",
+                                           help="Colors the full-width section header band in the PDF.")
+            preserve_spacing = st.checkbox("Keep vertical spacing in PDF",
+                value=section_preserves_spacing(region), key=f"{prefix}:{region.id}:preserve_spacing",
+                help="Keep your row and section gaps. Uncheck to use the gaps for taller boxes in this section.")
             with st.expander("Advanced section settings"):
                 order = st.number_input("Section order", min_value=0, value=max(0, region.order), step=1)
                 role, hint = _role_hint(f"{prefix}:{region.id}:edit_region", region.role, region.presentation_hint)
             applied = st.form_submit_button("Apply section changes")
         if applied:
-            apply(lambda current: edits.update_region(current, facing.id, region.id, name=name, role=role, hint=hint, order=order))
+            apply(lambda current: edits.update_region(current, facing.id, region.id, name=name,
+                                                      role=role, hint=hint, order=order,
+                                                      header_color=header_color,
+                                                      preserve_spacing=preserve_spacing))
     return region
 
 
 def _grid(draft, facing, region, prefix):
     apply = partial(_apply, facing_id=facing.id)
-    with st.expander("Create a grid", expanded=not region.slot_ids):
-        with st.form(f"{prefix}:grid"):
+    with st.container():
+        with st.form(f"{prefix}:grid", border=False):
             left, right = st.columns(2)
             rows = left.number_input("Rows", min_value=1, max_value=50, value=2, step=1)
             columns = right.number_input("Columns", min_value=1, max_value=50, value=3, step=1)
@@ -245,7 +332,7 @@ def _grid(draft, facing, region, prefix):
         if created:
             settings = dict(x=x, y=y, width=width, height=height, horizontal_gap=horizontal_gap, vertical_gap=vertical_gap)
             apply(lambda current: edits.create_grid(current, facing.id, region.id, rows=rows, columns=columns, **settings)
-                if custom else direct.create_grid(current,facing.id,region.id,rows=rows,columns=columns), "slot")
+                if custom else direct.create_grid(current,facing.id,region.id,rows=rows,columns=columns), "clear_boxes",)
 
 
 def _edit_box(draft, facing, region, prefix):
@@ -257,23 +344,51 @@ def _edit_box(draft, facing, region, prefix):
         return
     labels = {slot.id: f"Box {slot.order}" for slot in slots}
     selected = _choose("Box", slots, prefix, "slot", labels.get, facing_id=facing.id)
+    
+    if selected is None:
+        st.caption("Select a box on the canvas or from the Box list to edit it.")
+        return
+    fields_key = f"{PDF_FIELDS_KEY}:{draft.template.id}"
+    fields = normalize_text_fields(st.session_state.get(fields_key))
+    text_key = f"{prefix}:{selected.id}:pdf_text:{draft.revision}"
+    
+    with st.expander("Text for this box"):
+        with st.form(f"{text_key}:form", border=False):
+            values = {}
+            for field in fields:
+                values[field] = st.text_input(
+                    field,
+                    value=selected.metadata.get(f"pdf_text:{field}", ""),
+                    key=f"{text_key}:{field}",
+                )
+                
+            saved = st.form_submit_button("Save box text")
+            
+        if saved:
+            apply(lambda current: edits.set_slot_pdf_text(
+                current, facing.id, selected.id, values
+                )
+            )
     duplicate, delete = st.columns(2)
-    duplicate.button("Duplicate Box", key=f"{prefix}:duplicate_box", on_click=apply,
+    duplicate.button("Duplicate Box", key=f"{prefix}:duplicate_box", on_click=apply, width="stretch",
                      args=(lambda current: direct.duplicate_box(current, facing.id, region.id, selected.id), "slot"),
                      kwargs={"rerun": False})
-    delete.button("Delete Box", key=f"{prefix}:remove_slot", on_click=apply,
+    delete.button("Delete Box", key=f"{prefix}:remove_slot", on_click=apply, width="stretch",
                   args=(lambda current: edits.remove_slot(current, facing.id, selected.id),), kwargs={"rerun": False})
-    with st.expander("Move boxes"):
-        for row in ((("Move left", "left"), ("Move right", "right"), ("Move up", "up"), ("Move down", "down")),):
-            buttons = st.columns(4)
+    with st.container():
+        for row in (
+            (("Move left", "left"), ("Move right", "right")),
+            (("Move up", "up"), ("Move down", "down")),
+        ):
+            buttons = st.columns(2)
             for button, (label, action) in zip(buttons, row):
-                button.button(label, key=f"{prefix}:{selected.id}:{action}", on_click=apply,
+                button.button(label, key=f"{prefix}:{selected.id}:{action}", on_click=apply, width="stretch",
                     args=(lambda current, action=action: actions.adjust_box(current, facing.id, region.id, selected.id, action),),
                     kwargs={"rerun": False})
     with st.expander("Advanced box geometry"):
         st.caption('Technical compatibility only. Normal boxes have a fixed size; use the canvas to arrange them.')
         geometry_key = f"{prefix}:{selected.id}:edit_slot"
-        with st.form(f"{geometry_key}:form"):
+        with st.form(f"{geometry_key}:form", border=False):
             _geometry(geometry_key, selected.x, selected.y, selected.width, selected.height)
             st.number_input("Box order", min_value=0, value=max(0, selected.order), step=1, key=f"{geometry_key}:order")
             regions = facing.ordered_regions()
@@ -287,15 +402,35 @@ def _edit_box(draft, facing, region, prefix):
             st.form_submit_button("Apply box changes", on_click=update)
 
 
+def _pdf_text_fields_picker(draft):
+    fields_key = f"{PDF_FIELDS_KEY}:{draft.template.id}"
+    picker_key = f"{fields_key}:third_line"
+    def save_fields():
+        st.session_state[fields_key] = normalize_text_fields(st.session_state[picker_key])
+        st.session_state.pop(PDF_KEY, None)
+    current = normalize_text_fields(st.session_state.get(fields_key))[-1]
+    st.caption("Description and CPP are always printed on each PDF box.")
+    selected = st.selectbox(
+        "Third PDF text line", PDF_IDENTIFIER_FIELDS,
+        index=PDF_IDENTIFIER_FIELDS.index(current),
+        key=picker_key, on_change=save_fields,
+        help="Choose UPC, ID#, or Item #. Applies to every PDF box in this template.",
+    )
+    st.session_state[fields_key] = normalize_text_fields(selected)
+
+
 def _positions(draft, facing, region, prefix):
     apply = partial(_apply, facing_id=facing.id)
     if facing.width <= 0 or facing.height <= 0:
         st.info("Set a positive side width and height in Advanced side settings before adding boxes.")
         return
+    _grid(draft, facing, region, prefix)
+
     st.button("Add Box", type="primary", key=f"{prefix}:add_box", on_click=apply,
               args=(lambda current: direct.add_box(current, facing.id, region.id), "slot"), kwargs={"rerun": False})
-    _grid(draft, facing, region, prefix)
-    with st.expander('Advanced box controls'):
+
+    _pdf_text_fields_picker(draft)
+    with st.container():
         _edit_box(draft, facing, region, prefix)
 
 
@@ -357,18 +492,57 @@ def _preview(draft, facing):
             for issue in validation.issues:
                 st.caption(f"{issue.code}: {issue.message}")
     st.caption(f"{facing.name} | Sections: {len(facing.regions)} | Boxes: {len(facing.slots)}")
-    selection=st.session_state.get(side_selection_key(facing.id),{})
-    selected=selection.get('slots',(selection['slot'],) if selection.get('slot') else ())
-    st.button('Delete Selected',key=f'{facing.id}:delete_selected',disabled=not selected,
-        on_click=_apply,args=(lambda current: edits.remove_slots(current,facing.id,selected),),
-        kwargs={'facing_id':facing.id,'rerun':False})
+
     try:
         svg = canvas_svg(replace(draft,template=template), facing)
     except ValueError:
         st.caption("Use Advanced settings to repair invalid dimensions or section references before canvas editing.")
-    else:
-        render_canvas(svg, draft, facing, draft_key=DRAFT_KEY, selection_key=side_selection_key(facing.id))
+        svg = None
+    render_canvas(svg, draft, facing, draft_key=DRAFT_KEY, selection_key=side_selection_key(facing.id))
+    if svg:
         st.caption("Fixed-size boxes: drag to arrange. Drag empty space or use Select boxes to select a group.")
+        st.caption("Scroll the page to see the full side. Layout sketches expand downward as you build.")
+
+
+def render_pdf_export(draft):
+    """Offer the current draft PDF here and after Done; invalidate it on edits."""
+    completed = (draft.template.id, draft.revision)
+    
+    if st.session_state.get(PDF_READY_KEY) != completed:
+        st.caption("Click Done in the builder to enable PDF export.")
+        return
+    
+    fields_key = f"{PDF_FIELDS_KEY}:{draft.template.id}"
+    text_fields = normalize_text_fields(st.session_state.get(fields_key))
+    signature = (draft.template.id, draft.revision, PDF_LAYOUT_VERSION, text_fields)
+    cached = st.session_state.get(PDF_KEY)
+    if cached and cached['signature'] != signature:
+        st.session_state.pop(PDF_KEY, None)
+        cached = None
+    valid = edits.validate_draft(draft).valid
+    st.caption("Print each Side on its own portrait page, using each section's vertical-spacing setting.")
+    if st.button("Create Template PDF", key="template_builder:create_pdf", disabled=not valid):
+        from app.templates.render_pdf import render_template_pdf
+        with st.spinner("Preparing template PDF..."):
+            try:
+                pdf = render_template_pdf(draft.template, text_fields=text_fields)
+            except (ValueError, OSError) as exc:
+                st.error(f"Unable to create the template PDF: {exc}")
+            else:
+                created = datetime.now(ZoneInfo("America/Chicago"))
+                cached = dict(signature=signature, pdf=pdf,
+                              download_stamp=created.strftime("%Y%m%d_%H%M%S"),
+                              created_label=created.strftime("%b %d, %Y at %I:%M:%S %p"))
+                st.session_state[PDF_KEY] = cached
+    if cached and valid:
+        filename = re.sub(r'[^\w.-]+', '_', draft.template.name).strip('._') or 'template'
+        stamp = f"_{cached['download_stamp']}" if cached.get('download_stamp') else ''
+        if cached.get('created_label'):
+            st.caption(f"PDF prepared {cached['created_label']} (Central time).")
+        st.download_button("Download Template PDF", cached['pdf'], file_name=f'{filename}_all_sides{stamp}.pdf',
+                           mime='application/pdf', key="template_builder:download_pdf", on_click="ignore")
+    if not valid:
+        st.caption("Complete the side layouts and resolve layout checks to enable PDF export.")
 
 
 def _review(draft):
@@ -388,10 +562,18 @@ def _review(draft):
             if issue.facing_id is None or issue.code.startswith("duplicate_"):
                 st.caption(_readable_issue(issue, draft.template))
     def done():
+        st.session_state[PDF_READY_KEY] = (
+            draft.template.id,
+            draft.revision,
+        )
         st.session_state[MODE_KEY] = "viewer"
-    st.button("Done", type="primary", disabled=not validation.valid, on_click=done)
-    st.caption("Done returns to Templates. Your draft stays in this session; it is not permanently saved.")
-
+    
+    st.button(
+        "Done",
+        type="primary",
+        disabled=not validation.valid,
+        on_click=done,
+    )
 
 def _draft_details(draft):
     with st.expander("Advanced draft details"):
@@ -412,6 +594,7 @@ def _draft_details(draft):
         def clear_action():
             st.session_state.pop(DRAFT_KEY, None)
             st.session_state.pop(SELECTION_KEY, None)
+            st.session_state.pop(ACTIVE_SIDE_KEY, None)
             st.session_state[NEW_KEY] = True
         reset.button("Reset draft", on_click=reset_action)
         clear.button("Clear draft", on_click=clear_action)
@@ -433,21 +616,48 @@ def render():
         st.info("Layout sketch: sizes and proportions are not approved physical measurements.")
     else:
         st.info("Measurements are in inches. Use the actual side dimensions in Advanced side settings.")
-    _add_side(draft)
-    for facing in template.ordered_facings():
-        # Changes to another Side do not discard this card's pending form values.
+    sides = template.ordered_facings()
+    if not sides:
+        setup, _ = st.columns([1.4, 2.2], gap="medium")
+        with setup:
+            _add_side(draft)
+    if sides:
+        facing = next((side for side in sides if side.id == st.session_state.get(ACTIVE_SIDE_KEY)), sides[0])
+        st.session_state[ACTIVE_SIDE_KEY] = facing.id
         stamp = sha256(repr(facing).encode("utf-8")).hexdigest()[:12]
         prefix = f"builder:{template.id}:{facing.id}:{stamp}"
         with st.container(border=True, key=f"side_workspace:{facing.id}"):
             st.subheader(facing.name)
-            canvas, controls = st.columns([2.4, 1])
+            controls, canvas = st.columns([1.4, 2.2], gap="medium")
+
             with controls:
-                region = _regions(draft, facing, prefix)
-                if region:
-                    _positions(draft, facing, region, f"{prefix}:{region.id}")
+                _regions(draft, facing, prefix)
+
+                selection = st.session_state.get(
+                    side_selection_key(facing.id), {}
+                )
+                selected = selection.get(
+                    "slots",
+                    (selection["slot"],) if selection.get("slot") else (),
+                )
+                st.button(
+                    "Delete Selected",
+                    key=f"{facing.id}:delete_selected",
+                    width="stretch",
+                    disabled=not selected,
+                    on_click=_apply,
+                    args=(
+                        lambda current: edits.remove_slots(
+                            current, facing.id, selected
+                        ),
+                    ),
+                    kwargs={"facing_id": facing.id, "rerun": False},
+                )
+
+                _side_options(draft, facing, prefix)
+
             with canvas:
                 _preview(draft, facing)
-            _side_options(facing, prefix)
     if not template.facings:
         st.info("Add a side, then a section and boxes.")
     _review(draft)

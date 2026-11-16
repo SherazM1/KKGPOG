@@ -56,12 +56,16 @@ normal resize events are rejected without overwriting the draft. Each Side has
 its own selection and component acknowledgment. A gesture commits on release;
 the next gesture waits for the server acknowledgment.
 
-## Contained canvas and verification
+## Page-height canvas and verification
 
-The editing SVG draws Section names, backgrounds and active boundaries. It keeps
-boxes readable using internal horizontal/vertical scrolling, a 640px viewport
-height limit and a responsive frame. Scroll position survives rerenders. It does
-not enlarge the catalog preview or alter production output.
+The editing SVG draws Section names, backgrounds and active boundaries. It fits
+the available column width and shows its full height; users scroll the website,
+not an inner canvas. Unmeasured Sides start with a taller editing workspace and
+expand downward during a drag and after adding rows. A committed downward move
+grows the sketch Side and affected Section bounds without resizing boxes or
+shifting other boxes. Measured Side dimensions remain fixed. The component frame
+tracks its content height, including browser-width changes. Catalog previews
+and production output retain their existing sizing.
 
 Run unit/AppTest checks:
 
@@ -80,9 +84,11 @@ For the live browser check, start Streamlit on port 8514, then run:
 The browser creates 50 boxes in four uneven Sections, manually offsets a Bonus
 box, duplicates/confirms deletion of a Section, selects and moves 32 boxes,
 bulk-deletes a smaller selection, and verifies an independent Side copy. It checks
-no resize UI, fixed dimensions and contained responsive sizing. Unit tests also
+no resize UI, fixed dimensions and page-scrolling responsive sizing. Unit tests also
 exercise a 53-box/five-Section layout and an 80-box Section-copy AppTest case.
 
-No persistence, reference overlay, mapping, PDF generation or production renderer
-integration is included. After operator testing, the next small pass is session
+The builder and completed-draft screen offer a blank template PDF with one Side
+per portrait page, template-name/Side-identifier headers, and a creation-date/Kendal King
+footer. Product mapping, persistence, reference
+overlays and production renderer integration remain separate. After operator testing, the next small pass is session
 undo/redo, particularly for bulk deletion and Section actions. Not implemented.

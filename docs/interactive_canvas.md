@@ -1,13 +1,20 @@
 # Manual builder interactive canvas (Piece 4F)
 
-Each Side has a contained live canvas with named Section boundaries. Click boxes
+One Side is shown in the large live canvas, with named Section boundaries.
+Clickable minimized Side previews above it switch the active editor without
+changing geometry. Section/Box selections are remembered per Side. Click boxes
 or drag a selection rectangle. Selected boxes highlight together; drag a selected
 box to move the group. Normal box size is fixed. No handles or resize buttons are
-rendered. Delete Selected acts on the current Side's selection.
+rendered. **Delete boxes** beside **Select boxes** removes the highlighted boxes
+on the current Side in one operation. It stays disabled with no selection or
+while a canvas update is pending. The left-side **Delete Selected** control
+remains available as well.
 
 The local Streamlit v1 component uses plain JavaScript and SVG, with no framework,
-build step, CDN or added package. The editing viewport scrolls internally at a
-maximum height of 640 pixels, keeping large Sections readable. The separate
+build step, CDN or added package. The editing canvas fits its column width and
+shows its full height, with website scrolling instead of internal scrollbars.
+An unmeasured sketch has extra blank workspace below and grows when boxes are
+dragged downward or more rows are added. The separate
 catalog/static SVG preview retains its original size limits and remains read-only.
 
 ## State and conversion
@@ -40,8 +47,10 @@ are retained. Dropping over another Section never reassigns membership.
 
 ## Validation and limits
 
-Positive finite dimensions are required. Dragging is constrained to Side bounds;
-group movement preserves relative arrangement and fixed dimensions. Existing
+Positive finite dimensions are required. Dragging stays within the left/right
+and top boundaries; unmeasured sketches can extend downward. Measured Sides
+keep their lower boundary and entered dimensions. Group movement preserves
+relative arrangement and fixed dimensions. Existing
 validation reports bounds and overlaps after each edit, and the draft is retained.
 The editing projection permits spatial errors to remain visually editable;
 the catalog preview's default validation behavior stays strict. Structural
@@ -60,7 +69,8 @@ read-only viewer. A live Chromium check covers actual component selection,
 rectangle selection, group dragging, bulk deletion and contained sizing.
 
 This remains an uncalibrated structural builder, not a production specification.
-No production rendering, persistence, product mapping, PDF output or catalog
-editing is connected. The next small pass is undo/redo for manual geometry edits.
+No production rendering, persistence, product mapping or catalog editing is
+connected. A separate blank-layout PDF export is available in the builder and
+after Done. The next small pass is undo/redo for manual geometry edits.
 
 Piece 4F details and current browser stress coverage: [direct_canvas_builder.md](direct_canvas_builder.md).

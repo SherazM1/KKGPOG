@@ -29,7 +29,7 @@ from app.sams_club.price_strip_models import SamsPriceStripPdfResult, SamsPriceS
 from app.sams_club.holiday_price_strips import (
     SAMS_HOLIDAY_TEMPLATE,
     SamsHolidaySideGeometry,
-    holiday_geometry_for_side,
+    holiday_geometry_for_row,
     holiday_slot_center_pt,
     holiday_slot_centers_pt,
     holiday_slot_width_pt,
@@ -358,7 +358,7 @@ def compute_strip_canvas(
     template_name: str | None = None,
 ) -> tuple[float, float, float]:
     if is_sams_holiday_template(template_name):
-        geometry = holiday_geometry_for_side(row_data.side)
+        geometry = holiday_geometry_for_row(row_data)
         footer_h = min(_DEFAULT_FOOTER_HEIGHT, max(6.0, geometry.height_pt * 0.085))
         return geometry.width_pt, geometry.height_pt, footer_h
 
@@ -508,7 +508,7 @@ def _resolve_ticket_positions_from_profile(
 def _resolve_holiday_ticket_positions(
     row_data: SamsPriceStripRow,
 ) -> list[tuple[float, float]]:
-    geometry = holiday_geometry_for_side(row_data.side)
+    geometry = holiday_geometry_for_row(row_data)
     slot_width = holiday_slot_width_pt(geometry)
     return [
         ((column - 1) * slot_width, slot_width)
@@ -1166,7 +1166,7 @@ def _generate_strip_html(
     holiday_mode = is_sams_holiday_template(template_name)
     holiday_geometry: SamsHolidaySideGeometry | None = None
     if holiday_mode:
-        holiday_geometry = holiday_geometry_for_side(row_data.side)
+        holiday_geometry = holiday_geometry_for_row(row_data)
 
     layout_profile = _resolve_layout_profile(strip_w, strip_h, warnings)
     page_w = strip_w + (_BLEED_PT * 2)

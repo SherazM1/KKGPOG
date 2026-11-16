@@ -10,7 +10,7 @@ from app.templates.registry import get_facings, get_template, get_templates
 from app.templates.validation import validate_template
 
 
-def render():
+def _render_pog_templates():
     from app.pages import template_builder
     if st.session_state.get(template_builder.MODE_KEY) == "builder":
         template_builder.render()
@@ -20,11 +20,15 @@ def render():
         st.session_state[template_builder.MODE_KEY] = "builder"
         st.session_state[template_builder.NEW_KEY] = True
         st.rerun()
-    if st.session_state.get(template_builder.DRAFT_KEY) is not None:
-        if st.button("Resume draft", key="template_builder:resume"):
-            st.session_state[template_builder.MODE_KEY] = "builder"
-            st.session_state[template_builder.NEW_KEY] = False
-            st.rerun()
+    draft = st.session_state.get(template_builder.DRAFT_KEY)
+    if draft is not None:
+        with st.container(border=True):
+            st.markdown(f"**Your template: {draft.template.name}**")
+            if st.button("Resume draft", key="template_builder:resume"):
+                st.session_state[template_builder.MODE_KEY] = "builder"
+                st.session_state[template_builder.NEW_KEY] = False
+                st.rerun()
+            template_builder.render_pdf_export(draft)
     st.caption("Inspect blank display layouts. This viewer does not edit or save templates.")
     available = get_templates()
     names = {template.id: template.name for template in available}
@@ -98,3 +102,17 @@ def render():
                  "Envelope": str(region.bounds) if region.bounds else "Derived from members"}
                 for region in facing.ordered_regions()
             ], hide_index=True, width="stretch")
+
+def render():
+    selected = st.radio(
+        "Template type",
+        ["1. POG Template", "2. Price Strips"],
+        horizontal=True,
+        key="templates:selected_type",
+    )
+    
+    if selected == "1. POG Template":
+        _render_pog_templates()
+    else:
+        from app.pages import price_strip_builder
+        price_strip_builder.render()

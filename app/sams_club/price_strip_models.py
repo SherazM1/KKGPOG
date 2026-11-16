@@ -29,6 +29,7 @@ class SamsPriceStripRow:
     segments: list[SamsPriceStripSegment] = field(default_factory=list)
     footer_text: str = ""
     warnings: list[str] = field(default_factory=list)
+    strip_size: str | None = None
 
 
 @dataclass

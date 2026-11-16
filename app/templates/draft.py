@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from app.templates.models import DisplayTemplate, Facing, GeometryUnit, PresentationHint, Region, Slot
 from app.templates.models import SlotRole
+from app.templates.print_style import (HEADER_COLOR_KEY, VERTICAL_SPACING_KEY,
+                                       normalize_header_color, normalize_vertical_spacing)
 from app.templates.validation import EPSILON, validate_template
 
 
@@ -146,20 +148,41 @@ def remove_facing(draft, facing_id):
     )), revision=draft.revision + 1)
 
 
-def add_region(draft, facing_id, name, role=SlotRole.PRODUCT, hint=None, order=None):
+def add_region(draft, facing_id, name, role=SlotRole.PRODUCT, hint=None, order=None, *,
+               header_color=None, preserve_spacing=None):
     facing = get_facing(draft, facing_id)
+    metadata = {} if header_color is None else {HEADER_COLOR_KEY: normalize_header_color(header_color)}
+    if preserve_spacing is not None:
+        metadata[VERTICAL_SPACING_KEY] = normalize_vertical_spacing(preserve_spacing)
     region = Region(_id(draft, "region"), _name(name, "region name"), SlotRole(role),
                     order if order is not None else max((item.order for item in facing.regions), default=0) + 1,
-                    presentation_hint=PresentationHint(hint) if hint is not None else None)
+                    presentation_hint=PresentationHint(hint) if hint is not None else None, metadata=metadata)
     return _changed(draft, replace(facing, regions=(*facing.regions, region)), 1)
 
 
-def update_region(draft, facing_id, region_id, *, name, role, hint, order):
+def update_region(draft, facing_id, region_id, *, name, role, hint, order,
+                  header_color=None, preserve_spacing=None):
     facing = get_facing(draft, facing_id)
+    metadata = dict(_region(facing, region_id).metadata)
+    if header_color is not None:
+        metadata[HEADER_COLOR_KEY] = normalize_header_color(header_color)
+    if preserve_spacing is not None:
+        metadata[VERTICAL_SPACING_KEY] = normalize_vertical_spacing(preserve_spacing)
     region = replace(_region(facing, region_id), name=_name(name, "region name"), role=SlotRole(role),
-                     presentation_hint=PresentationHint(hint) if hint is not None else None, order=order)
+                     presentation_hint=PresentationHint(hint) if hint is not None else None,
+                     order=order, metadata=metadata)
     return _changed(draft, replace(facing, regions=tuple(
         region if item.id == region_id else item for item in facing.regions
+    )))
+
+
+def set_region_header_color(draft, facing_id, region_id, color):
+    facing = get_facing(draft, facing_id)
+    region = _region(facing, region_id)
+    color = normalize_header_color(color)
+    updated = replace(region, metadata={**region.metadata, HEADER_COLOR_KEY: color})
+    return _changed(draft, replace(facing, regions=tuple(
+        updated if item.id == region_id else item for item in facing.regions
     )))
 
 
@@ -245,7 +268,31 @@ def update_slot(draft, facing_id, slot_id, *, x, y, width, height, order, region
         selected if slot.id == slot_id else slot for slot in facing.slots
     ), regions=regions))
 
-
+def set_slot_pdf_text(draft, facing_id, slot_id, values):
+        facing = get_facing(draft, facing_id)
+        selected = next(
+            (slot for slot in facing.slots if slot.id == slot_id),
+            None,
+        )
+        if selected is None:
+            raise KeyError("Choose a box first.")
+        
+        metadata = dict(selected.metadata)
+        for field, text in values.items():
+            metadata[f"pdf_text:{field}"] = " ".join(text.split())
+        
+        updated = replace(selected, metadata=metadata)
+        return _changed(
+            draft,
+            replace(
+                facing,
+                slots=tuple(
+                    updated if slot.id == slot_id else slot
+                    for slot in facing.slots
+                ),
+            ),
+        )
+        
 def remove_slot(draft, facing_id, slot_id):
     facing = get_facing(draft, facing_id)
     if not any(slot.id == slot_id for slot in facing.slots):

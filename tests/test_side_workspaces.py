@@ -6,8 +6,8 @@ import unittest
 
 from streamlit.testing.v1 import AppTest
 
-from app.pages.template_builder import DRAFT_KEY, MODE_KEY, side_selection_key
-from app.pages._canvas_events import CanvasTransform, consume_event
+from app.pages.template_builder import DRAFT_KEY, MODE_KEY, PDF_KEY, PDF_LAYOUT_VERSION, side_selection_key
+from app.pages._canvas_events import ACTIVE_SIDE_KEY, CanvasTransform, consume_event
 from app.templates import draft as edits
 from app.templates.models import Bounds, PresentationHint
 from app.templates.preview import geometry_svg
@@ -120,33 +120,54 @@ class SideWorkspaceTests(unittest.TestCase):
         self.local(app,'button',label,fid).click().run()
         self.assertFalse(app.exception)
 
+    def switch(self, app, fid):
+        draft = app.session_state[DRAFT_KEY]
+        current = edits.get_facing(draft, app.session_state[ACTIVE_SIDE_KEY])
+        key = f'template_canvas:{draft.template.id}:{current.id}'
+        state = app.session_state.filtered_state
+        state[key] = dict(event_id=f'switch:{current.id}:{fid}', kind='activate_side',
+                          template_id=draft.template.id, facing_id=current.id,
+                          revision=draft.revision, target_facing_id=fid)
+        consume_event(state, component_key=key, draft_key=DRAFT_KEY,
+                      selection_key=side_selection_key(current.id), facing_id=current.id, transform=None)
+        app.session_state[ACTIVE_SIDE_KEY] = state[ACTIVE_SIDE_KEY]
+        app.run()
+        self.assertFalse(app.exception)
+
     def test_cards_canvases_and_section_selection_are_local(self):
         app,d=self.start()
-        self.assertEqual([h.value for h in app.subheader if h.value.startswith('Side ')],['Side A','Side B'])
+        self.assertEqual([h.value for h in app.subheader if h.value.startswith('Side ')],['Side A'])
         self.assertFalse(any(w.label in ('Side','Section') for w in app.selectbox))
         scenes=[json.loads(c.proto.json_args) for c in app.get('component_instance')]
-        self.assertEqual([s['facing_id'] for s in scenes],[f.id for f in d.template.facings])
-        for scene,face in zip(scenes,d.template.facings):
-            self.assertEqual(set(scene['boxes']),{s.id for s in face.slots})
+        self.assertEqual(len(scenes), 1)
+        self.assertEqual(scenes[0]['facing_id'], d.template.facings[0].id)
+        self.assertEqual([side['id'] for side in scenes[0]['side_previews']], [f.id for f in d.template.facings])
+        self.assertEqual(set(scenes[0]['boxes']), {s.id for s in d.template.facings[0].slots})
         first,second=d.template.facings
         self.click(app,'Bonus',first.id)
         self.assertEqual(app.session_state[side_selection_key(first.id)]['region'],first.regions[1].id)
-        self.assertEqual(app.session_state[side_selection_key(second.id)]['region'],second.regions[0].id)
         self.assertEqual(self.local(app,'button','Bonus',first.id).proto.type,'primary')
+        self.switch(app, second.id)
+        self.assertEqual(app.session_state[side_selection_key(second.id)]['region'],second.regions[0].id)
         self.click(app,'Cards',second.id)
         self.assertEqual(app.session_state[side_selection_key(first.id)]['region'],first.regions[1].id)
+        self.switch(app, first.id)
+        self.assertEqual(self.local(app,'button','Bonus',first.id).proto.type,'primary')
+        self.assertEqual(app.session_state[DRAFT_KEY], d)
 
     def test_add_section_box_and_grid_only_affect_their_side(self):
         app,d=self.start();first,second=d.template.facings
+        self.switch(app, second.id)
         self.local(app,'text_input','New section name',second.id).set_value('Holders')
         self.click(app,'Add Section',second.id)
-        scene=json.loads(app.get('component_instance')[1].proto.json_args)
+        scene=json.loads(app.get('component_instance')[0].proto.json_args)
         self.assertIsNone(scene['selected_box_id'])
         self.click(app,'Add Box',second.id)
         updated=app.session_state[DRAFT_KEY]
         self.assertEqual(updated.template.facings[0],first)
         target=updated.template.facings[1]
         self.assertEqual([len(r.slot_ids) for r in target.regions],[2,0,1])
+        self.switch(app, first.id)
         self.click(app,'Bonus',first.id)
         self.local(app,'number_input','Rows',first.id).set_value(3)
         self.local(app,'number_input','Columns',first.id).set_value(4)
@@ -155,13 +176,37 @@ class SideWorkspaceTests(unittest.TestCase):
         self.assertEqual(updated.template.facings[1],target)
         self.assertEqual([len(r.slot_ids) for r in updated.template.facings[0].regions],[2,12])
 
+    def test_add_blank_side_from_side_options_opens_it_without_copying_content(self):
+        app, draft = self.start()
+        source = draft.template.facings[0]
+        name = next(w for w in app.text_input if w.label == 'New side name')
+        name.set_value('Fresh Side')
+        next(w for w in app.button if w.label == 'Add Side').click().run()
+        self.assertFalse(app.exception)
+        updated = app.session_state[DRAFT_KEY]
+        new_side = updated.template.facings[-1]
+        self.assertEqual(updated.template.facings[:-1], draft.template.facings)
+        self.assertEqual(new_side.name, 'Fresh Side')
+        self.assertEqual((new_side.regions, new_side.slots), ((), ()))
+        self.assertEqual(app.session_state[ACTIVE_SIDE_KEY], new_side.id)
+        self.assertEqual(len(app.get('component_instance')), 1)
+        scene = json.loads(app.get('component_instance')[0].proto.json_args)
+        self.assertEqual(scene['facing_id'], new_side.id)
+        self.assertEqual(len(scene['side_previews']), 3)
+        self.assertFalse(scene['boxes'])
+        self.assertEqual(sum(w.label == 'Add Side' for w in app.button), 1)
+        self.assertTrue(any(w.label == 'Duplicate Side' for w in app.button))
+        self.switch(app, source.id)
+        self.assertEqual(app.session_state[DRAFT_KEY].template.facings[0], source)
+
     def test_duplicate_side_ui_rename_and_delete_independently(self):
         app,d=self.start();source=d.template.facings[0]
         self.local(app,'text_input','Copy side name',source.id).set_value('New Side')
         self.click(app,'Duplicate Side',source.id)
         copy=app.session_state[DRAFT_KEY].template.facings[-1]
         self.assertEqual(copy.name,'New Side')
-        self.assertEqual(len(app.get('component_instance')),3)
+        self.assertEqual(len(app.get('component_instance')),1)
+        self.assertEqual(app.session_state[ACTIVE_SIDE_KEY], copy.id)
         self.local(app,'text_input','Side name',copy.id).set_value('Renamed Copy')
         self.click(app,'Apply side changes',copy.id)
         self.click(app,'Delete Box',copy.id)
@@ -170,8 +215,9 @@ class SideWorkspaceTests(unittest.TestCase):
         self.assertEqual(len(app.session_state[DRAFT_KEY].template.facings[-1].slots),1)
         self.click(app,'Delete Side',copy.id)
         self.assertEqual(app.session_state[DRAFT_KEY].template.facings,d.template.facings)
+        self.assertEqual(app.session_state[ACTIVE_SIDE_KEY], d.template.facings[-1].id)
 
-    def test_canvas_callback_targets_side_after_editing_another_card(self):
+    def test_old_canvas_callback_cannot_edit_a_minimized_side(self):
         app,d=self.start();first,second=d.template.facings
         self.click(app,'Bonus',first.id)
         key=f'template_canvas:{d.template.id}:{second.id}'
@@ -188,14 +234,58 @@ class SideWorkspaceTests(unittest.TestCase):
         app.run();self.assertFalse(app.exception)
         updated=app.session_state[DRAFT_KEY]
         self.assertEqual(updated.template.facings[0],first)
-        self.assertAlmostEqual(updated.template.facings[1].slots[0].y,.4)
+        self.assertEqual(updated, d)
         self.assertEqual(app.session_state[side_selection_key(first.id)]['region'],first.regions[1].id)
+
+    def test_switching_preserves_box_selection_and_the_existing_pdf(self):
+        app, draft = self.start()
+        first, second = draft.template.facings
+        key = f'template_canvas:{draft.template.id}:{first.id}'
+        state = app.session_state.filtered_state
+        state[key] = dict(event_id='select:remember', kind='select_many',
+                          template_id=draft.template.id, facing_id=first.id,
+                          revision=draft.revision, slot_ids=[first.slots[1].id])
+        consume_event(state, component_key=key, draft_key=DRAFT_KEY,
+                      selection_key=side_selection_key(first.id), facing_id=first.id,
+                      transform=CanvasTransform.from_svg(geometry_svg(draft.template, first.id), first))
+        for name, value in state.items():
+            if name.startswith(('template_builder:', 'template_canvas:')):
+                app.session_state[name] = value
+        selection = state[side_selection_key(first.id)]
+        cached = dict(signature=(draft.template.id, draft.revision, PDF_LAYOUT_VERSION), pdf=b'%PDF-test')
+        app.session_state[PDF_KEY] = cached
+        app.run()
+        self.switch(app, second.id)
+        self.switch(app, first.id)
+        self.assertEqual(app.session_state[side_selection_key(first.id)], selection)
+        self.assertEqual(app.session_state[PDF_KEY], cached)
+        self.assertEqual(app.session_state[DRAFT_KEY], draft)
+        self.assertEqual(next(w for w in app.selectbox if w.label == 'Box').value, first.slots[1].id)
+
+    def test_deleting_every_side_clears_active_editor_and_new_side_becomes_active(self):
+        app, draft = self.start()
+        self.click(app, 'Delete Side', draft.template.facings[0].id)
+        remaining = draft.template.facings[1].id
+        self.assertEqual(app.session_state[ACTIVE_SIDE_KEY], remaining)
+        self.click(app, 'Delete Side', remaining)
+        self.assertNotIn(ACTIVE_SIDE_KEY, app.session_state)
+        self.assertEqual(len(app.get('component_instance')), 0)
+        next(button for button in app.button if button.label == 'Add Side').click().run()
+        self.assertFalse(app.exception)
+        new_side = app.session_state[DRAFT_KEY].template.facings[0]
+        self.assertEqual(app.session_state[ACTIVE_SIDE_KEY], new_side.id)
+        self.assertEqual(len(app.get('component_instance')), 1)
 
     def test_invalid_side_does_not_hide_other_canvas_or_leak_errors(self):
         app,d=self.start();first,second=d.template.facings
         self.local(app,'number_input','Side width',first.id).set_value(0)
         self.click(app,'Apply side changes',first.id)
         scenes=[json.loads(c.proto.json_args) for c in app.get('component_instance')]
-        self.assertEqual([s['facing_id'] for s in scenes],[second.id])
+        self.assertEqual([s['facing_id'] for s in scenes],[first.id])
+        self.assertIsNone(scenes[0]['svg'])
+        self.assertEqual(len(scenes[0]['side_previews']), 2)
         self.assertTrue(any('positive' in e.value for e in app.error))
         self.assertTrue(next(b for b in app.button if b.label=='Done').disabled)
+        self.switch(app, second.id)
+        self.assertEqual(json.loads(app.get('component_instance')[0].proto.json_args)['facing_id'], second.id)
+        self.assertFalse(app.error)

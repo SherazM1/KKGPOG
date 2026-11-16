@@ -41,6 +41,30 @@ def _store(draft, face):
         face if item.id == face.id else item for item in draft.template.facings)))
 
 
+def grow_sketch_down(draft, facing_id):
+    """Contain downward canvas moves without resizing boxes or measured Sides."""
+    if draft.template.unit != GeometryUnit.NORMALIZED:
+        return draft
+    face = edits.get_facing(draft, facing_id)
+    padding = standard_size(draft)[1] * .75
+    regions = []
+    for region in face.regions: 
+        bounds = region.bounds
+        bottom = max((slot.y + slot.height for slot in face.slots_for_region(region.id)), default=0)
+        if bounds and bottom > bounds.y + bounds.height + EPSILON:
+            bounds = replace(bounds, height=bottom + padding - bounds.y)
+        regions.append(region if bounds is region.bounds else replace(region, bounds=bounds))
+    bottom = max(
+        max((slot.y + slot.height for slot in face.slots), default=0),
+        max((region.bounds.y + region.bounds.height for region in regions if region.bounds), default=0),
+    )
+    height = face.height if bottom <= face.height + EPSILON else bottom + padding
+    if height == face.height and tuple(regions) == face.regions:
+        return draft
+    # The event already increments the revision; growth belongs to that one edit.
+    return _store(draft, replace(face, height=height, regions=tuple(regions)))
+
+
 def _fit(draft, fid, rid, width, height):
     """Grow one workspace; translate later Sections together without resizing boxes."""
     face = edits.get_facing(draft, fid)
@@ -69,12 +93,14 @@ def _fit(draft, fid, rid, width, height):
                                 width=required_width, height=required_height))
 
 
-def add_section(draft, fid, name, role=SlotRole.PRODUCT, hint=None):
+def add_section(draft, fid, name, role=SlotRole.PRODUCT, hint=None, *,
+                header_color=None, preserve_spacing=None):
     draft = _prepare(draft)
     face = edits.get_facing(draft, fid)
     w, h = standard_size(draft)
     top = max((envelope(face,r,(w,h)).y+envelope(face,r,(w,h)).height for r in face.regions), default=0)+h*.5
-    updated = edits.add_region(draft, fid, name, role, hint)
+    updated = edits.add_region(draft, fid, name, role, hint,
+                               header_color=header_color, preserve_spacing=preserve_spacing)
     face = edits.get_facing(updated, fid)
     region = replace(face.regions[-1], bounds=Bounds(0,top,face.width,h*2))
     updated = _store(updated, replace(face, regions=(*face.regions[:-1],region)))

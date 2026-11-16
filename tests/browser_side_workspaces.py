@@ -15,10 +15,10 @@ def check(url, screenshot=None):
             page.get_by_role('button',name=name,exact=True).click()
         cards=page.locator('[class*="st-key-side_workspace"]')
         source=cards.nth(0);frame=source.frame_locator('iframe')
+        expect(frame.get_by_role('button',name='Delete boxes',exact=True)).to_be_disabled()
         expected_boxes=0
         def add_section(name,rows=None,columns=None):
             nonlocal expected_boxes
-            source.get_by_text('Add a section',exact=True).click()
             page.get_by_role('textbox',name='New section name',exact=True).fill(name)
             page.get_by_role('button',name='Add Section',exact=True).click()
             expect(source.get_by_role('button',name=name,exact=True)).to_be_visible()
@@ -61,12 +61,10 @@ def check(url, screenshot=None):
         assert arranged[47]['x']!=first_scene[47]['x']
         assert (arranged[47]['width'],arranged[47]['height'])==(first_scene[47]['width'],first_scene[47]['height'])
         select_section('Top Cards')
-        source.get_by_text('Duplicate Section',exact=True).click()
         page.get_by_role('button',name='Create Section Copy',exact=True).click();page.keyboard.press('Escape')
         expect(frame.locator('[data-slot-id]')).to_have_count(60)
         expect(source.get_by_role('button',name='Top Cards Copy',exact=True)).to_be_visible()
-        source.get_by_text('Delete Section',exact=True).click()
-        # Confirmation is required; opening the action does not remove anything.
+        # The visible confirmation does not delete anything until clicked.
         expect(frame.locator('[data-slot-id]')).to_have_count(60)
         page.get_by_role('button',name='Confirm Delete Section',exact=True).click();page.keyboard.press('Escape')
         expect(frame.locator('[data-slot-id]')).to_have_count(50)
@@ -87,7 +85,6 @@ def check(url, screenshot=None):
         assert after_many[:10]==before_many[:10] and after_many[42:]==before_many[42:]
         assert all(a['x']!=b['x'] and a['y']!=b['y'] for a,b in zip(before_many[10:42],after_many[10:42]))
         select_section('Top Cards')
-        frame.locator('#canvas').evaluate('e=>{e.scrollTop=0;e.scrollLeft=0}')
         frame.get_by_role('button',name='Select boxes',exact=True).click()
         boxes=frame.locator('[data-slot-id]')
         boxes.first.scroll_into_view_if_needed()
@@ -101,30 +98,46 @@ def check(url, screenshot=None):
             assert a['x']!=b['x'] and a['y']!=b['y']
             assert (a['data-slot-id'],a['width'],a['height'])==(b['data-slot-id'],b['width'],b['height'])
         assert after_group[3:]==before_group[3:]
-        source.get_by_role('button',name='Delete Selected',exact=True).click()
+        frame.get_by_role('button',name='Delete boxes',exact=True).click()
         expect(boxes).to_have_count(47);expect(frame.locator('.selected')).to_have_count(0)
+        expect(frame.get_by_role('button',name='Delete boxes',exact=True)).to_be_disabled()
         preserved=scene(frame)
-        source.get_by_text('Duplicate Side',exact=True).first.click()
         source.get_by_role('textbox',name='Copy side name',exact=True).fill('Side B')
         source.get_by_role('button',name='Duplicate Side',exact=True).click()
-        expect(cards).to_have_count(2);copy=cards.nth(1);copy_frame=copy.frame_locator('iframe')
+        expect(cards).to_have_count(1);copy=cards.first;copy_frame=copy.frame_locator('iframe')
+        expect(copy_frame.get_by_role('button',name='Edit Side B',exact=True)).to_have_attribute('aria-pressed','true')
         expect(copy_frame.locator('[data-slot-id]')).to_have_count(47)
         copy_scene=scene(copy_frame)
         assert not ({s['data-slot-id'] for s in preserved}&{s['data-slot-id'] for s in copy_scene})
         assert [{k:v for k,v in s.items() if k!='data-slot-id'} for s in preserved]==[{k:v for k,v in s.items() if k!='data-slot-id'} for s in copy_scene]
         copy_frame.locator('[data-slot-id]').first.click();settle(copy_frame)
-        copy.get_by_role('button',name='Delete Selected',exact=True).click()
+        copy_frame.get_by_role('button',name='Delete boxes',exact=True).click()
         expect(copy_frame.locator('[data-slot-id]')).to_have_count(46)
+        copy_frame.get_by_role('button',name='Edit Side 1',exact=True).click()
+        expect(frame.get_by_role('button',name='Edit Side 1',exact=True)).to_have_attribute('aria-pressed','true')
+        expect(frame.locator('[data-slot-id]')).to_have_count(47)
         assert scene(frame)==preserved
         expect(page.get_by_test_id('stException')).to_have_count(0)
-        for iframe in page.locator('iframe').all():assert int(iframe.get_attribute('height'))<=760
+        def assert_page_sized(f):
+            assert f.locator('#canvas').evaluate('e=>e.scrollHeight<=e.clientHeight+1 && e.scrollWidth<=e.clientWidth+1')
+            assert f.locator('body').evaluate('e=>e.scrollHeight<=window.innerHeight+1')
+        assert_page_sized(frame)
+        assert_page_sized(copy_frame)
+        assert frame.locator('#canvas').evaluate('e=>e.clientHeight')>640
         if screenshot:
             source.get_by_role('heading',name='Side 1',exact=True).scroll_into_view_if_needed()
             page.screenshot(path=screenshot)
         page.set_viewport_size({'width':1100,'height':900})
-        assert frame.locator('#canvas').evaluate('e=>e.clientHeight')<=640
+        assert_page_sized(frame)
+        frame.locator('[data-slot-id]').first.scroll_into_view_if_needed()
+        main=page.get_by_test_id('stMain')
+        before_scroll=main.evaluate('e=>e.scrollTop')
+        frame.locator('[data-slot-id]').first.hover()
+        page.mouse.wheel(0,400)
+        page.wait_for_function('(before)=>document.querySelector(\'[data-testid="stMain"]\').scrollTop>before',arg=before_scroll)
+        assert frame.locator('#canvas').evaluate('e=>e.scrollTop')==0
         browser.close()
-    print('PASS: 50-box/four-Section irregular side, fixed sizes, no resize, Section duplication/confirmed deletion, rectangle selection, group drag, bulk delete, independent Side copy and contained responsive canvases.')
+    print('PASS: 50-box/four-Section irregular side, fixed sizes, Section actions, group movement/deletion, independent Side copy and page-scrolling responsive canvases.')
 
 
 if __name__=='__main__':

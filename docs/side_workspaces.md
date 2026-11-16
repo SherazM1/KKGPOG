@@ -1,29 +1,37 @@
 # Side workspaces and Duplicate Side (Piece 4E)
 
-Every Side stays visible as a bordered workspace with a heading, its own compact
-interactive canvas, local Section buttons and Box controls. **Add a section**
-opens a small form inside that Side's context. The selected Section is highlighted
-and named. **Add Box**, **Create Grid**, **Duplicate Box**, **Delete Box**, fallback
-movement buttons and technical Advanced geometry all target that Side's selection.
-There are no global Side or Section selectors. Side options contain rename,
+The builder shows one large editable Side at a time. Small clickable previews
+for every Side appear at the top of the main canvas; the active preview is
+highlighted. Click a preview to make that Side large and show its Section and
+Box controls on the left. Adding or duplicating a Side opens the new Side.
+Under **Side options**, enter a **New side name** and click **Add Side** to
+start a blank Side with no Sections or Boxes. The existing copy controls follow
+it for reusing a completed layout. Measured drafts also need the new Side's
+width and height in **Advanced side settings**.
+Default names use the first available letter: **Side A**, **Side B**, through
+**Side Z**, then **Side AA**. Copies keep their source name with a Copy suffix.
+**Add Box**, **Create Grid**, **Duplicate Box**, **Delete Box**, fallback
+movement buttons and technical Advanced geometry all target the active Side.
+Side options contain rename,
 dimensions, order and deletion. Role, hints, membership and raw geometry remain
 under Advanced. IDs remain inspectable under Advanced draft details.
 
 Each Side uses a separate selection key and a stable component key. Canvas edits
-use the same Piece 4D event boundary and the same session TemplateDraft. All
-canvases re-render from the authoritative draft, including after changes to
-another Side; stale revision checks still apply. A structural error on one Side
-does not hide the other Side's canvas. Side form keys depend on that Side's
-contents, so editing another card does not discard its pending form values.
+use the same Piece 4D event boundary and the same session TemplateDraft. The
+active canvas and thumbnails are regenerated from the authoritative draft;
+stale revision checks still apply. Switching previews preserves each Side's
+Section/Box selection and never changes geometry. Late events from a minimized
+Side are rejected. Invalid dimensions do not block switching to other Sides.
+Apply form changes before switching; unsubmitted form inputs are not saved.
 
-Side cards summarize overlaps and bounds errors, with technical details collapsed.
+The active Side summarizes overlaps and bounds errors, with technical details collapsed.
 The old separate Review pane is removed. Optional **Review All Sides** below the
-cards shows static valid layouts, followed by the overall Done action. Validation
+editor shows static valid layouts, followed by the overall Done action. Validation
 still checks the complete draft before Done is enabled.
 
 ## Duplication
 
-Expand **Duplicate Side**, accept or change `<Side name> Copy`, then submit.
+Under **Duplicate Side**, accept or change `<Side name> Copy`, then submit.
 `draft.duplicate_facing` returns a new draft and appends a complete independent
 hierarchy. It preserves dimensions, Slot geometry/order/role/grid indexes,
 Region role/order/hints/bounds/shared membership and metadata. The new Side

@@ -1,7 +1,8 @@
-"""Larger scrollable editing projection; catalog/production previews stay unchanged."""
+"""Page-height editing projection; catalog/production previews stay unchanged."""
 from xml.etree import ElementTree as ET
 
 from app.pages._direct_builder import envelope, standard_size
+from app.templates.models import GeometryUnit
 from app.templates.validation import validate_template
 
 
@@ -16,13 +17,26 @@ def canvas_svg(draft, facing):
     scale = max(760/facing.width,40/w)
     left,top = 16,24
     width,height = facing.width*scale,facing.height*scale
+    grow_down = draft.template.unit == GeometryUnit.NORMALIZED
+    padding = h * scale * .75
+    # Keep the actual Facing rectangle for coordinate conversion. The editing
+    # workspace has extra room below it, without inventing measured dimensions.
+    content_bottom = max((slot.y + slot.height for slot in facing.slots), default=0) * scale
+    workspace_height = max(height, content_bottom + padding)
+    if grow_down:
+        workspace_height = max(workspace_height, width * 1.6)
+    workspace_width = max(width, max((slot.x + slot.width for slot in facing.slots), default=0) * scale)
     root = ET.Element('svg',{'xmlns':'http://www.w3.org/2000/svg',
-        'width':f'{width+32:.9f}','height':f'{height+48:.9f}',
-        'viewBox':f'0 0 {width+32:.9f} {height+48:.9f}',
+        'width':f'{workspace_width+32:.9f}','height':f'{workspace_height+48:.9f}',
+        'viewBox':f'0 0 {workspace_width+32:.9f} {workspace_height+48:.9f}',
+        'data-grow-down':str(grow_down).lower(), 'data-grow-padding':str(padding),
         'role':'group','aria-label':f'{facing.name} editing canvas','font-family':'Arial, sans-serif'})
     def add(tag, **attrs):
         return ET.SubElement(root,tag,{k.replace('_','-'):str(v) for k,v in attrs.items()})
-    add('rect',x=left,y=top,width=width,height=height,fill='#fff',stroke='#64748b',data_kind='facing')
+    add('rect',x=left,y=top,width=workspace_width,height=workspace_height,
+        fill='#fff',stroke='#64748b',data_kind='workspace')
+    add('rect',x=left,y=top,width=width,height=height,fill='none',
+        stroke='none' if grow_down else '#64748b',data_kind='facing')
     colors = {}
     for region in facing.ordered_regions():
         fill,stroke = COLORS[(region.order-1)%len(COLORS)]

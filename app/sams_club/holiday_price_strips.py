@@ -122,6 +122,19 @@ def holiday_geometry_for_side(side: int) -> SamsHolidaySideGeometry:
     )
 
 
+def holiday_geometry_for_size(strip_size: str) -> SamsHolidaySideGeometry:
+    for geometry in (SAMS_HOLIDAY_TEMPLATE.thin_side, SAMS_HOLIDAY_TEMPLATE.wide_side):
+        if geometry.designation == strip_size:
+            return geometry
+    raise ValueError('Choose one of the two supported Holiday strip sizes.')
+
+
+def holiday_geometry_for_row(row_data: SamsPriceStripRow) -> SamsHolidaySideGeometry:
+    default = holiday_geometry_for_side(row_data.side)
+    size = getattr(row_data, 'strip_size', None)
+    return default if size is None else holiday_geometry_for_size(size)
+
+
 def holiday_slot_width_pt(geometry: SamsHolidaySideGeometry) -> float:
     return geometry.width_pt / geometry.slot_count
 
@@ -145,19 +158,20 @@ def holiday_placeholder_segment(
     row_data: SamsPriceStripRow,
     column: int,
 ) -> SamsPriceStripSegment:
+    geometry = holiday_geometry_for_row(row_data)
     return SamsPriceStripSegment(
         pog=row_data.pog,
         side=row_data.side,
         row=row_data.row,
         column=column,
-        length=f"{holiday_geometry_for_side(row_data.side).width_in}x{holiday_geometry_for_side(row_data.side).height_in}",
+        length=f"{geometry.width_in}x{geometry.height_in}",
         data_on_bottom_left="",
         is_empty=True,
     )
 
 
 def expand_holiday_row_to_slots(row_data: SamsPriceStripRow) -> SamsPriceStripRow:
-    geometry = holiday_geometry_for_side(row_data.side)
+    geometry = holiday_geometry_for_row(row_data)
     by_column = {
         segment.column: segment
         for segment in row_data.segments
@@ -174,6 +188,7 @@ def expand_holiday_row_to_slots(row_data: SamsPriceStripRow) -> SamsPriceStripRo
         segments=expanded_segments,
         footer_text=row_data.footer_text,
         warnings=row_data.warnings.copy(),
+        strip_size=getattr(row_data, 'strip_size', None),
     )
 
 
@@ -227,7 +242,7 @@ def map_holiday_rows_to_strips(
 def validate_holiday_rows(rows: Iterable[SamsPriceStripRow]) -> list[str]:
     warnings: list[str] = []
     for row in rows:
-        geometry = holiday_geometry_for_side(row.side)
+        geometry = holiday_geometry_for_row(row)
         if len(row.segments) != geometry.slot_count:
             warnings.append(
                 f"Sam's Holiday Side {row.side} Row {row.row} expected {geometry.slot_count} slots, "

@@ -50,11 +50,11 @@ class TemplateBuilderTests(unittest.TestCase):
         draft = app.session_state[DRAFT_KEY]
         self.assertEqual(len(draft.template.facings), 2)
         self.assertNotEqual(first.id, draft.template.facings[1].id)
-        # Both workspaces are visible; explicitly edit the second card.
-        [item for item in app.text_input if item.label == "Side name"][1].set_value("Back side")
-        [item for item in app.number_input if item.label == "Side width"][1].set_value(2.0)
-        [item for item in app.number_input if item.label == "Side order"][1].set_value(7)
-        [item for item in app.button if item.label == "Apply side changes"][1].click().run()
+        # Adding a Side opens it in the single editor.
+        self.field(app, "text_input", "Side name").set_value("Back side")
+        self.field(app, "number_input", "Side width").set_value(2.0)
+        self.field(app, "number_input", "Side order").set_value(7)
+        self.click(app, "Apply side changes")
         self.clean(app)
         edited = app.session_state[DRAFT_KEY].template.facings[1]
         self.assertEqual((edited.name, edited.width, edited.order), ("Back side", 2.0, 7))

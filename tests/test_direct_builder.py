@@ -184,6 +184,52 @@ class MultiSelectTests(unittest.TestCase):
         self.assertTrue(edits.validate_draft(result).valid)
         with self.assertRaises(ValueError):edits.remove_slots(self.d,self.fid,[*ids,'missing'])
 
+    def test_toolbar_delete_removes_selection_once_and_clears_highlighting(self):
+        ids = [slot.id for slot in self.face.slots[:12]]
+        state = {'draft': self.d, 'canvas': self.event('delete_many', slot_ids=ids),
+                 'local': dict(facing=self.fid, region=self.rid, slot=ids[0], slots=tuple(ids))}
+        def consume():
+            consume_event(state, component_key='canvas', draft_key='draft', selection_key='local',
+                          facing_id=self.fid, transform=self.transform, allow_resize=False)
+        consume()
+        updated = state['draft']
+        self.assertEqual(updated.revision, self.d.revision + 1)
+        self.assertEqual(updated.template.facings[0].slots, self.face.slots[12:])
+        self.assertEqual(updated.template.facings[0].regions[0].slot_ids,
+                         tuple(slot.id for slot in self.face.slots[12:]))
+        self.assertEqual(state['local'], dict(facing=self.fid, region=self.rid, slot=None, slots=()))
+        self.assertEqual(state['canvas:ack'], 'many:1')
+        consume()
+        self.assertIs(state['draft'], updated)
+        self.assertTrue(edits.validate_draft(updated).valid)
+
+    def test_toolbar_delete_rejects_empty_unknown_duplicate_foreign_and_stale_ids(self):
+        for event in (
+            self.event('delete_many', slot_ids=[]),
+            self.event('delete_many', slot_ids=['missing']),
+            self.event('delete_many', slot_ids=[self.face.slots[0].id] * 2),
+            {**self.event('delete_many', slot_ids=[self.face.slots[0].id]), 'revision': self.d.revision - 1},
+            {**self.event('delete_many', slot_ids=[self.face.slots[0].id]), 'facing_id': 'other'},
+        ):
+            result = apply_event(self.d, self.fid, event, self.transform, allow_resize=False)
+            self.assertFalse(result.accepted)
+            self.assertIs(result.draft, self.d)
+
+    def test_toolbar_delete_can_span_sections_without_deleting_other_sides(self):
+        d = direct.add_section(self.d, self.fid, 'Bonus')
+        rid = edits.get_facing(d, self.fid).regions[-1].id
+        d = direct.add_box(d, self.fid, rid)
+        d = edits.duplicate_facing(d, self.fid, 'Side B')
+        source, other = d.template.facings
+        ids = [source.slots[0].id, source.slots[-1].id]
+        result = apply_event(d, self.fid,
+            dict(self.event('delete_many', slot_ids=ids), revision=d.revision), self.transform, allow_resize=False)
+        self.assertTrue(result.accepted)
+        self.assertEqual(result.draft.template.facings[0].slots, source.slots[1:-1])
+        self.assertEqual(result.draft.template.facings[1], other)
+        self.assertTrue(all(not set(ids).intersection(region.slot_ids)
+                            for region in result.draft.template.facings[0].regions))
+
     def test_out_of_bounds_group_move_retains_editable_validation(self):
         result=apply_event(self.d,self.fid,self.event('move_many',slot_ids=[self.face.slots[0].id],
             delta={'x':-100,'y':-100}),self.transform,allow_resize=False)

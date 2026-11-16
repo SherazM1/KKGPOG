@@ -147,3 +147,17 @@ class CanvasEventTests(unittest.TestCase):
                     edits.TemplateDraft(template)
         self.apply('drag', x=.08)
         self.assertEqual(get_templates(), before)
+
+    def test_side_preview_navigation_checks_identity_revision_and_target(self):
+        draft = edits.add_facing(self.draft, 'Side B', 1, 1)
+        target = draft.template.facings[-1].id
+        event = dict(self.event('activate_side'), revision=draft.revision, target_facing_id=target)
+        result = apply_event(draft, self.fid, event, None)
+        self.assertTrue(result.accepted)
+        self.assertEqual(result.active_facing_id, target)
+        self.assertIs(result.draft, draft)
+        for changes in ({'revision': draft.revision - 1}, {'template_id': 'other'},
+                        {'facing_id': 'other'}, {'target_facing_id': 'missing'}, {'target_facing_id': None}):
+            result = apply_event(draft, self.fid, {**event, **changes}, None)
+            self.assertFalse(result.accepted)
+            self.assertIs(result.draft, draft)
