@@ -398,7 +398,7 @@ class _SideDrawing(Flowable):
 
 
 def render_template_pdf(template: DisplayTemplate, *, created_on: date | None = None,
-                        text_fields=None) -> bytes:
+                        text_fields=None, use_facing_names=False, layout_note=None) -> bytes:
     """Print each Side on its configured portrait page, expanding row heights."""
     text_fields = normalize_text_fields(text_fields)
     validation = validate_template(template)
@@ -407,14 +407,15 @@ def render_template_pdf(template: DisplayTemplate, *, created_on: date | None = 
 
     output = io.BytesIO()
     doc = BaseDocTemplate(output, pagesize=PDF_PAGE_SIZE, leftMargin=6, rightMargin=6,
-                          topMargin=50, bottomMargin=30, title=template.name,
+                          topMargin=70 if layout_note else 50, bottomMargin=30, title=template.name,
                           author='Kendal King')
     created_on = created_on or datetime.now(ZoneInfo('America/Chicago')).date()
 
     def page_header(canvas, document, facing):
         canvas.saveState()
         page_width, page_height = document.pagesize
-        identifier, right_size = _fit_header(_side_identifier(facing), BODY_BOLD_FONT, 16, doc.width * .45)
+        identifier, right_size = _fit_header(facing.name if use_facing_names else _side_identifier(facing),
+                                            BODY_BOLD_FONT, 16, doc.width * .45)
         right_width = pdfmetrics.stringWidth(identifier, BODY_BOLD_FONT, right_size)
         label, size = _fit_header(template.name, BODY_BOLD_FONT, 16, doc.width - right_width - 24)
         canvas.setFillColor(_INK)
@@ -424,6 +425,10 @@ def render_template_pdf(template: DisplayTemplate, *, created_on: date | None = 
         canvas.drawRightString(page_width - doc.rightMargin, page_height - 28, identifier)
         canvas.setStrokeColor(colors.HexColor('#d7dee8'))
         canvas.line(doc.leftMargin, page_height - 40, page_width - doc.rightMargin, page_height - 40)
+        if layout_note:
+            note, note_size = _fit_header(layout_note, BODY_FONT, 8, doc.width, min_size=6)
+            canvas.setFont(BODY_FONT, note_size)
+            canvas.drawString(doc.leftMargin, page_height - 53, note)
         canvas.line(doc.leftMargin, 24, page_width - doc.rightMargin, 24)
         canvas.setFont(BODY_FONT, 8)
         canvas.drawString(doc.leftMargin, 12, f'Date: {created_on.isoformat()}')

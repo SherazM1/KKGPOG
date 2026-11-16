@@ -30,7 +30,8 @@ class TemplateViewerTests(unittest.TestCase):
             self.assertTrue(all(f".{facing}." in value for value in app.dataframe[0].value["Slot ID"]))
         self.assertEqual([button.label for button in app.button], ["Create New Template"])
         self.assertEqual(len(app.get("file_uploader")), 0)
-        self.assertEqual(len(app.get("download_button")), 0)
+        self.assertEqual([button.proto.label for button in app.get("download_button")],
+                         ["Download Holiday Quarter Pallet Template"])
         self.assertEqual(app.expander[0].label, "Advanced / Geometry details")
 
     def test_nre_viewer_uses_generic_sections_and_preserves_other_workflow_state(self):

@@ -121,6 +121,8 @@ class PdfTextFieldAppTests(unittest.TestCase):
         )
         app.run()
         self.assertNotIn(PDF_KEY, app.session_state)
-        self.assertFalse(app.get('download_button'))
+        self.assertFalse(any(button.key == 'template_builder:download_pdf'
+                             for button in app.get('download_button')))
         self.click(app, 'Create Template PDF')
-        self.assertTrue(app.get('download_button'))
+        self.assertTrue(any(button.key == 'template_builder:download_pdf'
+                            for button in app.get('download_button')))

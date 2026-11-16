@@ -26,8 +26,12 @@ def _refresh_template_workflow():
     draft instances and geometry in session state intact.
     """
     module_names = (
+        "app.templates.image_compare",
+        "app.pages._pog_comparison",
         "app.sams_club.price_strip_models",
         "app.sams_club.holiday_price_strips",
+        "app.sams_club.generic_price_strips",
+        "app.sams_club.render_generic_price_strips",
         "app.sams_club.render_price_strips_html",
         "app.templates.print_style",
         "app.templates.draft",
@@ -54,6 +58,11 @@ def _refresh_template_workflow():
             reload(module)
     st.session_state["app:template_source_signature"] = signature
     st.session_state.pop("template_builder:pdf_export", None)
+    st.session_state.pop("blank_price_strips:holiday_pdf", None)
+    builder = sys.modules.get('app.pages.price_strip_builder')
+    if builder is not None:
+        builder._live_strip_preview.clear()
+        builder._eps_preview.clear()
 
 
 def _sync_sidebar():

@@ -65,7 +65,7 @@ def xlsx(rows):
 
 
 class InputTests(unittest.TestCase):
-    def test_pocket_uses_active_renderer_font_registration_and_fallback(self):
+    def test_pocket_uses_required_gibson_registration(self):
         from unittest.mock import patch
         from app.sams_club.price_pocket import _pocket_html
         from app.sams_club import render_price_strips_html as renderer
@@ -77,10 +77,9 @@ class InputTests(unittest.TestCase):
         self.assertIn("font-family: " + renderer.SAMS_FONT_STACK, content)
         self.assertNotIn("Raleway", content)
         with patch.object(renderer, "_font_file_to_data_uri", side_effect=OSError("missing")):
-            warnings = []
-            content = _pocket_html(records, warnings)
-        self.assertIn("Gibson font data URI load failed", warnings[0])
-        self.assertIn('font-family: "Gibson", Arial, sans-serif', content)
+            with self.assertRaisesRegex(ValueError, 'Gibson is required for PDF output'):
+                _pocket_html(records, [])
+        self.assertEqual(renderer.SAMS_FONT_STACK, '"Gibson"')
 
     def test_all_formats_pocket(self):
         expected = parse_text(BASELINE)

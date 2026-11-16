@@ -16,6 +16,7 @@ class TemplateReloadTests(unittest.TestCase):
             'template_builder:draft': draft,
             'template_builder:selection': selection,
             'template_builder:pdf_export': {'pdf': b'%PDF-old'},
+            'blank_price_strips:holiday_pdf': {'bytes': b'%PDF-old-strips'},
         }
         configured_size = render_pdf.PDF_PAGE_SIZE
         render_pdf.PDF_PAGE_SIZE = (612, 792)
@@ -25,6 +26,7 @@ class TemplateReloadTests(unittest.TestCase):
             self.assertIs(state['template_builder:draft'], draft)
             self.assertIs(state['template_builder:selection'], selection)
             self.assertNotIn('template_builder:pdf_export', state)
+            self.assertNotIn('blank_price_strips:holiday_pdf', state)
             state['template_builder:pdf_export'] = {'pdf': b'%PDF-new'}
             with patch.object(home, 'reload') as reload_mock:
                 home._refresh_template_workflow()

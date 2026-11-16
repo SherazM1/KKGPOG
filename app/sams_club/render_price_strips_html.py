@@ -26,6 +26,7 @@ import fitz
 from reportlab.lib.units import inch
 
 from app.sams_club.price_strip_models import SamsPriceStripPdfResult, SamsPriceStripRow, SamsPriceStripSegment
+from app.sams_club.generic_price_strips import GENERIC_SIZES, geometry_for_size, generic_boundaries
 from app.sams_club.holiday_price_strips import (
     SAMS_HOLIDAY_TEMPLATE,
     SamsHolidaySideGeometry,
@@ -357,6 +358,9 @@ def compute_strip_canvas(
     warnings: list[str],
     template_name: str | None = None,
 ) -> tuple[float, float, float]:
+    if row_data.strip_size in GENERIC_SIZES:
+        geometry = geometry_for_size(row_data.strip_size)
+        return geometry.width_pt, geometry.height_pt, _DEFAULT_FOOTER_HEIGHT
     if is_sams_holiday_template(template_name):
         geometry = holiday_geometry_for_row(row_data)
         footer_h = min(_DEFAULT_FOOTER_HEIGHT, max(6.0, geometry.height_pt * 0.085))
@@ -662,7 +666,7 @@ def _generate_holiday_calibration_guides(
         ),
         (
             '<div class="holiday-calibration label" '
-            'style="position:absolute; left:6pt; top:6pt; font:600 8pt Arial; color:#e11d48;">'
+            'style="position:absolute; left:6pt; top:6pt; font:600 8pt Gibson; color:#e11d48;">'
             f"{html.escape(SAMS_HOLIDAY_TEMPLATE.name)} {geometry.designation} Side {row_data.side} "
             f"{strip_w:g}pt x {strip_h:g}pt</div>"
         ),
@@ -693,7 +697,7 @@ def _generate_holiday_calibration_guides(
         guide_parts.append(
             '<div class="holiday-calibration slot-number" '
             f'style="position:absolute; left:{center_x + 3}pt; top:{strip_h - 14}pt; '
-            'font:600 7pt Arial; color:#0369a1;">'
+            'font:600 7pt Gibson; color:#0369a1;">'
             f"{slot_index}</div>"
         )
     return "\n".join(guide_parts)
@@ -711,6 +715,26 @@ def _estimate_text_width(text: str, font_size: float, weight: str = "regular") -
         return 0.0
     factor = 0.54 if weight == "semibold" else 0.50
     return len(value) * font_size * factor
+
+
+def _generate_generic_calibration_guides(size, width, height):
+    parts = [f'<div class="holiday-calibration" style="position:absolute; left:0; top:0; '
+             f'width:{width}pt; height:{height}pt; border:.8pt solid #e61a26;"></div>']
+    for boundary in generic_boundaries(size)[1:-1]:
+        parts.append(f'<div style="position:absolute; left:{boundary}pt; top:0; '
+                     f'height:{height}pt; border-left:.6pt solid #1a59e6;"></div>')
+    for number, center in enumerate(GENERIC_SIZES[size][1], 1):
+        parts.extend([
+            f'<div style="position:absolute; left:{center}pt; top:0; height:{height}pt; '
+            'border-left:.6pt dashed #e61a26;"></div>',
+            f'<div style="position:absolute; left:{center - 9}pt; top:{height / 2}pt; '
+            'width:18pt; border-top:.6pt solid #00a633;"></div>',
+            f'<div style="position:absolute; left:{center}pt; top:{height / 2 - 9}pt; '
+            'height:18pt; border-left:.6pt solid #00a633;"></div>',
+            f'<div style="position:absolute; left:{center + 3}pt; top:2pt; '
+            f'font:6pt Gibson; color:#1a59e6;">{number}</div>',
+        ])
+    return '\n'.join(parts)
 
 
 def _truncate_svg_text(text: str, font_size: float, max_width: float, weight: str = "regular") -> str:
@@ -1100,7 +1124,7 @@ async def _render_page_to_pdf(
     page = await browser.new_page()
     try:
         await page.set_content(html_content)
-        await page.evaluate("() => document.fonts.ready")
+        await require_gibson_fonts(page)
         pdf_bytes = await page.pdf(
             width=f"{(width + (_BLEED_PT * 2)) / inch}in",
             height=f"{(height + (_BLEED_PT * 2)) / inch}in",
@@ -1111,7 +1135,20 @@ async def _render_page_to_pdf(
         await page.close()
 
 
-SAMS_FONT_STACK = '"Gibson", Arial, sans-serif'
+SAMS_FONT_STACK = '"Gibson"'
+
+
+async def require_gibson_fonts(page):
+    """Never create a PDF with a browser's substitute font."""
+    await page.evaluate('''async () => {
+        for (const weight of [400, 600]) {
+            const faces = await document.fonts.load(`${weight} 12px "Gibson"`);
+            if (!faces.length || faces.some(face => face.status !== 'loaded')) {
+                throw new Error('Gibson Regular and SemiBold are required for PDF output.');
+            }
+        }
+        await document.fonts.ready;
+    }''')
 
 
 def sams_font_face_css(warnings: list[str]) -> str:
@@ -1123,16 +1160,11 @@ def sams_font_face_css(warnings: list[str]) -> str:
     try:
         regular_data_uri = _font_file_to_data_uri(gibson_regular_path)
         semibold_data_uri = _font_file_to_data_uri(gibson_semibold_path)
-        fonts_available = True
     except Exception as exc:
-        regular_data_uri = ""
-        semibold_data_uri = ""
-        fonts_available = False
-        warnings.append(f"Gibson font data URI load failed in HTML renderer: {exc}")
+        raise ValueError('Gibson is required for PDF output. Restore assets/Gibson-Regular.otf '
+                         'and assets/Gibson-SemiBold.otf, then generate the PDF again.') from exc
 
-    font_face_css = ""
-    if fonts_available:
-        font_face_css = f"""
+    font_face_css = f"""
 @font-face {{
     font-family: "Gibson";
     src: url('{regular_data_uri}') format('opentype');
@@ -1163,12 +1195,18 @@ def _generate_strip_html(
     """
     font_face_css = sams_font_face_css(warnings)
 
-    holiday_mode = is_sams_holiday_template(template_name)
+    generic_mode = row_data.strip_size in GENERIC_SIZES
+    holiday_mode = is_sams_holiday_template(template_name) or generic_mode
     holiday_geometry: SamsHolidaySideGeometry | None = None
     if holiday_mode:
-        holiday_geometry = holiday_geometry_for_row(row_data)
+        holiday_geometry = (geometry_for_size(row_data.strip_size) if generic_mode
+                            else holiday_geometry_for_row(row_data))
 
-    layout_profile = _resolve_layout_profile(strip_w, strip_h, warnings)
+    reference = SAMS_HOLIDAY_TEMPLATE.thin_side
+    reference_slot_w = holiday_slot_width_pt(reference)
+    layout_profile = _resolve_layout_profile(
+        reference.width_pt if generic_mode else strip_w,
+        reference.height_pt if generic_mode else strip_h, warnings)
     page_w = strip_w + (_BLEED_PT * 2)
     page_h = strip_h + (_BLEED_PT * 2)
     crop_mark_len = 12.0
@@ -1177,9 +1215,9 @@ def _generate_strip_html(
     trim_top = _BLEED_PT
     trim_right = _BLEED_PT + strip_w
     trim_bottom = _BLEED_PT + strip_h
-    positions = (
+    positions = [] if generic_mode else (
         _resolve_holiday_ticket_positions(row_data)
-        if holiday_mode
+        if holiday_mode and not generic_mode
         else _resolve_ticket_positions_from_profile(
             strip_w,
             len(row_data.segments),
@@ -1190,6 +1228,16 @@ def _generate_strip_html(
     )
     ticket_y = footer_h
     ticket_h = strip_h - footer_h
+    artwork_scale, artwork_top = 1.0, 0.0
+    if generic_mode:
+        centers = GENERIC_SIZES[row_data.strip_size][1]
+        boundaries = generic_boundaries(row_data.strip_size)
+        safe_width = min(2 * min(center - boundaries[i], boundaries[i + 1] - center)
+                         for i, center in enumerate(centers))
+        artwork_scale = min(strip_h / reference.height_pt, safe_width / reference_slot_w)
+        artwork_top = (strip_h - reference.height_pt * artwork_scale) / 2
+        positions = [(center - reference_slot_w * artwork_scale / 2,
+                      reference_slot_w * artwork_scale) for center in centers]
 
     footer_left_in = _profile_number(layout_profile, "footer", "left_in", 0.08)
     footer_bottom_in = _profile_number(layout_profile, "footer", "bottom_in", 0.055)
@@ -1227,17 +1275,27 @@ def _generate_strip_html(
         slot_center_x = x + (ticket_w / 2.0)
         ticket_html, desc_block_left = _generate_ticket_html(
             segment,
-            x,
-            ticket_y,
-            ticket_w,
-            ticket_h,
+            0 if generic_mode else x,
+            _DEFAULT_FOOTER_HEIGHT if generic_mode else ticket_y,
+            reference_slot_w if generic_mode else ticket_w,
+            reference.height_pt - _DEFAULT_FOOTER_HEIGHT if generic_mode else ticket_h,
             layout_profile,
-            slot_center_x=slot_center_x if holiday_mode else None,
+            slot_center_x=(reference_slot_w / 2 if generic_mode else slot_center_x) if holiday_mode else None,
             center_main_amount=holiday_mode,
         )
+        if generic_mode:
+            ticket_html = (
+                f'<div class="reference-ticket" style="position:absolute; left:{x}pt; '
+                f'top:{artwork_top}pt; transform:scale({artwork_scale}); '
+                f'transform-origin:0 0; width:{reference_slot_w}pt; height:{reference.height_pt}pt;">'
+                f'{ticket_html}</div>')
         ticket_htmls.append(ticket_html)
         if len(ticket_htmls) == 1:
-            footer_left_pt = x + desc_block_left
+            footer_left_pt = x + desc_block_left * artwork_scale
+
+    if generic_mode:
+        footer_font_size_pt *= artwork_scale
+        footer_bottom_in = footer_bottom_in * artwork_scale + artwork_top / inch
 
     footer_text = _resolve_strip_footer_text(row_data)
     calibration_html = (
@@ -1249,9 +1307,11 @@ def _generate_strip_html(
             ticket_y,
             ticket_h,
         )
-        if calibration and holiday_geometry is not None
+        if calibration and holiday_geometry is not None and not generic_mode
         else ""
     )
+    if calibration and generic_mode:
+        calibration_html = _generate_generic_calibration_guides(row_data.strip_size, strip_w, strip_h)
 
     html_parts = [
         "<!DOCTYPE html>",

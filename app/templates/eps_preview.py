@@ -6,7 +6,8 @@ import re
 
 from reportlab.pdfgen import canvas
 
-from app.sams_club.holiday_price_strips import holiday_geometry_for_size
+from app.sams_club.generic_price_strips import geometry_for_size as holiday_geometry_for_size
+from app.sams_club.generic_price_strips import GENERIC_SIZES, generic_boundaries
 
 
 NUMBER = r'[-+]?(?:\d+\.?\d*|\.\d+)'
@@ -39,14 +40,15 @@ def parse_eps(data):
         raise ValueError('Upload an ArtiosCAD / Illustrator 8 vector EPS, like the sample template.')
     bbox = re.search(r'^%%BoundingBox:\s*(' + NUMBER + r')\s+(' + NUMBER +
                      r')\s+(' + NUMBER + r')\s+(' + NUMBER + r')', text, re.M)
-    if not bbox or '%%EndSetup' not in text or '%AI5_EndLayer' not in text:
+    if not bbox or '%%EndSetup' not in text or not any(
+            marker in text for marker in ('%%PageTrailer', '%AI5_EndLayer')):
         raise ValueError('The EPS is missing its drawing bounds or vector layer.')
     bounds = tuple(map(float, bbox.groups()))
     if (not all(math.isfinite(v) for v in bounds) or
             not 0 < bounds[2] - bounds[0] <= 14400 or
             not 0 < bounds[3] - bounds[1] <= 14400):
         raise ValueError('The EPS drawing bounds are invalid or too large.')
-    body = text.split('%%EndSetup', 1)[1].split('%AI5_EndLayer', 1)[0]
+    body = text.split('%%EndSetup', 1)[1].split('%%PageTrailer', 1)[0].split('%AI5_EndLayer', 1)[0]
     paths, texts, cuts, points = [], [], [], []
     stroke, fill, width, cut = BLUE, BLUE, 1, False
     matrix, font, size = (1, 0, 0, 1, 0, 0), 'Helvetica', 12
@@ -111,12 +113,45 @@ def parse_eps(data):
             continue
         else:
             raise ValueError('This EPS uses unsupported artwork. Export it as an ArtiosCAD / Illustrator 8 vector EPS.')
+    # ArtiosCAD can draw a stack with shared horizontal edges rather than
+    # closing each rectangle in a separate path. Recover those strip outlines.
+    horizontal, vertical = {}, {}
+    for commands, _, _, is_cut in paths:
+        if not is_cut:
+            continue
+        previous = None
+        for op, args in commands:
+            point = tuple(round(v, 3) for v in args) if op in ('m', 'L') else None
+            if op == 'L' and previous is not None:
+                x0, y0 = previous
+                x1, y1 = point
+                if abs(y1 - y0) < .01 and x0 != x1:
+                    horizontal.setdefault(tuple(sorted((x0, x1))), set()).add(y0)
+                if abs(x1 - x0) < .01 and y0 != y1:
+                    vertical.setdefault(x0, []).append(tuple(sorted((y0, y1))))
+            previous = point
+    def covered(x, bottom, top):
+        end = bottom
+        for low, high in sorted(vertical.get(x, [])):
+            if low > end + .01:
+                continue
+            if high > end:
+                end = high
+            if end >= top - .01:
+                return True
+        return False
+    for (left, right), levels in horizontal.items():
+        levels = sorted(levels)
+        for bottom, top in zip(levels, levels[1:]):
+            if covered(left, bottom, top) and covered(right, bottom, top):
+                cuts.append((left, bottom, right, top))
+    cuts = list(dict.fromkeys(tuple(round(v, 3) for v in r) for r in cuts))
     if not cuts:
         raise ValueError('No rectangular Artios_Cut strip outlines were found in this EPS.')
     return EpsDrawing(bounds, paths, texts, cuts)
 
 
-def render_eps_preview(data, strip_size, print_pdf, *, guides_in_pdf=False):
+def render_eps_preview(data, strip_size, print_pdf, *, guides_in_pdf=False, row_number=1):
     import pymupdf
 
     drawing = parse_eps(data)
@@ -125,6 +160,12 @@ def render_eps_preview(data, strip_size, print_pdf, *, guides_in_pdf=False):
                and abs(r[3] - r[1] - geometry.height_pt) < .05]
     if not matches:
         raise ValueError('This EPS has no strip outline matching the selected dimensions. Choose the other size or upload its EPS.')
+    matches.sort(key=lambda r: (-r[3], r[0]))
+    if len(matches) > 1:
+        if not 1 <= row_number <= len(matches):
+            raise ValueError(f'The EPS drawing has {len(matches)} rows of this size. '
+                             'Additional rows are available in the strip preview and finished PDF.')
+        matches = [matches[row_number - 1]]
     left, bottom, right, top = drawing.bounds
     output = io.BytesIO()
     pdf = canvas.Canvas(output, pagesize=(right - left, top - bottom))
@@ -158,8 +199,10 @@ def render_eps_preview(data, strip_size, print_pdf, *, guides_in_pdf=False):
             page.show_pdf_page(target, source, 0, clip=clip, keep_proportion=False)
             if not guides_in_pdf:
                 page.draw_rect(target, color=RED, width=2)
-                for column in range(1, geometry.slot_count):
-                    x = target.x0 + target.width * column / geometry.slot_count
+                boundaries = (generic_boundaries(strip_size)[1:-1] if strip_size in GENERIC_SIZES else
+                              [geometry.width_pt * c / geometry.slot_count for c in range(1, geometry.slot_count)])
+                for boundary in boundaries:
+                    x = target.x0 + boundary
                     page.draw_line((x, target.y0), (x, target.y1), color=BLUE, width=1)
             zoom = target
         scale = min(2, 1800 / page.rect.width)

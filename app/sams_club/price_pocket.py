@@ -86,7 +86,7 @@ async def _render_pocket_async(content):
         try:
             page = await browser.new_page()
             await page.set_content(content)
-            await page.evaluate("() => document.fonts.ready")
+            await strip_html.require_gibson_fonts(page)
             # Measure the actual loaded Gibson face; keep complete text and reject overflow.
             await page.evaluate("""() => {
                 for (const el of document.querySelectorAll('.fit, .price')) {

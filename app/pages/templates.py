@@ -12,6 +12,8 @@ from app.templates.validation import validate_template
 
 def _render_pog_templates():
     from app.pages import template_builder
+    from app.pages._pog_comparison import render_comparison
+    render_comparison()
     if st.session_state.get(template_builder.MODE_KEY) == "builder":
         template_builder.render()
         return
@@ -63,6 +65,19 @@ def _render_pog_templates():
         st.warning(issue.message)
     if validation.valid:
         st.caption("Structure checks passed: identifiers, order, bounds and overlaps.")
+        if template.id == "holiday_qp_2026":
+            from app.templates.render_pdf import render_template_pdf
+            st.caption("Download all four blank sides: Left Side, Front, Right Side and Back.")
+            st.download_button(
+                "Download Holiday Quarter Pallet Template",
+                data=render_template_pdf(
+                    template, use_facing_names=True,
+                    layout_note="Layout sketch - not to scale. Physical dimensions are not calibrated.",
+                ),
+                file_name="holiday_quarter_pallet_template.pdf",
+                mime="application/pdf", on_click="ignore",
+                key="template_viewer:download_holiday_qp",
+            )
         st.image(geometry_svg(template, facing.id), width="content")
         st.caption("Numbers show slot order. Colored outlines are region envelopes; dashed section outlines appear where applicable.")
         if facing.regions:

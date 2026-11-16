@@ -5,8 +5,8 @@ from pathlib import Path
 
 import streamlit as st
 
-from app.sams_club.holiday_price_strips import (holiday_geometry_for_side,
-                                               holiday_geometry_for_size)
+from app.sams_club.holiday_price_strips import holiday_geometry_for_side
+from app.sams_club.generic_price_strips import geometry_for_size as holiday_geometry_for_size
 from app.sams_club.price_strip_models import (
     SamsPriceStripRow,
     SamsPriceStripSegment,
@@ -23,10 +23,42 @@ SHEET_KEY = "blank_price_strips:sheet"
 SHEET_UPLOAD_KEY = "holiday_builder:sheet_upload"
 SHEET_POG_KEY = "holiday_builder:sheet_pog"
 SHEET_ERROR_KEY = "blank_price_strips:sheet_error"
+FORMAT_KEY = 'blank_price_strips:format'
+FORMAT_WIDGET_KEY = 'price_strips:format'
+FORMAT_DRAFTS_KEY = 'blank_price_strips:format_drafts'
+GENERIC_EPS_PATH = BASELINE_EPS_PATH.with_name('generic_price_strips_baseline.eps')
 STRIP_SIZES = {
     "thin": "30 1/4 × 3 7/16 inches — 6 positions",
     "wide": "38 7/16 × 3 7/16 inches — 8 positions",
 }
+GENERIC_STRIP_SIZES = {
+    'generic_11': '11 × 1 15/16 inches — 3 positions',
+    'generic_15_25': '15 1/4 × 1 15/16 inches — 4 positions',
+    'generic_19_25': '19 1/4 × 1 15/16 inches — 5 positions',
+    'generic_23_5': '23 1/2 × 1 15/16 inches — 6 positions',
+}
+
+
+def _switch_format(target=None):
+    target = target or st.session_state[FORMAT_WIDGET_KEY]
+    previous = st.session_state.get(FORMAT_KEY, 'holiday')
+    if previous != target:
+        keys = (ROWS_KEY, SHEET_KEY, EPS_KEY, SHEET_POG_KEY, 'holiday_builder:name',
+                'holiday_builder:side', 'holiday_builder:all_sides')
+        saved = st.session_state.setdefault(FORMAT_DRAFTS_KEY, {})
+        saved[previous] = {key:deepcopy(st.session_state[key]) for key in keys if key in st.session_state}
+        for key in keys:
+            st.session_state.pop(key, None)
+        st.session_state.update(deepcopy(saved.get(target, {})))
+        for key in list(st.session_state):
+            if key.startswith(('holiday_builder:row_tickets:', 'holiday_builder:start:',
+                               'holiday_builder:strip_size:', 'holiday_builder:preview_row:',
+                               'holiday_builder:footer:')) or key in (EPS_UPLOAD_KEY, SHEET_UPLOAD_KEY):
+                st.session_state.pop(key, None)
+        st.session_state.pop(PDF_KEY, None)
+        st.session_state.pop(SHEET_ERROR_KEY, None)
+    st.session_state[FORMAT_KEY] = target
+    st.session_state[FORMAT_WIDGET_KEY] = target
 
 
 def _default_tickets(side, strip_size=None):
@@ -41,8 +73,10 @@ def _default_tickets(side, strip_size=None):
 
 def _side_rows(side):
     drafts = st.session_state.setdefault(ROWS_KEY, {})
+    default_size = ('generic_11' if st.session_state.get(FORMAT_KEY) == 'generic'
+                    else holiday_geometry_for_side(side).designation)
     if side not in drafts:
-        tickets = _default_tickets(side)
+        tickets = _default_tickets(side, default_size)
         # Keep entries from the former single-row editor in open sessions.
         previous = st.session_state.get(f"holiday_builder:tickets:{side}", {})
         for index, changes in previous.get("edited_rows", {}).items():
@@ -52,7 +86,7 @@ def _side_rows(side):
             "start": st.session_state.get("holiday_builder:row", 1),
             "rows": [{"tickets": tickets}],
         }
-    drafts[side].setdefault("strip_size", holiday_geometry_for_side(side).designation)
+    drafts[side].setdefault("strip_size", default_size)
     first = drafts[side]['rows'][0].get('number', drafts[side]['start'])
     for index, row in enumerate(drafts[side]['rows']):
         row.setdefault('number', first + index)
@@ -136,12 +170,16 @@ def _create_pdf(name, side, row_number, ticket_rows, *, strip_size=None, calibra
 
 
 def _render_strips(strips, calibration=False):
-    from app.sams_club.render_price_strips_html import render_sams_price_strips_pdf
-    result = render_sams_price_strips_pdf(
-        strips,
-        template_name="Sam's Holiday",
-        calibration=calibration,
-    )
+    if strips and all(str(row.strip_size).startswith('generic_') for row in strips):
+        from app.sams_club.render_generic_price_strips import render_generic_price_strips_pdf
+        result = render_generic_price_strips_pdf(strips, calibration=calibration)
+    else:
+        from app.sams_club.render_price_strips_html import render_sams_price_strips_pdf
+        result = render_sams_price_strips_pdf(
+            strips,
+            template_name="Sam's Holiday",
+            calibration=calibration,
+        )
     
     if not result.pdf_bytes:
         message = (
@@ -202,6 +240,7 @@ def _load_sheet_upload():
     except ValueError as exc:
         st.session_state[SHEET_ERROR_KEY] = str(exc)
         return
+    _switch_format(sheet.get('format', 'holiday'))
     sheet.update(name=uploaded.name, current=None, saved={})
     st.session_state[SHEET_KEY] = sheet
     st.session_state[SHEET_POG_KEY] = next(iter(sheet['pogs']))
@@ -212,7 +251,7 @@ def _load_sheet_upload():
 def _sheet_import_controls():
     st.file_uploader('Upload price-strip data (.xlsx)', type=['xlsx'], key=SHEET_UPLOAD_KEY,
                      on_change=_load_sheet_upload,
-                     help='Reads the Price Strip Data sheet and fills products by POG, side, row and column.')
+                     help='Reads Holiday data or Generic merge data and fills products by side, row and position.')
     if st.session_state.get(SHEET_ERROR_KEY):
         st.error(st.session_state[SHEET_ERROR_KEY])
         st.caption('Import failed. Your existing rows are unchanged.')
@@ -240,7 +279,7 @@ def _eps_preview(data, name, side, row_number, tickets, strip_size, *, footer_te
     parse_eps(data)
     pdf = _create_pdf(name, side, row_number, [tickets], strip_size=strip_size,
                       calibration=True, footers=[footer_text])
-    return render_eps_preview(data, strip_size, pdf, guides_in_pdf=True)
+    return render_eps_preview(data, strip_size, pdf, guides_in_pdf=True, row_number=row_number)
 
 
 def _active_eps():
@@ -248,6 +287,8 @@ def _active_eps():
     if custom is not None:
         return custom
     try:
+        if st.session_state.get(FORMAT_KEY) == 'generic':
+            return {'name':'Generic baseline template (KK240100-13)', 'bytes':GENERIC_EPS_PATH.read_bytes()}
         return {"name": "Sam's Holiday baseline template", "bytes": BASELINE_EPS_PATH.read_bytes()}
     except OSError as exc:
         raise ValueError('The baseline EPS is missing. Restore it or upload an EPS template.') from exc
@@ -283,12 +324,18 @@ def render():
     st.caption(
         "Add as many rows as you need. Each row prints as one full-width PDF page."
     )
+    st.selectbox('Template format', ['holiday', 'generic'],
+                 index=0 if st.session_state.get(FORMAT_KEY, 'holiday') == 'holiday' else 1,
+                 format_func=lambda value: "Sam's Holiday" if value == 'holiday' else 'Generic (KK240100-13)',
+                 key=FORMAT_WIDGET_KEY, on_change=_switch_format)
     _sheet_import_controls()
+    generic = st.session_state.get(FORMAT_KEY) == 'generic'
+    sizes = GENERIC_STRIP_SIZES if generic else STRIP_SIZES
     
     name = st.text_input(
         "Template name",
         value=None if 'holiday_builder:name' in st.session_state else
-            st.session_state.get(SHEET_KEY, {}).get('active_name', "Holiday Price Strips"),
+            st.session_state.get(SHEET_KEY, {}).get('active_name', "Generic Price Strips" if generic else "Holiday Price Strips"),
         key="holiday_builder:name",
     )
     if st.session_state.get(SHEET_KEY):
@@ -314,9 +361,9 @@ def render():
     numbers = _row_numbers(draft)
     
     strip_size = st.selectbox(
-        "Strip dimensions", list(STRIP_SIZES),
-        index=list(STRIP_SIZES).index(draft["strip_size"]),
-        format_func=STRIP_SIZES.get,
+        "Strip dimensions", list(sizes),
+        index=list(sizes).index(draft["strip_size"]),
+        format_func=sizes.get,
         key=f"holiday_builder:strip_size:{side}",
     )
     draft["strip_size"] = strip_size
@@ -325,7 +372,7 @@ def render():
     st.file_uploader(
         "Upload a different EPS (optional)", type=["eps"], key=EPS_UPLOAD_KEY,
         on_change=_save_eps_upload,
-        help="The Sam's Holiday EPS is used automatically. Upload an ArtiosCAD / Illustrator 8 EPS to override it.",
+        help="The selected format's baseline EPS is used automatically. Upload an ArtiosCAD / Illustrator 8 EPS to override it.",
     )
     
     st.caption(
@@ -350,6 +397,7 @@ def render():
             edited = st.data_editor(
                 row["editor_base"], hide_index=True, num_rows="fixed",
                 width="stretch", key=editor_key,
+                column_config={'Item #':st.column_config.TextColumn('UPC' if generic else 'Item #')},
             )
             row["tickets"] = edited + row["tickets"][geometry.slot_count:]
             if 'footer_text' in row:
@@ -421,6 +469,7 @@ def render():
                         strip_size,
                         preview_pdf,
                         guides_in_pdf=True,
+                        row_number=numbers[selected_row],
                     )
                     
                 except ValueError as exc:
