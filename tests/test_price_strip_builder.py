@@ -88,73 +88,49 @@ class PriceStripRowsTests(unittest.TestCase):
 
 
 class PriceStripRowsAppTests(unittest.TestCase):
-    def setUp(self):
-        self.app = AppTest.from_file(str(ROOT / 'home.py'), default_timeout=15)
-        self.app.session_state['active_workflow'] = 'Templates'
-        self.app.session_state['templates:selected_type'] = '2. Price Strips'
-        self.app.run()
-        self.assertFalse(self.app.exception)
+    def start(self, imported=False):
+        from tests.test_price_strip_sheet import upload_state
+        app = AppTest.from_file(str(ROOT / 'home.py'), default_timeout=15)
+        app.session_state['active_workflow'] = 'Templates'
+        app.session_state['templates:selected_type'] = '2. Price Strips'
+        if imported:
+            for key, value in upload_state().items():
+                app.session_state[key] = value
+        app.run()
+        self.assertFalse(app.exception)
+        return app
 
-    def button(self, label):
-        return next(button for button in self.app.button if button.label == label)
+    def test_upload_is_required_and_manual_controls_are_absent(self):
+        app = self.start()
+        self.assertFalse(any(w.label == 'Create Price Strip PDF' for w in app.button))
+        self.assertFalse(any(w.label == 'Add Row' for w in app.button))
+        self.assertFalse(any(w.label in ('Side', 'Strip dimensions') for w in app.selectbox))
+        self.assertFalse(any(w.label == 'Starting row' for w in app.number_input))
+        self.assertTrue(any('Upload a valid spreadsheet' in w.value for w in app.info))
 
-    def edit_first_product(self, brand):
-        self.app.session_state['holiday_builder:row_tickets:1:0:thin'] = {
-            'edited_rows': {0: {'Brand': brand}}, 'added_rows': [], 'deleted_rows': []}
-        self.app.run()
+    def test_imported_products_are_read_only_and_old_edits_cannot_change_export(self):
+        app = self.start(imported=True)
+        app.session_state[builder.ROWS_KEY][1]['rows'][0]['tickets'][0]['Brand'] = 'OLD EDIT'
+        app.run()
+        self.assertFalse(app.exception)
+        self.assertFalse(app.get('data_editor'))
+        self.assertFalse(any(w.label in ('Template name', 'Row footer') for w in app.text_input))
+        with patch.object(builder, '_create_all_sides_pdf', return_value=b'pdf') as export:
+            next(w for w in app.button if w.label == 'Create Price Strip PDF').click().run()
+        source = export.call_args.args[1]
+        self.assertEqual(set(source), {1, 2})
+        self.assertEqual(source[1]['rows'][0]['tickets'][0]['Brand'], 'POG A Product 1')
+        self.assertEqual([r['number'] for r in source[1]['rows']], [2, 4])
+        self.assertTrue(app.get('download_button'))
+        self.assertFalse(app.exception)
 
-    def test_edits_survive_added_rows_side_changes_and_template_changes(self):
-        self.edit_first_product('Kept brand')
-        self.button('Add Row').click().run()
-        self.button('Add Row').click().run()
-        next(w for w in self.app.number_input if w.label == 'Starting row').set_value(4).run()
-        next(w for w in self.app.selectbox if w.label == 'Side').select(2).run()
-        next(w for w in self.app.selectbox if w.label == 'Side').select(1).run()
-        next(w for w in self.app.radio if w.label == 'Template type').set_value('1. POG Template').run()
-        next(w for w in self.app.radio if w.label == 'Template type').set_value('2. Price Strips').run()
-        self.assertFalse(self.app.exception)
-        draft = self.app.session_state[builder.ROWS_KEY][1]
-        self.assertEqual(len(draft['rows']), 3)
-        self.assertEqual(draft['start'], 4)
-        self.assertEqual(draft['rows'][0]['tickets'][0]['Brand'], 'Kept brand')
-        self.assertEqual([w.label for w in self.app.expander if w.label.startswith('Row ')], ['Row 4', 'Row 5', 'Row 6'])
-
-    def test_download_is_invalidated_by_edits_and_new_rows(self):
-        self.button('Add Row').click().run()
-        with patch.object(builder, '_create_pdf', return_value=b'pdf') as renderer:
-            self.button('Create Price Strip PDF').click().run()
-        self.assertFalse(self.app.exception)
-        self.assertEqual(len(renderer.call_args.args[3]), 2)
-        self.assertEqual(self.app.session_state[builder.PDF_KEY]['row_count'], 2)
-        self.edit_first_product('Changed')
-        self.assertNotIn(builder.PDF_KEY, self.app.session_state)
-        with patch.object(builder, '_create_pdf', return_value=b'pdf'):
-            self.button('Create Price Strip PDF').click().run()
-        self.button('Add Row').click().run()
-        self.assertNotIn(builder.PDF_KEY, self.app.session_state)
-        self.assertFalse(self.app.exception)
-
-    def test_sizes_can_change_without_losing_hidden_products_or_rows(self):
-        picker = next(w for w in self.app.selectbox if w.label == 'Strip dimensions')
-        self.assertEqual(picker.options, list(builder.STRIP_SIZES.values()))
-        picker.select('wide').run()
-        self.app.session_state['holiday_builder:row_tickets:1:0:wide'] = {
-            'edited_rows': {0: {'Brand': 'First'}, 7: {'Brand': 'Eighth'}},
-            'added_rows': [], 'deleted_rows': []}
-        self.app.run()
-        self.button('Add Row').click().run()
-        next(w for w in self.app.selectbox if w.label == 'Strip dimensions').select('thin').run()
-        self.assertEqual(self.app.session_state[builder.ROWS_KEY][1]['rows'][0]['tickets'][7]['Brand'], 'Eighth')
-        self.edit_first_product('First edited while narrow')
-        next(w for w in self.app.selectbox if w.label == 'Strip dimensions').select('wide').run()
-        draft = self.app.session_state[builder.ROWS_KEY][1]
-        self.assertEqual(len(draft['rows']), 2)
-        self.assertEqual(draft['rows'][0]['tickets'][0]['Brand'], 'First edited while narrow')
-        self.assertEqual(draft['rows'][0]['tickets'][7]['Brand'], 'Eighth')
-        next(w for w in self.app.selectbox if w.label == 'Side').select(2).run()
-        next(w for w in self.app.selectbox if w.label == 'Strip dimensions').select('thin').run()
-        with patch.object(builder, '_create_pdf', return_value=b'pdf') as renderer:
-            self.button('Create Price Strip PDF').click().run()
-        self.assertEqual(renderer.call_args.kwargs['strip_size'], 'thin')
-        self.assertEqual(len(renderer.call_args.args[3][0]), 6)
-        self.assertFalse(self.app.exception)
+    def test_failed_upload_hides_preview_and_stale_download(self):
+        app = self.start(imported=True)
+        with patch.object(builder, '_create_all_sides_pdf', return_value=b'pdf'):
+            next(w for w in app.button if w.label == 'Create Price Strip PDF').click().run()
+        app.session_state[builder.SHEET_ERROR_KEY] = 'Invalid workbook'
+        app.run()
+        self.assertFalse(app.exception)
+        self.assertNotIn(builder.PDF_KEY, app.session_state)
+        self.assertFalse(app.get('download_button'))
+        self.assertFalse(any(w.label == 'Create Price Strip PDF' for w in app.button))

@@ -128,13 +128,20 @@ class EpsPreviewTests(unittest.TestCase):
 
 
 class EpsPreviewAppTests(unittest.TestCase):
-    def test_live_preview_tracks_size_row_and_entries_and_survives_navigation(self):
+    def start(self):
+        from tests.test_price_strip_sheet import upload_state
         app = AppTest.from_file(str(ROOT / 'home.py'), default_timeout=15)
         app.session_state['active_workflow'] = 'Templates'
         app.session_state['templates:selected_type'] = '2. Price Strips'
+        for key, value in upload_state().items():
+            app.session_state[key] = value
         app.run()
         self.assertFalse(app.exception)
-        self.assertTrue(any('baseline template' in caption.value for caption in app.caption))
+        return app
+
+    def test_preview_tracks_imported_side_and_row_and_survives_navigation(self):
+        app = self.start()
+        self.assertTrue(any(w.label == 'Full EPS drawing' for w in app.expander))
         self.assertNotIn(builder.PDF_KEY, app.session_state)
         app.session_state[builder.EPS_KEY] = {'name':'drawing.eps', 'bytes':example_eps()}
         blank = io.BytesIO()
@@ -142,29 +149,22 @@ class EpsPreviewAppTests(unittest.TestCase):
         with patch.object(builder, '_live_strip_preview', return_value=(blank.getvalue(), print_pdf())) as preview, \
                 patch('app.templates.eps_preview.render_eps_preview', return_value=(blank.getvalue(), blank.getvalue())):
             app.run()
-            self.assertFalse(app.exception)
             self.assertEqual(preview.call_args.args[-1], 'thin')
-            next(b for b in app.button if b.label == 'Add Row').click().run()
-            next(w for w in app.selectbox if w.label == 'Preview row').select(1).run()
-            self.assertEqual(preview.call_args.args[2], 2)
-            app.session_state['holiday_builder:row_tickets:1:1:thin'] = {
-                'edited_rows': {0:{'Brand':'Live edit'}}, 'added_rows':[], 'deleted_rows':[]}
-            app.run()
-            self.assertEqual(preview.call_args.args[3][0]['Brand'], 'Live edit')
-            next(w for w in app.selectbox if w.label == 'Strip dimensions').select('wide').run()
+            next(w for w in app.selectbox if w.label == 'Preview strip').select(1).run()
+            self.assertEqual(preview.call_args.args[2], 4)
+            next(w for w in app.selectbox if w.label == 'Preview strip').select(2).run()
+            self.assertEqual(preview.call_args.args[1:3], (2, 2))
             self.assertEqual(preview.call_args.args[-1], 'wide')
-            self.assertEqual(len(preview.call_args.args[3]), 8)
             next(w for w in app.radio if w.label == 'Template type').set_value('1. POG Template').run()
             next(w for w in app.radio if w.label == 'Template type').set_value('2. Price Strips').run()
             self.assertEqual(app.session_state[builder.EPS_KEY]['name'], 'drawing.eps')
             self.assertFalse(app.exception)
 
-    def test_invalid_upload_shows_an_error_and_keeps_row_editor_available(self):
-        app = AppTest.from_file(str(ROOT / 'home.py'), default_timeout=15)
-        app.session_state['active_workflow'] = 'Templates'
-        app.session_state['templates:selected_type'] = '2. Price Strips'
+    def test_invalid_eps_shows_warning_without_restoring_edit_controls(self):
+        app = self.start()
         app.session_state[builder.EPS_KEY] = {'name':'bad.eps', 'bytes':b'bad'}
         app.run()
         self.assertFalse(app.exception)
-        self.assertTrue(any('ArtiosCAD' in error.value for error in app.error))
-        self.assertTrue(any(b.label == 'Add Row' for b in app.button))
+        self.assertTrue(any('ArtiosCAD' in w.value for w in app.warning))
+        self.assertFalse(app.get('data_editor'))
+        self.assertTrue(any(b.label == 'Create Price Strip PDF' for b in app.button))

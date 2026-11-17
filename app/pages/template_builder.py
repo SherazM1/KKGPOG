@@ -19,8 +19,7 @@ from app.templates import draft as edits
 from app.templates.models import GeometryUnit, PresentationHint, SlotRole
 from app.templates.preview import geometry_svg
 from app.templates.print_style import (DEFAULT_HEADER_COLOR, PDF_IDENTIFIER_FIELDS,
-                                       normalize_text_fields, section_header_color,
-                                       section_preserves_spacing)
+                                       normalize_text_fields, section_header_color)
 
 
 DRAFT_KEY = "template_builder:draft"
@@ -30,7 +29,7 @@ SELECTION_KEY = "template_builder:selection"
 PDF_KEY = "template_builder:pdf_export"
 PDF_READY_KEY = "template_builder:pdf_ready"
 PDF_FIELDS_KEY = "template_builder:pdf_text_fields"
-PDF_LAYOUT_VERSION = 25
+PDF_LAYOUT_VERSION = 27
 
 
 def side_selection_key(facing_id):
@@ -255,15 +254,12 @@ def _regions(draft, facing, prefix):
             header_color = st.color_picker("Section header color", DEFAULT_HEADER_COLOR,
                                            key=f"{prefix}:add_region:header_color",
                                            help="Colors the full-width section header band in the PDF.")
-            preserve_spacing = st.checkbox("Keep vertical spacing in PDF", value=True,
-                key=f"{prefix}:add_region:preserve_spacing",
-                help="Keep your row and section gaps. Uncheck to use the gaps for taller boxes in this section.")
             with st.expander("Advanced section settings"):
                 role, hint = _role_hint(f"{prefix}:add_region")
             added = st.form_submit_button("Add Section")
         if added:
             apply(lambda current: direct.add_section(current, facing.id, name, role, hint,
-                header_color=header_color, preserve_spacing=preserve_spacing), "region")
+                header_color=header_color), "region")
     if not regions:
         st.caption("Add a section to this side, then add boxes or create a grid.")
         return None
@@ -291,9 +287,6 @@ def _regions(draft, facing, prefix):
             header_color = st.color_picker("Section header color", section_header_color(region),
                                            key=f"{prefix}:{region.id}:header_color",
                                            help="Colors the full-width section header band in the PDF.")
-            preserve_spacing = st.checkbox("Keep vertical spacing in PDF",
-                value=section_preserves_spacing(region), key=f"{prefix}:{region.id}:preserve_spacing",
-                help="Keep your row and section gaps. Uncheck to use the gaps for taller boxes in this section.")
             with st.expander("Advanced section settings"):
                 order = st.number_input("Section order", min_value=0, value=max(0, region.order), step=1)
                 role, hint = _role_hint(f"{prefix}:{region.id}:edit_region", region.role, region.presentation_hint)
@@ -301,8 +294,7 @@ def _regions(draft, facing, prefix):
         if applied:
             apply(lambda current: edits.update_region(current, facing.id, region.id, name=name,
                                                       role=role, hint=hint, order=order,
-                                                      header_color=header_color,
-                                                      preserve_spacing=preserve_spacing))
+                                                      header_color=header_color))
     return region
 
 
@@ -520,7 +512,7 @@ def render_pdf_export(draft):
         st.session_state.pop(PDF_KEY, None)
         cached = None
     valid = edits.validate_draft(draft).valid
-    st.caption("Print each Side on its own portrait page, using each section's vertical-spacing setting.")
+    st.caption("Print centered sections with square boxes, preserving your canvas positions and deleted spaces.")
     if st.button("Create Template PDF", key="template_builder:create_pdf", disabled=not valid):
         from app.templates.render_pdf import render_template_pdf
         with st.spinner("Preparing template PDF..."):

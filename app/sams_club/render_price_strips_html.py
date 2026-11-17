@@ -1141,10 +1141,10 @@ SAMS_FONT_STACK = '"Gibson"'
 async def require_gibson_fonts(page):
     """Never create a PDF with a browser's substitute font."""
     await page.evaluate('''async () => {
-        for (const weight of [400, 600]) {
+        for (const weight of [400, 500, 600]) {
             const faces = await document.fonts.load(`${weight} 12px "Gibson"`);
-            if (!faces.length || faces.some(face => face.status !== 'loaded')) {
-                throw new Error('Gibson Regular and SemiBold are required for PDF output.');
+            if (!faces.length || faces.some(face => face.status !== 'loaded' || Number(face.weight) !== weight)) {
+                throw new Error('Gibson Regular (400), Medium (500), and SemiBold (600) are required for PDF output.');
             }
         }
         await document.fonts.ready;
@@ -1156,13 +1156,16 @@ def sams_font_face_css(warnings: list[str]) -> str:
     root_path = Path(__file__).resolve().parents[2]
     gibson_regular_path = root_path / "assets" / "Gibson-Regular.otf"
     gibson_semibold_path = root_path / "assets" / "Gibson-SemiBold.otf"
+    gibson_medium_path = root_path / "assets" / "Gibson Medium.otf"
 
     try:
         regular_data_uri = _font_file_to_data_uri(gibson_regular_path)
         semibold_data_uri = _font_file_to_data_uri(gibson_semibold_path)
+        medium_data_uri = _font_file_to_data_uri(gibson_medium_path)
     except Exception as exc:
-        raise ValueError('Gibson is required for PDF output. Restore assets/Gibson-Regular.otf '
-                         'and assets/Gibson-SemiBold.otf, then generate the PDF again.') from exc
+        raise ValueError('Gibson is required for PDF output. Check assets/Gibson-Regular.otf, '
+                         'assets/Gibson Medium.otf, and assets/Gibson-SemiBold.otf. '
+                         f'Font load error: {exc}') from exc
 
     font_face_css = f"""
 @font-face {{
@@ -1175,6 +1178,12 @@ def sams_font_face_css(warnings: list[str]) -> str:
     font-family: "Gibson";
     src: url('{semibold_data_uri}') format('opentype');
     font-weight: 600;
+}}
+
+@font-face {{
+    font-family: "Gibson";
+    src: url('{medium_data_uri}') format('opentype');
+    font-weight: 500;
 }}
 """
 
@@ -1610,7 +1619,7 @@ def _generate_ticket_html(
     brand_top = _profile_field_number(layout_profile, "brand", "top_pt", old_text_y)
     brand_width_ratio = _profile_field_number(layout_profile, "brand", "width_ratio", 0.74)
     brand_size = _profile_field_number(layout_profile, "brand", "font_size_pt", _SAMS_BRAND_SIZE)
-    brand_weight = _profile_field_value(layout_profile, "brand", "font_weight", 600)
+    brand_weight = _profile_field_value(layout_profile, "brand", "font_weight", 500)
 
     item_left = _profile_field_number(layout_profile, "item_number", "left_pt", brand_left)
     item_top = _profile_field_number(layout_profile, "item_number", "top_pt", old_item_y)

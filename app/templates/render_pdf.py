@@ -4,7 +4,6 @@ from __future__ import annotations
 import io
 import re
 from datetime import date, datetime
-from statistics import median
 from zoneinfo import ZoneInfo
 
 from reportlab.lib import colors
@@ -15,8 +14,8 @@ from reportlab.platypus import (BaseDocTemplate, Flowable, Frame,
 
 from app.shared.fonts import BODY_BOLD_FONT, BODY_FONT
 from app.templates.models import DisplayTemplate
-from app.templates.print_style import (DEFAULT_TEXT_FIELDS, normalize_text_fields,
-                                       section_header_color, section_preserves_spacing)
+from app.templates.print_style import DEFAULT_TEXT_FIELDS, normalize_text_fields
+from app.templates.square_layout import square_page_layout
 from app.templates.validation import validate_template
 
 
@@ -74,26 +73,6 @@ def _wrap_description(text, size, first_width, full_width, max_lines=3):
     return lines
 
 
-def _compact_axis(slots, position, dimension):
-    """Tighten globally empty strips without changing or crossing any boxes."""
-    intervals = sorted((getattr(slot, position),
-                        getattr(slot, position) + getattr(slot, dimension)) for slot in slots)
-    typical = median(getattr(slot, dimension) for slot in slots) if slots else 1
-    gaps = []
-    end = intervals[0][1] if intervals else 0
-    for start, stop in intervals[1:]:
-        if start > end:
-            length = start - end
-            kept = min(length, typical * .12)
-            gaps.append((end, start, 1 - kept / length))
-        end = max(end, stop)
-
-    def compact(value):
-        return value - sum(max(0, min(value, stop) - start) * fraction
-                           for start, stop, fraction in gaps)
-    return compact
-
-
 def _band_text_color(fill):
     channels = [value / 12.92 if value <= .04045 else ((value + .055) / 1.055) ** 2.4
                 for value in (fill.red, fill.green, fill.blue)]
@@ -101,164 +80,30 @@ def _band_text_color(fill):
     return colors.black if luminance > .179 else colors.white
 
 
-def _grow_row_space(rectangles, header_tops, gutter=6, preserve_indices=()):
-    """Use spare row space for height without crossing rows or header bands."""
-    preserve_indices = frozenset(preserve_indices)
-    row_tops = sorted({round(y + height, 5) for _, y, _, height in rectangles}, reverse=True)
-    limits = {}
-    for index, top in enumerate(row_tops):
-        next_row = row_tops[index + 1] if index + 1 < len(row_tops) else 0
-        boundary = max([next_row, 0, *(value for value in header_tops if value < top - 1e-5)])
-        limits[top] = boundary + (gutter if boundary > 0 else 0)
-    grown = []
-    for index, (x, y, width, height) in enumerate(rectangles):
-        if index in preserve_indices:
-            grown.append((x, y, width, height))
-            continue
-        bottom = min(y, limits[round(y + height, 5)])
-        grown.append((x, bottom, width, height + y - bottom))
-
-    # Regular grids share the recovered space evenly within each header block.
-    # Irregular/staggered layouts retain the safe per-row growth calculated above.
-    rows = {top: [] for top in row_tops}
-    for index, (_, y, _, height) in enumerate(rectangles):
-        rows[round(y + height, 5)].append(index)
-    blocks = []
-    for top in row_tops:
-        if not blocks or any(top < header <= blocks[-1][-1] for header in header_tops):
-            blocks.append([top])
-        else:
-            blocks[-1].append(top)
-    for block in blocks:
-        indices = [i for top in block for i in rows[top]]
-        if preserve_indices.intersection(indices):
-            continue
-        heights = [rectangles[i][3] for i in indices]
-        if max(heights) - min(heights) > 1e-4:
-            continue
-        gaps = [min(rectangles[i][1] for i in rows[top]) - below
-                for top, below in zip(block, block[1:])]
-        if any(gap < -1e-4 for gap in gaps):
-            continue
-        gap = min([gutter, *(max(0, value) for value in gaps)])
-        bottom = min(min(rectangles[i][1] for i in rows[block[-1]]), limits[block[-1]])
-        height = (block[0] - bottom - gap * (len(block) - 1)) / len(block)
-        if height < max(heights) - 1e-4:
-            continue
-        for row, top in enumerate(block):
-            y = block[0] - row * (height + gap) - height
-            for i in rows[top]:
-                x, _, width, _ = rectangles[i]
-                grown[i] = (x, y, width, height)
-    return grown
-
-
 class _SideDrawing(Flowable):
     def __init__(self, facing, width, max_height, text_fields=DEFAULT_TEXT_FIELDS):
         super().__init__()
         self.facing = facing
         self.text_fields = text_fields
-        # Fit the visible layout rather than the unused Side workspace.
-        self.left = min((slot.x for slot in facing.slots), default=0)
-        self.top = min((slot.y for slot in facing.slots), default=0)
-        right = max((slot.x + slot.width for slot in facing.slots), default=facing.width)
-        bottom = max((slot.y + slot.height for slot in facing.slots), default=facing.height)
-        self.map_x = _compact_axis(facing.slots, 'x', 'width')
-        self.content_width = self.map_x(right) - self.left
-        # Keep row tops in order, then use free space below rows for taller cards.
-        self.content_height = bottom - self.top
-        # Fit each separate section grid to the full printable width. Sections
-        # sharing vertical space scale together to preserve their arrangement.
-        spans, assigned = [], set()
-        for region in facing.ordered_regions():
-            members = facing.slots_for_region(region.id)
-            if members:
-                assigned.update(slot.id for slot in members)
-                spans.append((min(slot.y for slot in members),
-                              max(slot.y + slot.height for slot in members), members))
-        spans.extend((slot.y, slot.y + slot.height, (slot,)) for slot in facing.slots
-                     if slot.id not in assigned)
-        groups = []
-        for start, stop, members in sorted(spans, key=lambda span: span[0]):
-            if groups and start < groups[-1][0]:
-                groups[-1] = (max(stop, groups[-1][0]), (*groups[-1][1], *members))
-            else:
-                groups.append((stop, members))
-        self.x_layout = {}
-        for _, members in groups:
-            group_left = min(self.map_x(slot.x) for slot in members)
-            group_right = max(self.map_x(slot.x + slot.width) for slot in members)
-            factor = self.content_width / (group_right - group_left)
-            self.x_layout.update((slot.id, (group_left, factor)) for slot in members)
-        # Insert title bands at safe row boundaries, never through a box.
-        rows = {}
-        for region in facing.ordered_regions():
-            members = facing.slots_for_region(region.id)
-            anchor = min((slot.y for slot in members), default=bottom)
-            while True:
-                crossing = [slot.y for slot in facing.slots
-                            if slot.y < anchor < slot.y + slot.height]
-                if not crossing:
-                    break
-                anchor = min(crossing)
-            rows.setdefault(anchor, []).append((region.name, section_header_color(region)))
-
-        self.bands = []
-        for anchor, titles in sorted(rows.items()):
-            # Full-width bands get separate rows even for side-by-side sections.
-            placed = [(name, lane, color) for lane, (name, color) in enumerate(titles)]
-            self.bands.append((anchor, placed, len(titles)))
-        title_rows = sum(count for _, _, count in self.bands)
-        self.band_height = min(22, max_height / (3 * title_rows)) if title_rows else 0
-        title_height = title_rows * self.band_height
-        # Print cards use the whole frame in both directions. The image
-        # placeholder remains square even when the outer card gets wider.
-        self.scale_x = width / self.content_width
-        self.scale_y = (max_height - title_height) / self.content_height
         self.width = width
         self.height = max_height
-        header_tops, offset = [], 0
-        for anchor, _, count in self.bands:
-            band_top = self.height - (anchor - self.top) * self.scale_y - offset
-            header_tops.extend(band_top - lane * self.band_height for lane in range(count))
-            offset += count * self.band_height
-        slots = facing.ordered_slots()
-        rectangles = []
-        for slot in slots:
-            group_left, factor = self.x_layout[slot.id]
-            x = (self.map_x(slot.x) - group_left) * factor * self.scale_x
-            offset = sum(count * self.band_height for anchor, _, count in self.bands
-                         if anchor <= slot.y)
-            y = self.height - (slot.y + slot.height - self.top) * self.scale_y - offset
-            rectangles.append((x, y, slot.width * factor * self.scale_x, slot.height * self.scale_y))
-        growable, preserved = set(), set()
-        for region in facing.regions:
-            (preserved if section_preserves_spacing(region) else growable).update(region.slot_ids)
-        growable.difference_update(preserved)
-        keep = {index for index, slot in enumerate(slots) if slot.id not in growable}
-        self.cards = tuple(zip(slots, _grow_row_space(rectangles, header_tops, preserve_indices=keep)))
+        self.cards, self.bands = square_page_layout(facing, width, max_height)
 
     def draw(self):
-        canvas, facing = self.canv, self.facing
-        scale_y = self.scale_y
+        canvas = self.canv
         canvas.saveState()
-        offset = 0
-        for anchor, titles, count in self.bands:
-            band_top = self.height - (anchor - self.top) * scale_y - offset
-            for name, lane, color in titles:
-                size = min(10, self.band_height * .6)
-                label, size = _fit_header(name, BODY_BOLD_FONT, size,
-                                          self.width - 12, min_size=min(5, size))
-                fill = colors.HexColor(color)
-                inset = min(2, self.band_height * .1)
-                canvas.setFillColor(fill)
-                canvas.rect(0, band_top - (lane + 1) * self.band_height + inset,
-                            self.width, self.band_height - 2 * inset, fill=1, stroke=0)
-                canvas.setFillColor(_band_text_color(fill))
-                canvas.setFont(BODY_BOLD_FONT, size)
-                canvas.drawCentredString(self.width / 2,
-                                         band_top - (lane + .75) * self.band_height, label)
-            offset += count * self.band_height
+        for name, color, band_top, band_height in self.bands:
+            size = min(10, band_height * .6)
+            label, size = _fit_header(name, BODY_BOLD_FONT, size,
+                                      self.width - 12, min_size=min(5, size))
+            fill = colors.HexColor(color)
+            inset = min(2, band_height * .1)
+            canvas.setFillColor(fill)
+            canvas.rect(0, band_top - band_height + inset,
+                        self.width, band_height - 2 * inset, fill=1, stroke=0)
+            canvas.setFillColor(_band_text_color(fill))
+            canvas.setFont(BODY_BOLD_FONT, size)
+            canvas.drawCentredString(self.width / 2, band_top - .75 * band_height, label)
         for slot, (x, y, width, height) in self.cards:
             # Plain Box outline
             canvas.setStrokeColor(colors.HexColor('#c8cdd4'))
@@ -275,7 +120,7 @@ class _SideDrawing(Flowable):
             number = str(slot.order)
 
             number_size = min(
-                10,
+                18,
                 inner_height * .10,
                 inner_width * .18
                 / pdfmetrics.stringWidth(number, BODY_BOLD_FONT, 1),
@@ -291,7 +136,7 @@ class _SideDrawing(Flowable):
             widest_label = max((pdfmetrics.stringWidth(label, BODY_FONT, 1) for label in labels),
                                default=pdfmetrics.stringWidth('Description:', BODY_FONT, 1))
             field_size = min(
-                8,
+                14,
                 inner_height * .075,
                 text_width * .55
                 / widest_label
@@ -399,7 +244,7 @@ class _SideDrawing(Flowable):
 
 def render_template_pdf(template: DisplayTemplate, *, created_on: date | None = None,
                         text_fields=None, use_facing_names=False, layout_note=None) -> bytes:
-    """Print each Side on its configured portrait page, expanding row heights."""
+    """Print each Side with square boxes fitted to its existing canvas rows."""
     text_fields = normalize_text_fields(text_fields)
     validation = validate_template(template)
     if not validation.valid:
@@ -407,7 +252,7 @@ def render_template_pdf(template: DisplayTemplate, *, created_on: date | None = 
 
     output = io.BytesIO()
     doc = BaseDocTemplate(output, pagesize=PDF_PAGE_SIZE, leftMargin=6, rightMargin=6,
-                          topMargin=70 if layout_note else 50, bottomMargin=30, title=template.name,
+                          topMargin=64 if layout_note else 44, bottomMargin=28, title=template.name,
                           author='Kendal King')
     created_on = created_on or datetime.now(ZoneInfo('America/Chicago')).date()
 

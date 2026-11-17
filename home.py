@@ -34,6 +34,7 @@ def _refresh_template_workflow():
         "app.sams_club.render_generic_price_strips",
         "app.sams_club.render_price_strips_html",
         "app.templates.print_style",
+        "app.templates.square_layout",
         "app.templates.draft",
         "app.pages._direct_builder",
         "app.templates.render_pdf",

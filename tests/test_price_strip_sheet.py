@@ -99,34 +99,29 @@ class SheetImportAppTests(unittest.TestCase):
         self.app.run()
         self.assertFalse(self.app.exception)
 
-    def test_imported_rows_are_editable_and_pog_switches_retain_edits(self):
+    def test_imported_pogs_are_read_only_and_source_survives_navigation(self):
         app = self.app
-        self.assertEqual(next(w for w in app.text_input if w.label=='Template name').value, 'POG A')
-        self.assertEqual([w.label for w in app.expander if w.label.startswith('Row ')], ['Row 2','Row 4'])
-        self.assertTrue(next(w for w in app.checkbox if w.label=='Include all sides in PDF').value)
-        app.session_state['holiday_builder:row_tickets:1:0:thin'] = {
-            'edited_rows':{0:{'Brand':'Edited product'}}, 'added_rows':[], 'deleted_rows':[]}
-        app.run()
-        next(w for w in app.selectbox if w.label=='POG from sheet').select('POG B').run()
-        self.assertEqual(app.session_state[builder.ROWS_KEY][1]['rows'][0]['tickets'][0]['Brand'], 'POG B Product 1')
-        next(w for w in app.selectbox if w.label=='POG from sheet').select('POG A').run()
-        self.assertEqual(app.session_state[builder.ROWS_KEY][1]['rows'][0]['tickets'][0]['Brand'], 'Edited product')
-        self.assertEqual(len(app.session_state[builder.ROWS_KEY][1]['rows']), 2)
-        next(w for w in app.radio if w.label=='Template type').set_value('1. POG Template').run()
-        next(w for w in app.radio if w.label=='Template type').set_value('2. Price Strips').run()
-        self.assertEqual(next(w for w in app.text_input if w.label=='Template name').value, 'POG A')
+        self.assertFalse(app.get('data_editor'))
+        self.assertFalse(any(w.label == 'Template name' for w in app.text_input))
+        selector = next(w for w in app.selectbox if w.label == 'Preview strip')
+        self.assertEqual(selector.options, ['Side 1, Row 2', 'Side 1, Row 4', 'Side 2, Row 2'])
+        next(w for w in app.selectbox if w.label == 'POG from sheet').select('POG B').run()
+        self.assertEqual(next(w for w in app.selectbox if w.label == 'Preview strip').options, ['Side 1, Row 1'])
+        next(w for w in app.selectbox if w.label == 'POG from sheet').select('POG A').run()
+        next(w for w in app.radio if w.label == 'Template type').set_value('1. POG Template').run()
+        next(w for w in app.radio if w.label == 'Template type').set_value('2. Price Strips').run()
+        self.assertEqual(app.session_state[builder.SHEET_KEY]['current'], 'POG A')
         self.assertFalse(app.exception)
 
-    def test_all_side_and_selected_side_exports_use_edited_rows_and_invalidate_download(self):
+    def test_preview_navigation_does_not_change_all_sides_export_and_pog_change_invalidates_it(self):
         app = self.app
-        with patch.object(builder,'_create_all_sides_pdf',return_value=b'pdf') as export:
-            next(b for b in app.button if b.label=='Create Price Strip PDF').click().run()
-        self.assertEqual(set(export.call_args.args[1]), {1,2})
-        self.assertEqual(app.session_state[builder.PDF_KEY]['pages'], 3)
-        next(w for w in app.checkbox if w.label=='Include all sides in PDF').uncheck().run()
+        next(w for w in app.selectbox if w.label == 'Preview strip').select(2).run()
+        with patch.object(builder, '_create_all_sides_pdf', return_value=b'pdf') as export:
+            next(w for w in app.button if w.label == 'Create Price Strip PDF').click().run()
+        self.assertEqual(set(export.call_args.args[1]), {1, 2})
+        self.assertEqual(len(export.call_args.args[1][1]['rows']), 2)
+        self.assertTrue(app.get('download_button'))
+        next(w for w in app.selectbox if w.label == 'POG from sheet').select('POG B').run()
         self.assertNotIn(builder.PDF_KEY, app.session_state)
-        with patch.object(builder,'_create_pdf',return_value=b'pdf') as export:
-            next(b for b in app.button if b.label=='Create Price Strip PDF').click().run()
-        self.assertEqual(export.call_args.kwargs['row_numbers'], [2,4])
-        self.assertEqual(export.call_args.kwargs['footers'][1], 'Custom footer POG A 1 4')
+        self.assertFalse(app.get('download_button'))
         self.assertFalse(app.exception)

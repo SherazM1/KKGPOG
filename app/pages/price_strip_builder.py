@@ -259,7 +259,7 @@ def _sheet_import_controls():
     if sheet:
         st.selectbox('POG from sheet', list(sheet['pogs']), key=SHEET_POG_KEY,
                       index=list(sheet['pogs']).index(sheet['current']), on_change=_activate_sheet_pog)
-        st.caption(f"Loaded {sheet['name']}. Choose a side below to review or edit its products.")
+        st.caption(f"Loaded {sheet['name']}. Imported data is read-only.")
         for warning in sheet['warnings']:
             st.warning(warning)
 
@@ -321,231 +321,138 @@ def _live_strip_preview(
     return image, pdf
 def render():
     st.subheader("Price Strips")
-    st.caption(
-        "Add as many rows as you need. Each row prints as one full-width PDF page."
-    )
-    st.selectbox('Template format', ['holiday', 'generic'],
-                 index=0 if st.session_state.get(FORMAT_KEY, 'holiday') == 'holiday' else 1,
-                 format_func=lambda value: "Sam's Holiday" if value == 'holiday' else 'Generic (KK240100-13)',
+    st.caption("Upload a spreadsheet to preview and generate price strips.")
+    formats = {'holiday':"Sam's Holiday", 'generic':'Generic (KK240100-13)', 'unique':'Unique'}
+    st.selectbox('Template format', list(formats),
+                 index=list(formats).index(st.session_state.get(FORMAT_KEY, 'holiday')),
+                 format_func=formats.get,
                  key=FORMAT_WIDGET_KEY, on_change=_switch_format)
-    _sheet_import_controls()
-    generic = st.session_state.get(FORMAT_KEY) == 'generic'
-    sizes = GENERIC_STRIP_SIZES if generic else STRIP_SIZES
     
-    name = st.text_input(
-        "Template name",
-        value=None if 'holiday_builder:name' in st.session_state else
-            st.session_state.get(SHEET_KEY, {}).get('active_name', "Generic Price Strips" if generic else "Holiday Price Strips"),
-        key="holiday_builder:name",
-    )
-    if st.session_state.get(SHEET_KEY):
-        st.session_state[SHEET_KEY]['active_name'] = name
-    
-    left, right = st.columns(2)
-    
-    side = left.selectbox(
-        "Side",
-        [1, 2, 3, 4],
-        key="holiday_builder:side",
-    )
-    
-    draft = _side_rows(side)
-    row_number = right.number_input(
-        "Starting row",
-        min_value=1,
-        value=draft["start"],
-        step=1,
-        key=f"holiday_builder:start:{side}",
-    )
-    draft["start"] = row_number
-    numbers = _row_numbers(draft)
-    
-    strip_size = st.selectbox(
-        "Strip dimensions", list(sizes),
-        index=list(sizes).index(draft["strip_size"]),
-        format_func=sizes.get,
-        key=f"holiday_builder:strip_size:{side}",
-    )
-    draft["strip_size"] = strip_size
-    geometry = holiday_geometry_for_size(strip_size)
-
     st.file_uploader(
         "Upload a different EPS (optional)", type=["eps"], key=EPS_UPLOAD_KEY,
         on_change=_save_eps_upload,
         help="The selected format's baseline EPS is used automatically. Upload an ArtiosCAD / Illustrator 8 EPS to override it.",
     )
+    _sheet_import_controls()
     
+    sheet = st.session_state.get(SHEET_KEY)
+
+    if not sheet or st.session_state.get(SHEET_ERROR_KEY):
+        st.session_state.pop(PDF_KEY, None)
+        st.info("Upload a valid spreadsheet to preview and generate price strips.")
+        return
+
+    name = sheet["current"]
+
+    # Use the original import, not the former editable draft.
+    source = sheet["pogs"][name]
+
+    entries = [
+        (side, number, draft["strip_size"], row)
+        for side, draft in sorted(source.items())
+        for number, row in zip(_row_numbers(draft), draft["rows"])
+    ]
+
+    if not entries:
+        st.warning("No strip rows were found.")
+        return
+
     st.caption(
-        f"{geometry.slot_count} positions across a "
-        f"{geometry.width_in:g} x {geometry.height_in:g} inch strip."
+        f"{len(source)} sides / {len(entries)} strip rows. "
+        "Data is read-only. Correct the spreadsheet and upload it again "
+        "to make changes."
     )
-    
-    st.button("Add Row", key=f"holiday_builder:add_row:{side}",
-              on_click=_add_row, args=(side,))
-    st.caption(f"{len(draft['rows'])} row(s) on Side {side}")
 
-    for index, row in enumerate(draft["rows"]):
-        if len(row["tickets"]) < geometry.slot_count:
-            row["tickets"].extend(_default_tickets(side, strip_size)[len(row["tickets"]):])
-        editor_key = f"holiday_builder:row_tickets:{side}:{index}:{strip_size}"
-        if editor_key not in st.session_state:
-            row["editor_base"] = deepcopy(row["tickets"][:geometry.slot_count])
-        with st.expander(f"Row {numbers[index]}", expanded=True):
-            # A stable editor base prevents edits from being applied twice.
-            # Persist the returned values outside widget state so switching
-            # sides or template types does not erase the entered products.
-            edited = st.data_editor(
-                row["editor_base"], hide_index=True, num_rows="fixed",
-                width="stretch", key=editor_key,
-                column_config={'Item #':st.column_config.TextColumn('UPC' if generic else 'Item #')},
-            )
-            row["tickets"] = edited + row["tickets"][geometry.slot_count:]
-            if 'footer_text' in row:
-                row['footer_text'] = st.text_input('Row footer', value=row['footer_text'],
-                    key=f'holiday_builder:footer:{side}:{index}')
-
-    ticket_rows = [row["tickets"][:geometry.slot_count] for row in draft["rows"]]
-
-    st.subheader("Price strip preview")
-    
-    selected_row = st.selectbox(
-        "Preview row",
-        range(len(ticket_rows)),
-        format_func=lambda index: f"Row {numbers[index]}",
-        key=f"holiday_builder:preview_row:{side}",
+    selected = st.selectbox(
+        "Preview strip",
+        range(len(entries)),
+        format_func=lambda index: (
+            f"Side {entries[index][0]}, Row {entries[index][1]}"
+        ),
     )
-    
+
+    side, number, size, row = entries[selected]
+
+    with st.expander("View imported products"):
+        st.dataframe(
+            row["tickets"],
+            hide_index=True,
+            width="stretch",
+        )
+        if row.get("footer_text"):
+            st.caption(row["footer_text"])
+
     try:
-        with st.spinner("Updating preview..."):
-            preview_image, preview_pdf = _live_strip_preview(
-                name.strip(),
-                side,
-                numbers[selected_row],
-                ticket_rows[selected_row],
-                strip_size,
-                footer_text=draft["rows"][selected_row].get(
-                    "footer_text"
-                ),
-            )
+        preview_image, preview_pdf = _live_strip_preview(
+            name,
+            side,
+            number,
+            row["tickets"],
+            size,
+            footer_text=row.get("footer_text"),
+        )
     except ValueError as exc:
         st.error(str(exc))
     else:
-        st.caption(
-            "Blue: product dividers. "
-            "Red: strip outline and dashed centers. "
-            "Green: alignment marks. "
-        )
-        
         st.image(
             preview_image,
-            caption=(
-                f"Side {side}, Row {numbers[selected_row]} "
-                "- print-position preview"
-            ),
             width="stretch",
+            caption=f"Side {side}, Row {number} - print-position preview",
         )
-        
-        st.caption(
-            "Preview updates when you change the products. "
-            "Guide lines are excluded from the finished PDF. "
-        )
-        
-        try:
-            uploaded_eps = _active_eps()
-        except ValueError as exc:
-            st.error(str(exc))
-            uploaded_eps = None
-        
-        if uploaded_eps:
-            st.caption(f"Using {uploaded_eps['name']}.")
-            with st.expander("Full EPS drawing"):
-                from app.templates.eps_preview import (
-                    render_eps_preview,
+        st.caption("Guide lines are excluded from the finished PDF.")
+
+        with st.expander("Full EPS drawing"):
+            from app.templates.eps_preview import render_eps_preview
+
+            try:
+                eps = _active_eps()
+                overview, _ = render_eps_preview(
+                    eps["bytes"],
+                    size,
+                    preview_pdf,
+                    guides_in_pdf=True,
+                    row_number=number,
                 )
-                
-                try:
-                    overview, _ = render_eps_preview(
-                        uploaded_eps["bytes"],
-                        strip_size,
-                        preview_pdf,
-                        guides_in_pdf=True,
-                        row_number=numbers[selected_row],
-                    )
-                    
-                except ValueError as exc:
-                    st.error(str(exc))
-                
-                else:
-                    st.image(
-                        overview,
-                        caption=uploaded_eps["name"],
-                        width="stretch",
-                    )
-    sheet = st.session_state.get(SHEET_KEY)
-    all_sides = st.checkbox('Include all sides in PDF',
-                            value=False if 'holiday_builder:all_sides' in st.session_state else
-                                (sheet.get('all_sides', False) if sheet else False),
-                            key='holiday_builder:all_sides')
-    if sheet:
-        sheet['all_sides'] = all_sides
-    signature = (name.strip(), side, row_number, strip_size, repr(ticket_rows),
-                 tuple(numbers), tuple(row.get('footer_text') for row in draft['rows']), all_sides,
-                 repr(st.session_state[ROWS_KEY]) if all_sides else None)
+                st.image(
+                    overview,
+                    caption=eps["name"],
+                    width="stretch",
+                )
+            except ValueError as exc:
+                st.warning(str(exc))
+
+    signature = ("import-only-v1", name, repr(source))
     previous = st.session_state.get(PDF_KEY)
+
     if previous and previous.get("signature") != signature:
         st.session_state.pop(PDF_KEY, None)
 
-    submitted = st.button("Create Price Strip PDF", type="primary",
-                          key="holiday_builder:create_pdf")
-    
-    if submitted:
-        if not name.strip():
-            st.error("Enter a template name.")
-            return
-        
+    if st.button(
+        "Create Price Strip PDF",
+        type="primary",
+        key="holiday_builder:create_pdf",
+    ):
         try:
             with st.spinner("Creating price strips..."):
-                if all_sides:
-                    pdf = _create_all_sides_pdf(name.strip(), st.session_state[ROWS_KEY])
-                else:
-                    pdf = _create_pdf(name.strip(), side, row_number, ticket_rows, strip_size=strip_size,
-                        row_numbers=numbers, footers=[row.get('footer_text') for row in draft['rows']])
+                pdf = _create_all_sides_pdf(name, source)
         except ValueError as exc:
             st.error(str(exc))
-            return
-        
-        st.session_state[PDF_KEY] = {
-            "name": name.strip(),
-            "side": side,
-            "row": row_number,
-            "strip_size": strip_size,
-            "last_row": numbers[-1],
-            "row_count": len(ticket_rows),
-            "signature": signature,
-            "bytes": pdf,
-            "all_sides": all_sides,
-            "pages": sum(len(d['rows']) for d in st.session_state[ROWS_KEY].values()) if all_sides else len(ticket_rows),
-        }        
-        
-    result = st.session_state.get(PDF_KEY)
-    
-    if result:
-        if result.get('all_sides'):
-            st.success(f"Ready: {result['name']} - all sides ({result['pages']} pages)")
         else:
-            st.success(
-                f"Ready: {result['name']} - "
-                f"Side {result['side']}, Rows {result['row']}-{result['last_row']} "
-                f"({result['row_count']} pages)"
-            )
-        
+            st.session_state[PDF_KEY] = {
+                "signature": signature,
+                "bytes": pdf,
+            }
+
+    result = st.session_state.get(PDF_KEY)
+
+    if result:
+        st.success(
+            f"Ready: {name} - all sides ({len(entries)} pages)"
+        )
         st.download_button(
             "Download Price Strip PDF",
             data=result["bytes"],
-            file_name='price_strips_all_sides.pdf' if result.get('all_sides') else (
-                f"price_strip_side_{result['side']}"
-                f"_rows_{result['row']}-{result['last_row']}.pdf"
-            ),
+            file_name="price_strips_all_sides.pdf",
             mime="application/pdf",
             on_click="ignore",
         )
