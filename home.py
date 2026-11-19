@@ -31,6 +31,7 @@ def _refresh_template_workflow():
         "app.sams_club.price_strip_models",
         "app.sams_club.holiday_price_strips",
         "app.sams_club.generic_price_strips",
+        "app.sams_club.extract_price_strips",
         "app.sams_club.render_generic_price_strips",
         "app.sams_club.render_price_strips_html",
         "app.templates.print_style",

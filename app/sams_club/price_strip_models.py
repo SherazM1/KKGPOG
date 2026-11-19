@@ -30,6 +30,9 @@ class SamsPriceStripRow:
     footer_text: str = ""
     warnings: list[str] = field(default_factory=list)
     strip_size: str | None = None
+    # Card-placeholder centers from EPS, measured from the strip's top-left.
+    eps_card_centers: tuple[tuple[float, float], ...] = ()
+    eps_card_width_pt: float | None = None
 
 
 @dataclass

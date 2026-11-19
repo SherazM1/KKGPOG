@@ -56,12 +56,12 @@ class GenericPriceStripTests(unittest.TestCase):
     def test_baseline_shared_edges_recover_all_46_outlines(self):
         drawing = parse_eps(builder.GENERIC_EPS_PATH.read_bytes())
         self.assertEqual(len(drawing.cuts), 46)
-        for size, expected in zip(GENERIC_SIZES, [12, 12, 10, 12]):
+        for size, expected in zip(builder.GENERIC_STRIP_SIZES, [12, 12, 10, 12]):
             g = geometry_for_size(size)
             self.assertEqual(sum(abs(r[2]-r[0]-g.width_pt) < .05 for r in drawing.cuts), expected)
 
     def test_clean_pdf_and_preview_at_each_supported_size(self):
-        for size in GENERIC_SIZES:
+        for size in builder.GENERIC_STRIP_SIZES:
             with self.subTest(size=size):
                 g = geometry_for_size(size)
                 tickets = builder._default_tickets(1, size)

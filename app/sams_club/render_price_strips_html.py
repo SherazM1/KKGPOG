@@ -15,6 +15,7 @@ from app.shared.async_runtime import run_browser_job
 import base64
 import html
 import json
+import math
 import re
 import subprocess
 import sys
@@ -718,22 +719,30 @@ def _estimate_text_width(text: str, font_size: float, weight: str = "regular") -
 
 
 def _generate_generic_calibration_guides(size, width, height):
+    return _generate_eps_calibration_guides(tuple((x,height/2) for x in GENERIC_SIZES[size][1]), width, height)
+
+
+def _generate_eps_calibration_guides(card_centers, width, height, *, show_card_marks=True):
     parts = [f'<div class="holiday-calibration" style="position:absolute; left:0; top:0; '
              f'width:{width}pt; height:{height}pt; border:.8pt solid #e61a26;"></div>']
-    for boundary in generic_boundaries(size)[1:-1]:
+    centers = [x for x,_ in card_centers]
+    for boundary in ((a+b)/2 for a,b in zip(centers,centers[1:])):
         parts.append(f'<div style="position:absolute; left:{boundary}pt; top:0; '
                      f'height:{height}pt; border-left:.6pt solid #1a59e6;"></div>')
-    for number, center in enumerate(GENERIC_SIZES[size][1], 1):
-        parts.extend([
+    for number, (center, card_y) in enumerate(card_centers, 1):
+        parts.append(
             f'<div style="position:absolute; left:{center}pt; top:0; height:{height}pt; '
-            'border-left:.6pt dashed #e61a26;"></div>',
-            f'<div style="position:absolute; left:{center - 9}pt; top:{height / 2}pt; '
+            'border-left:.6pt dashed #e61a26;"></div>')
+        if show_card_marks:
+            parts.extend([
+            f'<div style="position:absolute; left:{center - 9}pt; top:{card_y}pt; '
             'width:18pt; border-top:.6pt solid #00a633;"></div>',
-            f'<div style="position:absolute; left:{center}pt; top:{height / 2 - 9}pt; '
+            f'<div style="position:absolute; left:{center}pt; top:{card_y - 9}pt; '
             'height:18pt; border-left:.6pt solid #00a633;"></div>',
+            ])
+        parts.append(
             f'<div style="position:absolute; left:{center + 3}pt; top:2pt; '
-            f'font:6pt Gibson; color:#1a59e6;">{number}</div>',
-        ])
+            f'font:6pt Gibson; color:#1a59e6;">{number}</div>')
     return '\n'.join(parts)
 
 
@@ -1125,6 +1134,7 @@ async def _render_page_to_pdf(
     try:
         await page.set_content(html_content)
         await require_gibson_fonts(page)
+        await fit_eps_tickets(page)
         pdf_bytes = await page.pdf(
             width=f"{(width + (_BLEED_PT * 2)) / inch}in",
             height=f"{(height + (_BLEED_PT * 2)) / inch}in",
@@ -1136,6 +1146,41 @@ async def _render_page_to_pdf(
 
 
 SAMS_FONT_STACK = '"Gibson"'
+
+
+async def fit_eps_tickets(page):
+    """Fit actual loaded text around EPS card centers without shifting anchors."""
+    await page.evaluate('''() => {
+        const tickets = [...document.querySelectorAll('.eps-ticket')];
+        if (!tickets.length) return;
+        const trim = document.querySelector('.trim-artwork').getBoundingClientRect();
+        const unit = trim.width / Number(tickets[0].dataset.stripWidth);
+        const footer = document.querySelector('.footer').getBoundingClientRect();
+        const bottom = Math.min(trim.bottom, footer.top - unit);
+        let factor = 1;
+        for (const ticket of tickets) {
+            const anchor = trim.left + Number(ticket.dataset.anchorX) * unit;
+            const left = trim.left + Number(ticket.dataset.boundLeft) * unit + unit;
+            const right = trim.left + Number(ticket.dataset.boundRight) * unit - unit;
+            for (const field of ticket.querySelectorAll('.field, .price')) {
+                if (!field.textContent.trim()) continue;
+                const range = document.createRange();
+                range.selectNodeContents(field);
+                const bounds = range.getBoundingClientRect();
+                if (anchor > bounds.left) factor = Math.min(factor, (anchor-left)/(anchor-bounds.left));
+                if (bounds.right > anchor) factor = Math.min(factor, (right-anchor)/(bounds.right-anchor));
+                if (bounds.bottom > trim.top) factor = Math.min(factor, (bottom-trim.top)/(bounds.bottom-trim.top));
+            }
+        }
+        if (!Number.isFinite(factor) || factor <= .01) {
+            throw new Error('An EPS card center is too close to the strip edge to fit its price information.');
+        }
+        for (const ticket of tickets) {
+            const scale = Number(ticket.dataset.scale) * factor;
+            ticket.style.left = (Number(ticket.dataset.anchorX) - Number(ticket.dataset.referenceWidth)*scale/2) + 'pt';
+            ticket.style.transform = `scale(${scale})`;
+        }
+    }''')
 
 
 async def require_gibson_fonts(page):
@@ -1205,7 +1250,10 @@ def _generate_strip_html(
     font_face_css = sams_font_face_css(warnings)
 
     generic_mode = row_data.strip_size in GENERIC_SIZES
-    holiday_mode = is_sams_holiday_template(template_name) or generic_mode
+    card_centers = getattr(row_data, 'eps_card_centers', ())
+    anchor_mode = bool(card_centers)
+    reference_artwork = generic_mode or anchor_mode
+    holiday_mode = is_sams_holiday_template(template_name) or reference_artwork
     holiday_geometry: SamsHolidaySideGeometry | None = None
     if holiday_mode:
         holiday_geometry = (geometry_for_size(row_data.strip_size) if generic_mode
@@ -1214,8 +1262,8 @@ def _generate_strip_html(
     reference = SAMS_HOLIDAY_TEMPLATE.thin_side
     reference_slot_w = holiday_slot_width_pt(reference)
     layout_profile = _resolve_layout_profile(
-        reference.width_pt if generic_mode else strip_w,
-        reference.height_pt if generic_mode else strip_h, warnings)
+        reference.width_pt if reference_artwork else strip_w,
+        reference.height_pt if reference_artwork else strip_h, warnings)
     page_w = strip_w + (_BLEED_PT * 2)
     page_h = strip_h + (_BLEED_PT * 2)
     crop_mark_len = 12.0
@@ -1224,7 +1272,7 @@ def _generate_strip_html(
     trim_top = _BLEED_PT
     trim_right = _BLEED_PT + strip_w
     trim_bottom = _BLEED_PT + strip_h
-    positions = [] if generic_mode else (
+    positions = [] if reference_artwork else (
         _resolve_holiday_ticket_positions(row_data)
         if holiday_mode and not generic_mode
         else _resolve_ticket_positions_from_profile(
@@ -1238,12 +1286,27 @@ def _generate_strip_html(
     ticket_y = footer_h
     ticket_h = strip_h - footer_h
     artwork_scale, artwork_top = 1.0, 0.0
-    if generic_mode:
+    if anchor_mode:
+        centers = [point[0] for point in card_centers]
+        if len(centers) != holiday_geometry.slot_count:
+            raise ValueError('EPS card-center count does not match the number of product positions.')
+        boundaries = (0, *((a+b)/2 for a,b in zip(centers,centers[1:])), strip_w)
+        artwork_scale = min(1, strip_h/reference.height_pt)
+        card_width = getattr(row_data, 'eps_card_width_pt', None)
+        if card_width is not None:
+            if not math.isfinite(card_width) or not 0 < card_width <= strip_w:
+                raise ValueError('The EPS card width must be positive and fit within the strip.')
+            # The common card width is in physical EPS points, including for
+            # shorter strips whose typography uses a scaled reference layout.
+            reference_slot_w = card_width / artwork_scale
+        positions = [(center-reference_slot_w*artwork_scale/2,
+                      reference_slot_w*artwork_scale) for center in centers]
+    elif generic_mode:
         centers = GENERIC_SIZES[row_data.strip_size][1]
         boundaries = generic_boundaries(row_data.strip_size)
         safe_width = min(2 * min(center - boundaries[i], boundaries[i + 1] - center)
                          for i, center in enumerate(centers))
-        artwork_scale = min(strip_h / reference.height_pt, safe_width / reference_slot_w)
+        artwork_scale = min(1, strip_h / reference.height_pt, safe_width / reference_slot_w)
         artwork_top = (strip_h - reference.height_pt * artwork_scale) / 2
         positions = [(center - reference_slot_w * artwork_scale / 2,
                       reference_slot_w * artwork_scale) for center in centers]
@@ -1276,6 +1339,10 @@ def _generate_strip_html(
     ticket_htmls = []
     footer_left_pt = footer_left_in * inch
     for idx, segment in enumerate(row_data.segments):
+        if anchor_mode:
+            idx = segment.column-1
+            if not 0 <= idx < len(positions):
+                raise ValueError(f'No EPS card center exists for product position {segment.column}.')
         if idx >= len(positions):
             break
         if segment.is_empty:
@@ -1284,17 +1351,23 @@ def _generate_strip_html(
         slot_center_x = x + (ticket_w / 2.0)
         ticket_html, desc_block_left = _generate_ticket_html(
             segment,
-            0 if generic_mode else x,
-            _DEFAULT_FOOTER_HEIGHT if generic_mode else ticket_y,
-            reference_slot_w if generic_mode else ticket_w,
-            reference.height_pt - _DEFAULT_FOOTER_HEIGHT if generic_mode else ticket_h,
+            0 if reference_artwork else x,
+            _DEFAULT_FOOTER_HEIGHT if reference_artwork else ticket_y,
+            reference_slot_w if reference_artwork else ticket_w,
+            reference.height_pt - _DEFAULT_FOOTER_HEIGHT if reference_artwork else ticket_h,
             layout_profile,
-            slot_center_x=(reference_slot_w / 2 if generic_mode else slot_center_x) if holiday_mode else None,
+            slot_center_x=(reference_slot_w / 2 if reference_artwork else slot_center_x) if holiday_mode else None,
             center_main_amount=holiday_mode,
+            align_to_card_center=anchor_mode,
         )
-        if generic_mode:
+        if reference_artwork:
+            attributes = (f'data-anchor-x="{centers[idx]}" data-bound-left="{boundaries[idx]}" '
+                          f'data-bound-right="{boundaries[idx+1]}" data-scale="{artwork_scale}" '
+                          f'data-reference-width="{reference_slot_w}" data-strip-width="{strip_w}"'
+                          if anchor_mode else '')
             ticket_html = (
-                f'<div class="reference-ticket" style="position:absolute; left:{x}pt; '
+                f'<div class="reference-ticket{" eps-ticket" if anchor_mode else ""}" {attributes} '
+                f'style="position:absolute; left:{x}pt; '
                 f'top:{artwork_top}pt; transform:scale({artwork_scale}); '
                 f'transform-origin:0 0; width:{reference_slot_w}pt; height:{reference.height_pt}pt;">'
                 f'{ticket_html}</div>')
@@ -1302,9 +1375,11 @@ def _generate_strip_html(
         if len(ticket_htmls) == 1:
             footer_left_pt = x + desc_block_left * artwork_scale
 
-    if generic_mode:
+    if reference_artwork:
         footer_font_size_pt *= artwork_scale
         footer_bottom_in = footer_bottom_in * artwork_scale + artwork_top / inch
+    if anchor_mode:
+        footer_left_pt = max(6, footer_left_pt)
 
     footer_text = _resolve_strip_footer_text(row_data)
     calibration_html = (
@@ -1316,10 +1391,12 @@ def _generate_strip_html(
             ticket_y,
             ticket_h,
         )
-        if calibration and holiday_geometry is not None and not generic_mode
+        if calibration and holiday_geometry is not None and not reference_artwork
         else ""
     )
-    if calibration and generic_mode:
+    if calibration and anchor_mode:
+        calibration_html = _generate_eps_calibration_guides(card_centers, strip_w, strip_h, show_card_marks=False)
+    elif calibration and generic_mode:
         calibration_html = _generate_generic_calibration_guides(row_data.strip_size, strip_w, strip_h)
 
     html_parts = [
@@ -1554,6 +1631,7 @@ def _generate_ticket_html(
     layout_profile: dict,
     slot_center_x: float | None = None,
     center_main_amount: bool = False,
+    align_to_card_center: bool = False,
 ) -> tuple[str, float]:
     """
     Generate HTML divs for one ticket block with fixed layout positions.
@@ -1741,9 +1819,13 @@ def _generate_ticket_html(
     brand_w = desc_1_w = desc_2_w = desc_block_w
     item_number = item_text
 
+    price_style = (f'left: {price_x}pt; top: {price_y}pt; width: {price_box_w}pt; height: {price_box_h}pt;')
+    if align_to_card_center:
+        price_style = (f'left: {w/2}pt; top: {price_y}pt; width: max-content; '
+                       f'height: {price_box_h}pt; transform: translateX(-50%);')
     ticket_html = f"""
 <div class="ticket" style="left: {x}pt; top: {y}pt; width: {w}pt; height: {h}pt;">
-    <div class="price" style="left: {price_x}pt; top: {price_y}pt; width: {price_box_w}pt; height: {price_box_h}pt;">
+    <div class="price" style="{price_style}">
         <span class="dollar-sign">$</span>
         <span class="dollars">{html.escape(dollars)}</span>
         <span class="cents">{html.escape(cents)}</span>

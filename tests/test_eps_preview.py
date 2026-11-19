@@ -160,11 +160,11 @@ class EpsPreviewAppTests(unittest.TestCase):
             self.assertEqual(app.session_state[builder.EPS_KEY]['name'], 'drawing.eps')
             self.assertFalse(app.exception)
 
-    def test_invalid_eps_shows_warning_without_restoring_edit_controls(self):
+    def test_invalid_eps_blocks_output_without_restoring_edit_controls(self):
         app = self.start()
         app.session_state[builder.EPS_KEY] = {'name':'bad.eps', 'bytes':b'bad'}
         app.run()
         self.assertFalse(app.exception)
-        self.assertTrue(any('ArtiosCAD' in w.value for w in app.warning))
+        self.assertTrue(any('ArtiosCAD' in w.value for w in app.error))
         self.assertFalse(app.get('data_editor'))
-        self.assertTrue(any(b.label == 'Create Price Strip PDF' for b in app.button))
+        self.assertTrue(next(b for b in app.button if b.label == 'Create Price Strip PDF').disabled)

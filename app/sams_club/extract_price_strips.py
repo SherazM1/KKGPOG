@@ -157,8 +157,8 @@ def _populated_row_count(df: pd.DataFrame) -> int:
     return int(populated_cells.any(axis=1).sum())
 
 
-def _missing_expected_fields(mapping: dict[str, str]) -> tuple[str, ...]:
-    return tuple(field for field in _EXPECTED_PRODUCTION_FIELDS if field not in mapping)
+def _missing_expected_fields(mapping: dict[str, str], required_fields: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(field for field in required_fields if field not in mapping)
 
 
 def _candidate_rank(candidate: _WorksheetCandidate) -> tuple[int, int, int, int]:
@@ -174,11 +174,14 @@ def _best_candidate(candidates: list[_WorksheetCandidate]) -> _WorksheetCandidat
     return max(candidates, key=_candidate_rank)
 
 
-def _read_price_strip_sheet(source_file: Any, template_name: str | None = None) -> tuple[pd.DataFrame, str, dict[str, Any]]:
+def _read_price_strip_sheet(source_file: Any, template_name: str | None = None, *,
+                           require_layout_columns: bool = True) -> tuple[pd.DataFrame, str, dict[str, Any]]:
     from app.sams_club.price_strip_inputs import source_suffix, legacy_document_frame
     if source_suffix(source_file) in (".docx", ".pdf"):
         frame = legacy_document_frame(source_file, template_name)
         return frame, "Structured document", {"sheet_selection_reason": "shared document normalization"}
+    required_fields = tuple(field for field in _EXPECTED_PRODUCTION_FIELDS
+                            if require_layout_columns or field not in ('length', 'data_on_bottom_left'))
     workbook = _open_excel_file(source_file)
     try:
         candidates: list[_WorksheetCandidate] = []
@@ -190,7 +193,7 @@ def _read_price_strip_sheet(source_file: Any, template_name: str | None = None) 
                     sheet_name=str(sheet_name),
                     df=df,
                     mapping=mapping,
-                    missing_fields=_missing_expected_fields(mapping),
+                    missing_fields=_missing_expected_fields(mapping, required_fields),
                     headers_found=tuple(str(c) for c in df.columns),
                     populated_rows=_populated_row_count(df),
                     exact_name_match=str(sheet_name) == _PRICE_STRIP_SHEET,
@@ -236,7 +239,7 @@ def _read_price_strip_sheet(source_file: Any, template_name: str | None = None) 
             )
 
         closest = _best_candidate(candidates) if candidates else None
-        required_headers = [_REQUIRED_HEADER_LABELS[field] for field in _EXPECTED_PRODUCTION_FIELDS]
+        required_headers = [_REQUIRED_HEADER_LABELS[field] for field in required_fields]
         missing_headers = (
             [_REQUIRED_HEADER_LABELS[field] for field in closest.missing_fields]
             if closest is not None
@@ -318,6 +321,8 @@ def _as_int(value: Any) -> int | None:
 def build_sams_price_strip_rows(
     source_file: Any,
     template_name: str | None = None,
+    *,
+    require_layout_columns: bool = True,
 ) -> SamsPriceStripBuildResult:
     warnings: list[str] = []
     errors: list[str] = []
@@ -325,7 +330,8 @@ def build_sams_price_strip_rows(
     document_source = source_suffix(source_file) in (".docx", ".pdf")
 
     try:
-        df, selected_sheet_name, sheet_debug = _read_price_strip_sheet(source_file, template_name)
+        df, selected_sheet_name, sheet_debug = _read_price_strip_sheet(
+            source_file, template_name, require_layout_columns=require_layout_columns)
     except _PriceStripWorksheetNotFound as exc:
         return SamsPriceStripBuildResult(
             errors=[str(exc)],

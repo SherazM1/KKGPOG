@@ -43,6 +43,58 @@ def upload_state():
 
 
 class SheetImportTests(unittest.TestCase):
+    def test_upload_without_layout_columns_uses_side_dimensions_and_generated_footers(self):
+        import pandas as pd
+        from tests.test_sams_holiday_price_strips import _valid_price_strip_row, _workbook_bytes
+        records = [_valid_price_strip_row(Side=1, Row=2, Column=6),
+                   _valid_price_strip_row(Side=2, Row=4, Column=8)]
+        for record in records:
+            record.pop('Length')
+            record.pop('Data on bottom left')
+        payload = _workbook_bytes({'README':pd.DataFrame([{'Notes':'Instructions'}]),
+                                   'Price Strip Data':pd.DataFrame(records),
+                                   'Merge Audit':pd.DataFrame([{'Old Brand':'Audit only'}])})
+        state = {builder.SHEET_UPLOAD_KEY:SimpleNamespace(name='data.xlsx',getvalue=lambda:payload),
+                 builder.SHEET_ERROR_KEY:'Previous failed import'}
+        with patch.object(builder.st,'session_state',state):
+            builder._load_sheet_upload()
+        self.assertNotIn(builder.SHEET_ERROR_KEY,state)
+        source = state[builder.SHEET_KEY]['pogs']['POG1']
+        self.assertEqual([source[side]['strip_size'] for side in (1,2)],['thin','wide'])
+        self.assertEqual([len(source[side]['rows'][0]['tickets']) for side in (1,2)],[6,8])
+        self.assertEqual(source[2]['rows'][0]['footer_text'],'Side: 2, Row: 4 - POG: POG1')
+        with patch.object(builder,'_render_strips',return_value=b'pdf') as render:
+            builder._create_all_sides_pdf('POG1',source)
+        self.assertEqual([(row.side,row.row) for row in render.call_args.args[0]],[(1,2),(2,4)])
+
+    def test_optional_layout_columns_are_preserved_when_supplied(self):
+        import pandas as pd
+        from tests.test_sams_holiday_price_strips import _valid_price_strip_row, _workbook_bytes
+        from app.sams_club.extract_price_strips import build_sams_price_strip_rows
+        for missing in ('Length','Data on bottom left'):
+            record = _valid_price_strip_row()
+            record.pop(missing)
+            payload = _workbook_bytes({'Price Strip Data':pd.DataFrame([record])})
+            data = import_price_strip_sheet(payload)
+            self.assertEqual(data['products'],1)
+            footer = data['pogs']['POG1'][1]['rows'][0]['footer_text']
+            self.assertEqual(footer,'Side: 1, Row: 1 - POG: POG1')
+            # Other workflows retain their existing requirement for dimensions.
+            self.assertTrue(build_sams_price_strip_rows(payload).errors)
+        record = _valid_price_strip_row(**{'Data on bottom left':'Custom footer'})
+        payload = _workbook_bytes({'Price Strip Data':pd.DataFrame([record])})
+        self.assertEqual(import_price_strip_sheet(payload)['pogs']['POG1'][1]['rows'][0]['footer_text'],'Custom footer')
+
+    def test_missing_product_columns_still_report_the_required_field(self):
+        import pandas as pd
+        from tests.test_sams_holiday_price_strips import _valid_price_strip_row, _workbook_bytes
+        record = _valid_price_strip_row()
+        for label in ('Retail','Length','Data on bottom left'):
+            record.pop(label)
+        payload = _workbook_bytes({'Price Strip Data':pd.DataFrame([record])})
+        with self.assertRaisesRegex(ValueError,'Missing required columns: Retail'):
+            import_price_strip_sheet(payload)
+
     def test_import_preserves_pogs_sides_positions_gaps_identifiers_and_zero_prices(self):
         data = imported()
         self.assertEqual(set(data['pogs']), {'POG A', 'POG B'})

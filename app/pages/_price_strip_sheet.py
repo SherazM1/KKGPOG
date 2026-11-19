@@ -7,7 +7,7 @@ from openpyxl import load_workbook
 from app.sams_club.extract_price_strips import build_sams_price_strip_rows
 from app.sams_club.holiday_price_strips import holiday_geometry_for_side
 from app.sams_club.generic_price_strips import GENERIC_SIZES
-
+from app.sams_club.generic_price_strips import geometry_for_size
 
 def _generic_sheet(data):
     """Recognize the Generic merge schema; leave production workbooks to their reader."""
@@ -82,11 +82,15 @@ def _generic_sheet(data):
         book.close()
 
 
-def import_price_strip_sheet(data):
-    generic = _generic_sheet(data)
-    if generic is not None:
-        return generic
-    build = build_sams_price_strip_rows(data)
+def import_price_strip_sheet(data, template_format=None):
+    if template_format not in ('kk250133','two_card'):
+        
+        generic = _generic_sheet(data)
+        if generic is not None:
+            return generic
+    # This builder derives dimensions from side geometry and generates a
+    # footer when the workbook does not supply either layout-only column.
+    build = build_sams_price_strip_rows(data, require_layout_columns=False)
     if build.errors:
         raise ValueError('\n'.join(build.errors))
     if build.skipped_segment_count:
@@ -94,9 +98,34 @@ def import_price_strip_sheet(data):
                          'Correct the sheet before importing.\n' + '\n'.join(build.warnings[:5]))
     if not build.strip_rows:
         raise ValueError('No price-strip rows were found in the workbook.')
+    strip_rows = build.strip_rows
+    warnings = list(build.warnings)
+    if template_format == 'kk250133':
+        incompatible = {}
+        for strip in strip_rows:
+            count = len(strip.segments)
+            if count not in (8,10):
+                incompatible.setdefault(strip.pog,
+                    f'Side {strip.side}, Row {strip.row}: this template requires exactly 8 or 10 prices, '
+                    f'but {count} product positions were supplied.')
+        strip_rows = [strip for strip in strip_rows if strip.pog not in incompatible]
+        if not strip_rows:
+            raise ValueError('\n'.join(f'{pog}: {reason}' for pog,reason in incompatible.items()))
+        warnings.extend(f'Skipped POG "{pog}" for the 1 15/16-inch template. {reason}'
+                        for pog,reason in incompatible.items())
     pogs = {}
-    for strip in build.strip_rows:
-        geometry = holiday_geometry_for_side(strip.side)
+    for strip in strip_rows:
+        if template_format == 'two_card':
+            geometry = geometry_for_size('generic_two_card')
+        elif template_format == 'kk250133':
+            size = (
+                'generic_kk250133_short'
+                if len(strip.segments) == 8
+                else 'generic_kk250133_long'
+            )
+            geometry = geometry_for_size(size)
+        else:
+            geometry = holiday_geometry_for_side(strip.side)
         sides = pogs.setdefault(strip.pog, {})
         draft = sides.setdefault(strip.side, {'start': strip.row,
                                              'strip_size': geometry.designation, 'rows': []})
@@ -115,6 +144,32 @@ def import_price_strip_sheet(data):
                 'Brand': segment.brand, 'Pack / value': segment.desc_1,
                 'Type': segment.desc_2, 'Price': segment.retail, 'Item #': segment.item_number,
             }
-        draft['rows'].append({'number':strip.row, 'footer_text':strip.footer_text, 'tickets':tickets})
-    return {'pogs':pogs, 'warnings':build.warnings,
-            'products':build.included_segment_count, 'rows':len(build.strip_rows)}
+        if template_format in ('kk250133','two_card'):
+            required = geometry.slot_count
+            if len(occupied) != required:
+                raise ValueError(
+                    f"{strip.pog}, Side {strip.side}, Row {strip.row}: "
+                    f"this template requires exactly {required} prices, "
+                    f"but {len(occupied)} product positions were supplied."
+                )
+            for segment in strip.segments:
+                try:
+                    price = Decimal(str(segment.retail).replace('$','').replace(',','').strip())
+                except (InvalidOperation, ValueError):
+                    raise ValueError(
+                        f"{strip.pog}, Side {strip.side}, Row {strip.row}, "
+                        f"Column {segment.column}: enter a valid price."
+                    ) from None
+                if not price.is_finite() or price < 0:
+                    raise ValueError(
+                        f"{strip.pog}, Side {strip.side}, Row {strip.row}, "
+                        f"Column {segment.column}: price must be a finite, nonnegative number."
+                    )
+        draft['rows'].append({'number':strip.row, 'footer_text':strip.footer_text,
+                              'tickets':tickets, 'strip_size':geometry.designation})
+    return {
+        'format':template_format if template_format in ('kk250133','two_card') else 'holiday',
+        'pogs':pogs,
+        'warnings':warnings,
+        'products':sum(len(strip.segments) for strip in strip_rows),
+        'rows':len(strip_rows)}
