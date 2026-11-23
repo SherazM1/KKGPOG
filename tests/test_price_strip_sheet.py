@@ -168,10 +168,11 @@ class SheetImportAppTests(unittest.TestCase):
     def test_preview_navigation_does_not_change_all_sides_export_and_pog_change_invalidates_it(self):
         app = self.app
         next(w for w in app.selectbox if w.label == 'Preview strip').select(2).run()
-        with patch.object(builder, '_create_all_sides_pdf', return_value=b'pdf') as export:
+        with patch.object(builder, '_create_pogs_pdf', return_value=b'pdf') as export:
             next(w for w in app.button if w.label == 'Create Price Strip PDF').click().run()
-        self.assertEqual(set(export.call_args.args[1]), {1, 2})
-        self.assertEqual(len(export.call_args.args[1][1]['rows']), 2)
+        self.assertEqual(set(export.call_args.args[0]), {'POG A','POG B'})
+        self.assertEqual(set(export.call_args.args[0]['POG A']), {1, 2})
+        self.assertEqual(len(export.call_args.args[0]['POG A'][1]['rows']), 2)
         self.assertTrue(app.get('download_button'))
         next(w for w in app.selectbox if w.label == 'POG from sheet').select('POG B').run()
         self.assertNotIn(builder.PDF_KEY, app.session_state)

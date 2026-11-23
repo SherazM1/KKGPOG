@@ -213,17 +213,26 @@ def _render_strips(strips, calibration=False, *, eps_data=None):
     return result.pdf_bytes
 
 
-def _create_all_sides_pdf(name, drafts, *, eps_data=None):
+def _pog_strips(name, drafts):
     strips = []
     for side, draft in sorted(drafts.items()):
         for number, row in zip(_row_numbers(draft), draft['rows']):
             size = row.get('strip_size',draft['strip_size'])
             strips.append(_build_strip(name, side, number, row['tickets'], size,
                                        row.get('footer_text')))
-    return _render_strips(strips, eps_data=eps_data)
+    return strips
 
 
-def _spacing_compatible_drafts(drafts, data):
+def _create_all_sides_pdf(name, drafts, *, eps_data=None):
+    return _render_strips(_pog_strips(name,drafts),eps_data=eps_data)
+
+
+def _create_pogs_pdf(pogs, *, eps_data=None):
+    strips = [strip for name,drafts in pogs.items() for strip in _pog_strips(name,drafts)]
+    return _render_strips(strips,eps_data=eps_data)
+
+
+def _spacing_compatible_drafts(drafts, data, *, allow_empty=False):
     """Separate unsupported sizes from malformed alignment for a supported size."""
     from app.templates.eps_preview import parse_card_spacing, matching_strip_rectangle, strip_crosshair_layout
     drawing = parse_card_spacing(data)
@@ -240,7 +249,7 @@ def _spacing_compatible_drafts(drafts, data):
             rows.append(dict(row,number=number))
         if rows:
             matching[side] = dict(draft,start=rows[0]['number'],rows=rows)
-    if not matching:
+    if not matching and not allow_empty:
         raise ValueError('Card Spacing has no strip size matching the imported spreadsheet. '
                          'Use a six-card drawing for six-position strips or an eight-card drawing for eight-position strips.')
     return matching
@@ -425,6 +434,8 @@ def _live_strip_preview(
         ).tobytes("png")
         
     return image, pdf
+
+
 def render():
     st.subheader("Price Strips")
     st.caption("Upload a spreadsheet to preview and generate price strips.")
@@ -455,6 +466,12 @@ def render():
 
     # Use the original import, not the former editable draft.
     source = sheet["pogs"][name]
+    include_all_pogs = len(sheet['pogs'])>1
+    if include_all_pogs:
+        st.caption('All POGs and strip sizes print together automatically. Included POGs: '
+                   + ', '.join(sheet['pogs']) + '. Preview shows the POG selected above.')
+    export_pogs = sheet['pogs']
+    export_total = sum(len(draft['rows']) for drafts in export_pogs.values() for draft in drafts.values())
 
     entries = [
         (side, number, row.get('strip_size',draft["strip_size"]), row)
@@ -477,31 +494,39 @@ def render():
     if card_spacing is None and st.session_state.get(FORMAT_KEY)=='two_card':
         card_spacing = eps  # This template's supplied marks are its baseline spacing.
     alignment_eps = card_spacing['bytes'] if card_spacing is not None else None
-    compatible, output_source, output_scope = source, source, 'all sides'
+    compatible_pogs, output_scope = export_pogs, 'all sides'
     if alignment_eps is not None:
         try:
-            compatible = _spacing_compatible_drafts(source,alignment_eps)
+            compatible_pogs = {
+                pog:matching for pog,drafts in export_pogs.items()
+                if (matching := _spacing_compatible_drafts(drafts,alignment_eps,allow_empty=True))
+            }
         except ValueError as exc:
             st.session_state.pop(PDF_KEY,None)
             st.error(f'Card Spacing: {exc}')
             return
-        compatible_rows = {(side,number) for side,draft in compatible.items() for number in _row_numbers(draft)}
-        if len(compatible_rows) != source_count:
-            missing = ', '.join(f'Side {side}, Row {number}' for side,number,_,_ in entries
-                                if (side,number) not in compatible_rows)
-            st.info(f'Card Spacing matches {len(compatible_rows)} of {source_count} strip rows. '
-                    f'These rows need a different strip size: {missing}. '
+        current_compatible = compatible_pogs.get(name,{})
+        if not current_compatible:
+            st.session_state.pop(PDF_KEY,None)
+            st.error('Card Spacing has no matching rows in the selected POG. Choose a matching POG or add spacing for this strip size.')
+            return
+        compatible_rows = {(side,number) for side,draft in current_compatible.items() for number in _row_numbers(draft)}
+        matching_total = sum(len(draft['rows']) for drafts in compatible_pogs.values() for draft in drafts.values())
+        if matching_total != export_total:
+            st.info(f'Card Spacing matches {matching_total} of {export_total} strip rows selected for output. '
                     'Choose matching strips to test this file, or add the other spacing file in Card Spacing for all sides.')
             output_scope = st.radio('PDF output', ['matching strips only','all sides'],
                                     horizontal=True,key='holiday_builder:pdf_scope')
-            output_source = compatible if output_scope=='matching strips only' else source
             # Keep previews on supported sizes even when all-side output is
             # unavailable, so the user can still inspect their uploaded file.
             entries = [entry for entry in entries if (entry[0],entry[1]) in compatible_rows]
-    output_count = sum(len(draft['rows']) for draft in output_source.values())
-    all_sizes_available = sum(len(draft['rows']) for draft in compatible.values())==source_count
+    output_pogs = compatible_pogs if output_scope=='matching strips only' else export_pogs
+    output_source = output_pogs.get(name,{})
+    output_count = sum(len(draft['rows']) for drafts in output_pogs.values() for draft in drafts.values())
+    all_sizes_available = sum(len(draft['rows']) for drafts in compatible_pogs.values() for draft in drafts.values())==export_total
     output_allowed = output_scope!='all sides' or all_sizes_available
-    signature = ('card-spacing-upload-v7', name, repr(source), output_scope, sha256(eps['bytes']).hexdigest(),
+    scope_label = ('all POGs and sides' if include_all_pogs and output_scope=='all sides' else output_scope)
+    signature = ('mixed-pogs-v1', name, repr(export_pogs), include_all_pogs, output_scope, sha256(eps['bytes']).hexdigest(),
                  sha256(alignment_eps).hexdigest() if alignment_eps is not None else None)
     previous = st.session_state.get(PDF_KEY)
     if previous and previous.get('signature') != signature:
@@ -516,7 +541,7 @@ def render():
     if not output_allowed:
         st.warning('All-side export needs spacing for every strip size. Select matching strips only to generate this test.')
     else:
-        st.caption(f'PDF output: {output_scope} - {output_count} pages.')
+        st.caption(f'PDF output: {scope_label} - {len(output_pogs)} POG(s), {output_count} pages.')
 
     selected = st.selectbox(
         "Preview strip",
@@ -598,27 +623,30 @@ def render():
     ):
         try:
             with st.spinner("Creating price strips..."):
-                pdf = _create_all_sides_pdf(name, output_source, eps_data=alignment_eps)
+                pdf = (_create_pogs_pdf(output_pogs,eps_data=alignment_eps) if include_all_pogs else
+                       _create_all_sides_pdf(name,output_source,eps_data=alignment_eps))
         except ValueError as exc:
             st.error(str(exc))
         else:
             st.session_state[PDF_KEY] = {
                 "signature": signature,
                 "bytes": pdf,
-                "scope":output_scope,
+                "scope":scope_label,
                 "pages":output_count,
+                "all_pogs":include_all_pogs,
             }
 
     result = st.session_state.get(PDF_KEY)
 
     if result:
         st.success(
-            f"Ready: {name} - {result['scope']} ({result['pages']} pages)"
+            f"Ready: {sheet['name'] if result.get('all_pogs') else name} - {result['scope']} ({result['pages']} pages)"
         )
         st.download_button(
             "Download Price Strip PDF",
             data=result["bytes"],
-            file_name=('price_strips_all_sides.pdf' if result['scope']=='all sides' else 'price_strips_matching.pdf'),
+            file_name=('price_strips_all_pogs.pdf' if result.get('all_pogs') else
+                       'price_strips_all_sides.pdf' if result['scope']=='all sides' else 'price_strips_matching.pdf'),
             mime="application/pdf",
             on_click="ignore",
         )

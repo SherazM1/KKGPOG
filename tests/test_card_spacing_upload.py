@@ -43,12 +43,12 @@ class CardSpacingUploadTests(unittest.TestCase):
         next(w for w in app.button if w.label=='Create Price Strip PDF').click().run()
         self.assertFalse(app.exception)
         result = app.session_state[builder.PDF_KEY]
-        self.assertEqual((result['scope'],result['pages']),('all sides',3))
+        self.assertEqual((result['scope'],result['pages']),('all POGs and sides',4))
         with pymupdf.open(stream=result['bytes'],filetype='pdf') as pdf:
-            self.assertEqual(len(pdf),3)
-            self.assertEqual([round(page.rect.width,1) for page in pdf],[2214,2214,2803.9])
-            for page,(side,row) in zip(pdf,[(1,2),(1,4),(2,2)]):
-                self.assertIn(f'Custom footer POG A {side} {row}',page.get_text())
+            self.assertEqual(len(pdf),4)
+            self.assertEqual([round(page.rect.width,1) for page in pdf],[2214,2214,2803.9,2214])
+            for page,(pog,side,row) in zip(pdf,[('A',1,2),('A',1,4),('A',2,2),('B',1,1)]):
+                self.assertIn(f'Custom footer POG {pog} {side} {row}',page.get_text())
         # Removing the eight-card file switches back to explicit partial export.
         partial = {builder.CARD_SPACING_UPLOAD_KEY:uploads[:1]}
         with patch.object(builder.st,'session_state',partial):
@@ -77,7 +77,7 @@ class CardSpacingUploadTests(unittest.TestCase):
     def test_single_size_spacing_generates_matching_strips_and_all_side_export_is_explicitly_blocked(self):
         import pymupdf
         from tests.test_card_spacing_pdf import top_cross_pdf
-        for count,expected_side,pages in [(6,1,2),(8,2,1)]:
+        for count,expected_side,pages in [(6,1,3),(8,2,1)]:
             with self.subTest(count=count):
                 app = AppTest.from_file(str(Path(__file__).resolve().parents[1]/'home.py'),default_timeout=15)
                 app.session_state['active_workflow'] = 'Templates'
@@ -100,7 +100,10 @@ class CardSpacingUploadTests(unittest.TestCase):
                 self.assertEqual(result['scope'],'matching strips only')
                 with pymupdf.open(stream=result['bytes'],filetype='pdf') as doc:
                     self.assertEqual(len(doc),pages)
-                    self.assertTrue(all(f'Custom footer POG A {expected_side}' in page.get_text() for page in doc))
+                    self.assertTrue(all(f' {expected_side} ' in page.get_text() for page in doc))
+                    self.assertIn(f'Custom footer POG A {expected_side}',doc[0].get_text())
+                    if count==6:
+                        self.assertIn('Custom footer POG B 1 1',doc[-1].get_text())
                 next(w for w in app.radio if w.label=='PDF output').set_value('all sides').run()
                 self.assertNotIn(builder.PDF_KEY,app.session_state)
                 self.assertTrue(next(w for w in app.button if w.label=='Create Price Strip PDF').disabled)
@@ -159,7 +162,7 @@ class CardSpacingUploadTests(unittest.TestCase):
         app.session_state[builder.EPS_KEY] = {'name':'strip.eps','bytes':strip}
         with patch.object(builder,'_live_strip_preview',return_value=(blank.getvalue(),print_pdf())) as preview, \
                 patch('app.templates.eps_preview.render_eps_preview',return_value=(blank.getvalue(),blank.getvalue())) as guide, \
-                patch.object(builder,'_create_all_sides_pdf',return_value=b'pdf') as export:
+                patch.object(builder,'_create_pogs_pdf',return_value=b'pdf') as export:
             app.run()
             labels = [w.proto.label for w in app.get('file_uploader')]
             self.assertEqual(labels,['Upload a different EPS (optional)','Upload price-strip data (.xlsx)','Card Spacing'])

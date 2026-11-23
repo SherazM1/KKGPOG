@@ -30,6 +30,40 @@ def workbook(groups):
 
 
 class Kk250133ImportTests(unittest.TestCase):
+    def test_separate_eight_and_ten_pogs_always_download_together_without_merging_rows(self):
+        payload=workbook([('Test 10',1,1,10),('Test 8',1,1,8)])
+        state={builder.FORMAT_KEY:'kk250133',builder.SHEET_UPLOAD_KEY:SimpleNamespace(name='both.xlsx',getvalue=lambda:payload)}
+        with patch.object(builder.st,'session_state',state):
+            builder._load_sheet_upload()
+        state.pop(builder.SHEET_UPLOAD_KEY)
+        app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'home.py'),default_timeout=15)
+        app.session_state['active_workflow']='Templates'
+        app.session_state['templates:selected_type']='2. Price Strips'
+        for key,value in state.items():
+            app.session_state[key]=value
+        # An older session's unchecked combine option must not exclude rows.
+        app.session_state['holiday_builder:include_all_pogs']=False
+        app.run()
+        self.assertFalse(any(w.label=='Include all POGs in this PDF' for w in app.checkbox))
+        next(w for w in app.button if w.label=='Create Price Strip PDF').click().run()
+        self.assertFalse(app.exception)
+        self.assertFalse(app.error)
+        result=app.session_state[builder.PDF_KEY]
+        self.assertEqual(result['pages'],2)
+        self.assertEqual(result['scope'],'all POGs and sides')
+        with pymupdf.open(stream=result['bytes'],filetype='pdf') as pdf:
+            self.assertEqual(len(pdf),2)
+            for page,pog,size,last in zip(pdf,['Test 10','Test 8'],['generic_kk250133_long','generic_kk250133_short'],['0011110','0011108']):
+                self.assertAlmostEqual(page.rect.width,geometry_for_size(size).width_pt+36,delta=.5)
+                self.assertIn(pog,page.get_text())
+                self.assertIn(last,page.get_text())
+        next(w for w in app.selectbox if w.label=='POG from sheet').select('Test 8').run()
+        next(w for w in app.button if w.label=='Create Price Strip PDF').click().run()
+        with pymupdf.open(stream=app.session_state[builder.PDF_KEY]['bytes'],filetype='pdf') as pdf:
+            self.assertEqual(len(pdf),2)
+            self.assertIn('Test 10',pdf[0].get_text())
+            self.assertIn('Test 8',pdf[1].get_text())
+
     def test_both_counts_work_on_any_side_and_same_side_rows_can_use_different_sizes(self):
         data=import_price_strip_sheet(workbook([('Mixed',1,1,10),('Mixed',1,5,8),('Mixed',2,2,8)]),template_format='kk250133')
         source=data['pogs']['Mixed']
@@ -90,6 +124,7 @@ class Kk250133ImportTests(unittest.TestCase):
             self.assertFalse(app.exception)
             self.assertFalse(app.error)
             with pymupdf.open(stream=app.session_state[builder.PDF_KEY]['bytes'],filetype='pdf') as pdf:
-                self.assertEqual(len(pdf),1)
-                self.assertAlmostEqual(pdf[0].rect.width,geometry_for_size(size).width_pt+36,delta=.5)
-                self.assertIn(last,pdf[0].get_text())
+                self.assertEqual(len(pdf),2)
+                page=pdf[0 if pog=='Test 10' else 1]
+                self.assertAlmostEqual(page.rect.width,geometry_for_size(size).width_pt+36,delta=.5)
+                self.assertIn(last,page.get_text())

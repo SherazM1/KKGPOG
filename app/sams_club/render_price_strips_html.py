@@ -62,6 +62,12 @@ _SAMS_DESC_SIZE = 14.0
 _SAMS_PRICE_SIZE = 90.0
 _SAMS_ITEM_SIZE = 8.0
 _SAMS_FOOTER_SIZE = 8.0
+_KK_BRAND_SIZE = 20.0
+_KK_DESCRIPTION_SIZE = 16.0
+_KK_SIGN_SIZE = 40.0
+_KK_CENTS_SIZE = 44.0
+_KK_ITEM_SIZE = 12.0
+_KK_FOOTER_SIZE = 10.0
 _SAMS_STACK_BRAND_GAP = 1.4
 _SAMS_STACK_DESC_GAP = 1.4
 _SAMS_STACK_TO_PRICE_OFFSET = 6.0
@@ -1134,6 +1140,7 @@ async def _render_page_to_pdf(
     try:
         await page.set_content(html_content)
         await require_gibson_fonts(page)
+        await fit_compact_tickets(page)
         await fit_eps_tickets(page)
         pdf_bytes = await page.pdf(
             width=f"{(width + (_BLEED_PT * 2)) / inch}in",
@@ -1146,6 +1153,73 @@ async def _render_page_to_pdf(
 
 
 SAMS_FONT_STACK = '"Gibson"'
+
+
+async def fit_compact_tickets(page):
+    """Fit Holiday-size type to the short strip without shrinking the artwork."""
+    await page.evaluate('''() => {
+        const tickets=[...document.querySelectorAll('.compact-ticket')];
+        if (!tickets.length) return;
+        const trim=document.querySelector('.trim-artwork').getBoundingClientRect();
+        const unit=trim.width/Number(tickets[0].dataset.stripWidth);
+        const footer=document.querySelector('.footer').getBoundingClientRect();
+        const ink=el=>{const range=document.createRange();range.selectNodeContents(el);return range.getBoundingClientRect();};
+        const moveTop=(el,target)=>{el.style.top=(parseFloat(el.style.top)+(target-ink(el).top)/unit)+'pt';};
+        for (const ticket of tickets) {
+            const left=trim.left+Number(ticket.dataset.contentLeft)*unit;
+            const right=trim.left+Number(ticket.dataset.contentRight)*unit;
+            const anchor=trim.left+Number(ticket.dataset.anchorX)*unit;
+            const fields=[...ticket.querySelectorAll('.brand-field,.desc-field')];
+            let cursor=trim.top+2*unit;
+            for (const field of fields) {
+                const textRatio=field.textContent.trim() ? Math.min(1,(right-left)/ink(field).width) : 1;
+                const size=parseFloat(getComputedStyle(field).fontSize)*.75*textRatio;
+                if (size<6) throw new Error('A product description is too long to fit this strip. Shorten the description.');
+                field.style.fontSize=size+'pt';
+                if (!field.textContent.trim()) {
+                    field.style.top=((cursor-ticket.getBoundingClientRect().top)/unit)+'pt';
+                    cursor+=(size+.5)*unit;
+                    continue;
+                }
+                moveTop(field,cursor);
+                cursor=ink(field).bottom+.5*unit;
+            }
+            const price=ticket.querySelector('.price');
+            const dollars=price.querySelector('.dollars');
+            const targetTop=cursor+.5*unit;
+            const availableHeight=footer.top-2*unit-targetTop;
+            let size=parseFloat(getComputedStyle(dollars).fontSize)*.75;
+            size*=Math.min(1,availableHeight/ink(dollars).height);
+            if (size<8) throw new Error('There is not enough space for the price on this strip.');
+            dollars.style.fontSize=size+'pt';
+            const groupWidth=price.getBoundingClientRect().width;
+            const mainWidth=dollars.getBoundingClientRect().width;
+            const fixedWidth=groupWidth-mainWidth;
+            const allowed=2*Math.min(anchor-left,right-anchor);
+            size*=Math.min(1,(allowed-fixedWidth)/mainWidth);
+            if (!Number.isFinite(size) || size<8) throw new Error('This card center is too close to the strip edge to fit its price.');
+            dollars.style.fontSize=size+'pt';
+            // Keep the real price group centered at its card mark.
+            const top=parseFloat(price.style.top)+(targetTop-ink(dollars).top)/unit;
+            price.style.top=top+'pt';
+            const highest=Math.min(...[...price.querySelectorAll('span')].map(part=>ink(part).top));
+            if (highest<targetTop) price.style.top=(parseFloat(price.style.top)+(targetTop-highest)/unit)+'pt';
+            const item=ticket.querySelector('.item-field');
+            moveTop(item,footer.top-1.5*unit-ink(item).height);
+            const itemRect=ink(item);
+            let available=right-left;
+            for (const part of price.querySelectorAll('span')) {
+                const bounds=ink(part);
+                if (bounds.bottom>itemRect.top && bounds.top<itemRect.bottom) available=Math.min(available,right-bounds.right-2*unit);
+            }
+            if (itemRect.width>available) {
+                const itemSize=parseFloat(getComputedStyle(item).fontSize)*.75*available/itemRect.width;
+                if (itemSize<4) throw new Error('The item number is too long to fit beside this price.');
+                item.style.fontSize=itemSize+'pt';
+                moveTop(item,footer.top-1.5*unit-ink(item).height);
+            }
+        }
+    }''')
 
 
 async def fit_eps_tickets(page):
@@ -1169,7 +1243,8 @@ async def fit_eps_tickets(page):
                 const bounds = range.getBoundingClientRect();
                 if (anchor > bounds.left) factor = Math.min(factor, (anchor-left)/(anchor-bounds.left));
                 if (bounds.right > anchor) factor = Math.min(factor, (right-anchor)/(bounds.right-anchor));
-                if (bounds.bottom > trim.top) factor = Math.min(factor, (bottom-trim.top)/(bounds.bottom-trim.top));
+                const origin = ticket.getBoundingClientRect().top;
+                if (bounds.bottom > origin) factor = Math.min(factor, (bottom-origin)/(bounds.bottom-origin));
             }
         }
         if (!Number.isFinite(factor) || factor <= .01) {
@@ -1249,11 +1324,13 @@ def _generate_strip_html(
     """
     font_face_css = sams_font_face_css(warnings)
 
+    compact = row_data.strip_size in ('generic_kk250133_short','generic_kk250133_long')
+
     generic_mode = row_data.strip_size in GENERIC_SIZES
     card_centers = getattr(row_data, 'eps_card_centers', ())
     anchor_mode = bool(card_centers)
-    reference_artwork = generic_mode or anchor_mode
-    holiday_mode = is_sams_holiday_template(template_name) or reference_artwork
+    reference_artwork = (generic_mode or anchor_mode) and not compact
+    holiday_mode = is_sams_holiday_template(template_name) or reference_artwork or compact
     holiday_geometry: SamsHolidaySideGeometry | None = None
     if holiday_mode:
         holiday_geometry = (geometry_for_size(row_data.strip_size) if generic_mode
@@ -1272,7 +1349,7 @@ def _generate_strip_html(
     trim_top = _BLEED_PT
     trim_right = _BLEED_PT + strip_w
     trim_bottom = _BLEED_PT + strip_h
-    positions = [] if reference_artwork else (
+    positions = [] if reference_artwork or compact else (
         _resolve_holiday_ticket_positions(row_data)
         if holiday_mode and not generic_mode
         else _resolve_ticket_positions_from_profile(
@@ -1286,7 +1363,13 @@ def _generate_strip_html(
     ticket_y = footer_h
     ticket_h = strip_h - footer_h
     artwork_scale, artwork_top = 1.0, 0.0
-    if anchor_mode:
+    if compact:
+        centers = [point[0] for point in card_centers] if anchor_mode else GENERIC_SIZES[row_data.strip_size][1]
+        if len(centers)!=holiday_geometry.slot_count:
+            raise ValueError('EPS card-center count does not match the number of product positions.')
+        boundaries = (0,*((a+b)/2 for a,b in zip(centers,centers[1:])),strip_w)
+        positions = [(boundaries[i],boundaries[i+1]-boundaries[i]) for i in range(len(centers))]
+    elif anchor_mode:
         centers = [point[0] for point in card_centers]
         if len(centers) != holiday_geometry.slot_count:
             raise ValueError('EPS card-center count does not match the number of product positions.')
@@ -1335,11 +1418,16 @@ def _generate_strip_html(
         footer_font_size_pt = SAMS_HOLIDAY_TEMPLATE.footer_font_size_pt
         brand_font_size_pt = SAMS_HOLIDAY_TEMPLATE.description_font_size_pt
         desc_font_size_pt = SAMS_HOLIDAY_TEMPLATE.description_font_size_pt
+    if compact:
+        dollar_sign_size_pt = _KK_SIGN_SIZE
+        cents_size_pt = _KK_CENTS_SIZE
+        footer_font_size_pt = _KK_FOOTER_SIZE
+        footer_bottom_in = 2/inch
 
     ticket_htmls = []
     footer_left_pt = footer_left_in * inch
     for idx, segment in enumerate(row_data.segments):
-        if anchor_mode:
+        if anchor_mode or compact:
             idx = segment.column-1
             if not 0 <= idx < len(positions):
                 raise ValueError(f'No EPS card center exists for product position {segment.column}.')
@@ -1348,6 +1436,15 @@ def _generate_strip_html(
         if segment.is_empty:
             continue
         x, ticket_w = positions[idx]
+        if compact:
+            card_width = getattr(row_data,'eps_card_width_pt',None)
+            left,right = x+3,x+ticket_w-3
+            if card_width is not None:
+                left = max(left,centers[idx]-card_width/2+3)
+                right = min(right,centers[idx]+card_width/2-3)
+            ticket_htmls.append(_generate_compact_ticket_html(segment,x,ticket_w,centers[idx],left,right,strip_w,strip_h))
+            footer_left_pt = 6
+            continue
         slot_center_x = x + (ticket_w / 2.0)
         ticket_html, desc_block_left = _generate_ticket_html(
             segment,
@@ -1620,6 +1717,25 @@ html, body {{
     ]
 
     return "\n".join(html_parts)
+
+
+def _generate_compact_ticket_html(segment,x,width,center,left,right,strip_width,strip_height):
+    dollars,cents=_normalize_price_parts(segment.retail)
+    description=' / '.join(value.strip() for value in (segment.desc_1,segment.desc_2) if value and value.strip())
+    fields=[]
+    for css,value,weight,text_size in [('brand-field',segment.brand,500,_KK_BRAND_SIZE),
+                                      ('desc-field',description,400,_KK_DESCRIPTION_SIZE)]:
+        fields.append(f'<div class="field {css}" style="left:{left-x}pt; top:0pt; width:{right-left}pt; '
+                      f'font-size:{text_size}pt; font-weight:{weight};">{html.escape((value or "").upper())}</div>')
+    return f'''<div class="ticket compact-ticket" data-anchor-x="{center}" data-content-left="{left}"
+        data-content-right="{right}" data-strip-width="{strip_width}" style="left:{x}pt; top:0pt; width:{width}pt; height:{strip_height}pt;">
+        {''.join(fields)}
+        <div class="price" style="left:{center-x}pt; top:0pt; width:max-content; transform:translateX(-50%);">
+            <span class="dollar-sign">$</span><span class="dollars">{html.escape(dollars)}</span><span class="cents">{html.escape(cents)}</span>
+        </div>
+        <div class="field item-field" style="left:{left-x}pt; top:0pt; width:{right-left}pt; text-align:right;
+            font-size:{_KK_ITEM_SIZE}pt; font-weight:400;">{html.escape(segment.item_number or '-')}</div>
+    </div>'''
 
 
 def _generate_ticket_html(

@@ -105,7 +105,7 @@ class GenericPriceStripTests(unittest.TestCase):
         reference_tickets[0].update({'Brand':'Spacing Brand', 'Pack / value':'Line One',
                                      'Type':'Line Two', 'Price':'71.98', 'Item #':'001234567890'})
         reference = spans(builder._create_pdf('Reference', 1, 1, [reference_tickets], strip_size='thin'))
-        for size in GENERIC_SIZES:
+        for size in builder.GENERIC_STRIP_SIZES:
             with self.subTest(size=size):
                 tickets = builder._default_tickets(1, size)
                 tickets[0].update({'Brand':'Spacing Brand', 'Pack / value':'Line One',
